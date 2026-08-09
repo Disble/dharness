@@ -1,0 +1,137 @@
+package setup
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/Disble/dharness/internal/project"
+)
+
+// The files dharness owns, named after the tool whose format they hold.
+const (
+	ownedLefthook = "lefthook.yml"
+	ownedFallow   = "fallow.jsonc"
+	ownedRules    = "rules.json"
+)
+
+// The files that belong to the project and gain at most one line.
+const (
+	lefthookConfig = "lefthook.yml"
+	fallowConfig   = ".fallowrc.json"
+	doctorConfig   = "doctor.config.json"
+	mcpConfig      = ".mcp.json"
+	huskyHook      = ".husky/pre-commit"
+)
+
+// skillLocations are the paths react-doctor's installer writes a skill into,
+// for the agents this project is most likely to use.
+var skillLocations = []string{
+	filepath.Join(".claude", "skills", "react-doctor"),
+	filepath.Join(".cursor", "skills", "react-doctor"),
+	filepath.Join(".agents", "skills", "react-doctor"),
+	filepath.Join(".opencode", "skills", "react-doctor"),
+}
+
+type manager int
+
+const (
+	managerNone manager = iota
+	managerLefthook
+	managerHusky
+)
+
+// hookManager reports which hook manager answers for this project.
+//
+// The question is which one responds, not which one a list expects: a project
+// with husky has no use for a lefthook file, and writing one would create a
+// configuration nothing reads.
+func hookManager(p project.Project) manager {
+	for _, name := range []string{"lefthook.yml", "lefthook.yaml", ".lefthook.yml", ".lefthook.yaml"} {
+		if _, err := os.Stat(filepath.Join(p.Root, name)); err == nil {
+			return managerLefthook
+		}
+	}
+	if _, err := os.Stat(filepath.Join(p.Root, ".husky")); err == nil {
+		return managerHusky
+	}
+	if p.Resolve("lefthook").Local {
+		return managerLefthook
+	}
+	return managerNone
+}
+
+func installed(p project.Project, pkg string) bool {
+	_, err := os.Stat(filepath.Join(p.Root, "node_modules", filepath.FromSlash(pkg)))
+	return err == nil
+}
+
+func asMissingRunner(err error, target **project.MissingStrykerRunnerError) bool {
+	return errors.As(err, target)
+}
+
+// gateInstalled reports whether git will actually run the gate, which is a
+// different question from whether the configuration mentions it.
+func gateInstalled(p project.Project) bool {
+	raw, err := os.ReadFile(filepath.Join(p.Root, ".git", "hooks", "pre-commit"))
+	return err == nil && strings.Contains(string(raw), "lefthook")
+}
+
+func huskyWired(p project.Project) bool {
+	raw, err := os.ReadFile(filepath.Join(p.Root, filepath.FromSlash(huskyHook)))
+	return err == nil && strings.Contains(string(raw), gateCommand)
+}
+
+func appendHuskyGate(p project.Project, w *Writer) error {
+	path := filepath.Join(p.Root, filepath.FromSlash(huskyHook))
+
+	existing, err := os.ReadFile(path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("read %s: %w", huskyHook, err)
+	}
+
+	body := string(existing)
+	if body != "" && !strings.HasSuffix(body, "\n") {
+		body += "\n"
+	}
+	return w.Write(path, []byte(body+gateCommand+"\n"))
+}
+
+// extendsWired reports whether a config already points at a dharness file.
+//
+// It looks for the reference rather than parsing, for the same reason the gate
+// check does: dharness does not own these files and has no business
+// understanding their structure to answer a yes-or-no question.
+func extendsWired(p project.Project, name, target string) bool {
+	raw, err := os.ReadFile(filepath.Join(p.Root, name))
+	return err == nil && strings.Contains(string(raw), target)
+}
+
+// wireFallowExtends adds the reference, creating the config when the project
+// has none.
+func wireFallowExtends(p project.Project, w *Writer) error {
+	target := filepath.ToSlash(filepath.Join(project.Dir, ownedFallow))
+	path := filepath.Join(p.Root, fallowConfig)
+
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		return w.Write(path, fmt.Appendf(nil, "{\n  \"extends\": [%q]\n}\n", target))
+	}
+	return fmt.Errorf(
+		"%s already exists, and adding an extends entry to it is a merge rather than a write.\nAdd this line yourself:\n\n    \"extends\": [%q]",
+		fallowConfig, target)
+}
+
+// wireLefthookExtends does the same for the gate.
+func wireLefthookExtends(p project.Project, w *Writer) error {
+	target := filepath.ToSlash(filepath.Join(project.Dir, ownedLefthook))
+	path := filepath.Join(p.Root, lefthookConfig)
+
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		return w.Write(path, fmt.Appendf(nil, "extends:\n  - %s\n", target))
+	}
+	return fmt.Errorf(
+		"%s already exists, and adding an extends entry to it is a merge rather than a write.\nAdd this line yourself:\n\n    extends:\n      - %s",
+		lefthookConfig, target)
+}

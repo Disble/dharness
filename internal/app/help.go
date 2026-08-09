@@ -12,10 +12,12 @@ USAGE
   dharness <command> [flags]
 
 COMMANDS
-  sync                      Print what this project still needs, as the exact
-                            commands to run. Derived from the repository as it
-                            is right now, so re-running it reports drift. Writes
-                            nothing; safe at any time.
+  init                      Set this project up: install what is missing, write
+                            the files dharness owns, wire the gate, and end by
+                            handing the architecture analysis to the agent.
+  sync                      Report what init would do, without doing any of it.
+                            Derived from the repository as it is right now, so
+                            re-running it reports drift. Writes nothing.
   check                     Run the commit gate: react-doctor on the staged
                             change, then fallow. Stops at the first failure.
   mutate <path...>          Run mutation testing over the given files, to find

@@ -7,6 +7,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/Disble/dharness/internal/setup"
 )
 
 // binaryName is how npm writes the shim on this platform: a .cmd wrapper on
@@ -47,151 +49,110 @@ func writeFile(t *testing.T, path, contents string) {
 	}
 }
 
-// The whole point of generating this instead of storing it: a bun project must
-// never be told to run npm, and a jest project must never be pointed at the
-// vitest plugin.
-func TestSyncSpeaksTheProjectsOwnPackageManagerAndRunner(t *testing.T) {
-	cases := []struct {
-		name        string
-		lockfile    string
-		packageJSON string
-		want        []string
-		reject      []string
-	}{
-		{
-			name:        "bun and vitest",
-			lockfile:    "bun.lock",
-			packageJSON: `{"devDependencies":{"vitest":"^4.0.0"}}`,
-			want:        []string{"bun add -d", "@stryker-mutator/vitest-runner", "bunx"},
-			reject:      []string{"npm install", "jest-runner"},
-		},
-		{
-			name:        "pnpm and jest",
-			lockfile:    "pnpm-lock.yaml",
-			packageJSON: `{"devDependencies":{"jest":"^29.0.0"}}`,
-			want:        []string{"pnpm add -D", "@stryker-mutator/jest-runner", "pnpm dlx"},
-			reject:      []string{"bun add", "vitest-runner"},
-		},
-		{
-			name:        "yarn falls back to npx for remote execution",
-			lockfile:    "yarn.lock",
-			packageJSON: `{"devDependencies":{"vitest":"^4.0.0"}}`,
-			want:        []string{"yarn add -D", "npx"},
-			reject:      []string{"yarn dlx"},
-		},
+// satisfied builds a project that meets every step, so a test can assert on
+// what disappears rather than only on what appears.
+func satisfied(t *testing.T, root string) {
+	t.Helper()
+
+	writeFile(t, filepath.Join(root, "package.json"), `{"devDependencies":{"vitest":"^4.0.0"}}`)
+	writeFile(t, filepath.Join(root, "bun.lock"), "")
+	for _, name := range []string{"react-doctor", "fallow", "stryker", "lefthook"} {
+		writeFile(t, filepath.Join(root, "node_modules", ".bin", binaryName(name)), "")
 	}
+	writeFile(t, filepath.Join(root, "node_modules", "@stryker-mutator", "vitest-runner", "package.json"), "{}")
+	writeFile(t, filepath.Join(root, "node_modules", setup.RulesPackage, "package.json"), "{}")
 
-	for _, testCase := range cases {
-		t.Run(testCase.name, func(t *testing.T) {
-			out := syncOutput(t, func(root string) {
-				writeFile(t, filepath.Join(root, testCase.lockfile), "")
-				writeFile(t, filepath.Join(root, "package.json"), testCase.packageJSON)
-			})
+	writeFile(t, filepath.Join(root, ".dharness", "lefthook.yml"), "pre-commit:\n")
+	writeFile(t, filepath.Join(root, ".dharness", "fallow.jsonc"), "{}\n")
+	writeFile(t, filepath.Join(root, ".dharness", "rules.json"), "{}\n")
 
-			for _, want := range testCase.want {
-				if !strings.Contains(out, want) {
-					t.Errorf("output does not mention %q:\n%s", want, out)
-				}
-			}
-			for _, reject := range testCase.reject {
-				if strings.Contains(out, reject) {
-					t.Errorf("output mentions %q, which belongs to another project:\n%s", reject, out)
-				}
-			}
-		})
+	writeFile(t, filepath.Join(root, ".fallowrc.json"), `{"extends":[".dharness/fallow.jsonc"]}`)
+	writeFile(t, filepath.Join(root, "lefthook.yml"), "extends:\n  - .dharness/lefthook.yml\n")
+	writeFile(t, filepath.Join(root, "doctor.config.json"), `{"plugins":["`+setup.RulesPackage+`"]}`)
+	writeFile(t, filepath.Join(root, ".mcp.json"), `{"mcpServers":{"fallow":{"command":"bunx"}}}`)
+	writeFile(t, filepath.Join(root, ".git", "hooks", "pre-commit"), "lefthook run pre-commit\n")
+	writeFile(t, filepath.Join(root, ".claude", "skills", "react-doctor", "SKILL.md"), "# skill\n")
+}
+
+// Every step that has a command shows the command, in the form this project
+// uses. A bun project must never be told to run npm.
+func TestSyncSpeaksTheProjectsOwnPackageManager(t *testing.T) {
+	out := syncOutput(t, func(root string) {
+		writeFile(t, filepath.Join(root, "bun.lock"), "")
+		writeFile(t, filepath.Join(root, "package.json"), `{"devDependencies":{"vitest":"^4.0.0"}}`)
+	})
+
+	for _, want := range []string{"bun add -d", setup.RulesPackage, "@stryker-mutator/vitest-runner"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output does not mention %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "npm install") {
+		t.Errorf("a bun project was told to run npm:\n%s", out)
 	}
 }
 
-// A step with nothing left to do is noise. Once the tools are installed the
-// install step has to disappear, not turn into "already done".
-func TestSyncDropsStepsTheProjectAlreadySatisfied(t *testing.T) {
+// A step dharness cannot run says why. "Ask a person" without a reason is a
+// shrug, and this one has a measured reason.
+func TestSyncSaysWhyTheDelegatedStepIsDelegated(t *testing.T) {
 	out := syncOutput(t, func(root string) {
 		writeFile(t, filepath.Join(root, "package.json"), `{"devDependencies":{"vitest":"^4.0.0"}}`)
-		for _, name := range []string{"react-doctor", "fallow", "stryker"} {
-			writeFile(t, filepath.Join(root, "node_modules", ".bin", binaryName(name)), "")
-		}
-		writeFile(t, filepath.Join(root, "node_modules", "@stryker-mutator", "vitest-runner", "package.json"), "{}")
-		writeFile(t, filepath.Join(root, ".fallowrc.jsonc"), "{}")
-		writeFile(t, filepath.Join(root, "lefthook.yml"), "pre-commit:\n  commands:\n    gate:\n      run: dharness check\n")
 	})
 
-	for _, gone := range []string{"Install the tools", "runner plugin", "entry points", "Wire the commit gate"} {
-		if strings.Contains(out, gone) {
-			t.Errorf("output still asks for %q on a configured project:\n%s", gone, out)
-		}
+	if !strings.Contains(out, "dharness cannot run this") {
+		t.Errorf("the delegated step was listed without a reason:\n%s", out)
 	}
-	// Setup is the whole subject here: with nothing left, the command says so
-	// instead of listing a step that adoption can never satisfy.
+	if !strings.Contains(out, "git hook that competes with this gate") {
+		t.Errorf("the reason does not name the collision that causes it:\n%s", out)
+	}
+}
+
+// With nothing outstanding the command answers instead of listing a step that
+// adoption can never satisfy.
+func TestSyncReachesATerminalAnswer(t *testing.T) {
+	out := syncOutput(t, func(root string) { satisfied(t, root) })
+
 	if !strings.Contains(out, "Nothing to do") {
 		t.Errorf("a fully configured project got no terminal answer:\n%s", out)
 	}
-}
-
-// fallow's entry points are the one thing no CLI can do for you, so it is the
-// one step described as work rather than printed as a command.
-func TestSyncAsksAboutFallowEntryPointsOnlyWithoutConfig(t *testing.T) {
-	without := syncOutput(t, func(root string) {
-		writeFile(t, filepath.Join(root, "package.json"), `{"devDependencies":{"vitest":"^4.0.0"}}`)
-	})
-	if !strings.Contains(without, ".fallowrc.jsonc") {
-		t.Errorf("output does not name the file to write:\n%s", without)
-	}
-
-	with := syncOutput(t, func(root string) {
-		writeFile(t, filepath.Join(root, "package.json"), `{"devDependencies":{"vitest":"^4.0.0"}}`)
-		writeFile(t, filepath.Join(root, "fallow.toml"), "")
-	})
-	if strings.Contains(with, "entry points") {
-		t.Errorf("output asks about entry points that are already declared:\n%s", with)
+	if strings.Contains(out, "## 1.") {
+		t.Errorf("a fully configured project was still given steps:\n%s", out)
 	}
 }
 
-// Stryker's binary and its package have different names; installing `stryker`
-// installs nothing useful.
-func TestSyncInstallsTheStrykerPackageNotTheBinaryName(t *testing.T) {
-	out := syncOutput(t, func(root string) {
-		writeFile(t, filepath.Join(root, "package.json"), `{"devDependencies":{"vitest":"^4.0.0"}}`)
-	})
+// sync writes nothing. It is the half of the pair that is safe at any moment,
+// and a report that changed the repository would not be.
+func TestSyncWritesNothing(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "package.json"), `{"devDependencies":{"vitest":"^4.0.0"}}`)
 
-	if !strings.Contains(out, "@stryker-mutator/core") {
-		t.Errorf("output does not install the Stryker package:\n%s", out)
+	before := tree(t, root)
+	previous := workingDirectory
+	workingDirectory = func() (string, error) { return root, nil }
+	t.Cleanup(func() { workingDirectory = previous })
+
+	if err := RunSync(nil, &bytes.Buffer{}); err != nil {
+		t.Fatalf("RunSync() = %v", err)
+	}
+
+	if after := tree(t, root); after != before {
+		t.Errorf("sync changed the repository:\nbefore %q\nafter  %q", before, after)
 	}
 }
 
-// Nothing here is a one-time act. A hook that is present makes the step vanish;
-// a hook that was rewritten, renamed or deleted stops matching and the step
-// comes back on its own. That is the whole drift story, and it needs no file to
-// remember anything.
-func TestSyncTracksTheHookBothWays(t *testing.T) {
-	cases := []struct {
-		name     string
-		file     string
-		contents string
-		wired    bool
-	}{
-		{"no hook at all", "", "", false},
-		{"lefthook invokes the gate", "lefthook.yml", "pre-commit:\n  commands:\n    gate:\n      run: dharness check\n", true},
-		{"husky invokes the gate", filepath.Join(".husky", "pre-commit"), "#!/bin/sh\ndharness check\n", true},
-		{"hook exists but calls something else", "lefthook.yml", "pre-commit:\n  commands:\n    lint:\n      run: eslint .\n", false},
-		{"hook was rewritten to an old command", "lefthook.yml", "pre-commit:\n  commands:\n    gate:\n      run: dharness run pre-commit\n", false},
-	}
+func tree(t *testing.T, root string) string {
+	t.Helper()
 
-	for _, testCase := range cases {
-		t.Run(testCase.name, func(t *testing.T) {
-			out := syncOutput(t, func(root string) {
-				writeFile(t, filepath.Join(root, "package.json"), `{"devDependencies":{"vitest":"^4.0.0"}}`)
-				if testCase.file != "" {
-					writeFile(t, filepath.Join(root, testCase.file), testCase.contents)
-				}
-			})
-
-			asks := strings.Contains(out, "Wire the commit gate")
-			if testCase.wired && asks {
-				t.Errorf("output still asks to wire a gate that is already wired:\n%s", out)
-			}
-			if !testCase.wired && !asks {
-				t.Errorf("output does not ask to wire the gate:\n%s", out)
-			}
-		})
+	var paths []string
+	err := filepath.Walk(root, func(path string, _ os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		paths = append(paths, path)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
+	return strings.Join(paths, "\n")
 }
