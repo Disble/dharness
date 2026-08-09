@@ -120,8 +120,10 @@ func TestSyncDropsStepsTheProjectAlreadySatisfied(t *testing.T) {
 			t.Errorf("output still asks for %q on a configured project:\n%s", gone, out)
 		}
 	}
-	if !strings.Contains(out, "dharness mutate --dry-run") {
-		t.Errorf("output dropped the measurement, which is never satisfied by setup:\n%s", out)
+	// Setup is the whole subject here: with nothing left, the command says so
+	// instead of listing a step that adoption can never satisfy.
+	if !strings.Contains(out, "Nothing to do") {
+		t.Errorf("a fully configured project got no terminal answer:\n%s", out)
 	}
 }
 

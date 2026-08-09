@@ -52,7 +52,7 @@ func TestUnreadableEvidenceReadsAsUnanswered(t *testing.T) {
 func TestOwnedDirectoryIgnoresItsOwnTransientFiles(t *testing.T) {
 	p := Project{Root: t.TempDir()}
 
-	path, err := p.EnsureDir("stryker-incremental.json")
+	path, err := p.EnsureDir("stryker-tmp")
 	if err != nil {
 		t.Fatalf("EnsureDir() = %v", err)
 	}

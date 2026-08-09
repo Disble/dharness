@@ -20,10 +20,11 @@ import (
 // comes from the same detection the commands themselves use, so it cannot
 // disagree with them.
 //
-// The split is the one rule that decides what appears here: anything with a
-// command is printed as that exact command, and only what no CLI exposes — the
-// adaptation of fallow's entry points to an unusual layout — is described as
-// work to do.
+// It reports setup, and only setup. Measuring what a scoped mutation costs is
+// a diagnostic somebody asks for, not a step of adopting the harness: it takes
+// a full initial test run and changes nothing about the installation. Leaving
+// it here kept the command asking forever for a reason that served the command
+// rather than whoever runs it.
 //
 // It is named sync rather than init because nothing here is a one-time act. The
 // project moves: a runner is swapped, a tool is removed, a hook is rewritten.
@@ -91,19 +92,13 @@ func RunSync(args []string, stdout io.Writer) error {
 		fmt.Fprintf(stdout, "If it reports an implausible share of the project as unreachable, the graph is\nrooted in the wrong place. Write %s declaring this project's real entry\npoints, then run it again and confirm the figure collapsed.\n\n", fallowConfigName)
 	}
 
-	if measured := p.ReadEvidence().ScopedMutation; measured != nil {
-		if steps == 0 {
-			fmt.Fprintf(stdout, "Nothing to do. Scoped mutation ran %d test(s) for %s when it was measured.\n",
+	if steps == 0 {
+		fmt.Fprintln(stdout, "Nothing to do: everything this project needs is in place.")
+		if measured := p.ReadEvidence().ScopedMutation; measured != nil {
+			fmt.Fprintf(stdout, "Scoped mutation ran %d test(s) for %s when it was measured.\n",
 				measured.RelatedTests, measured.MeasuredPath)
-			return nil
 		}
-		return nil
 	}
-
-	step("Measure whether scoped mutation testing is viable here")
-	fmt.Fprintf(stdout, "Stryker mutates the paths you name, but the test runner decides which tests to\nrun by reading the import graph. Barrel files inflate that graph until every\ntest counts as related, and the scoping disappears.\n\n")
-	fmt.Fprintf(stdout, "    dharness mutate --dry-run <a source file>\n\n")
-	fmt.Fprintf(stdout, "A handful of tests means scoped mutation works here. The whole suite means it does not.\n")
 
 	return nil
 }
