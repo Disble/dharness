@@ -1,0 +1,11 @@
+# Build output
+/dharness
+/dharness.exe
+/dist/
+
+# Go
+*.test
+*.out
+
+# Editors and agents
+.atl/
