@@ -57,16 +57,25 @@ sin discutirlo.
 configuración a un layout, lo correcto sería ejecutarlo y no complicarse. Con ese
 criterio, la superficie de la skill se redujo a una sola cosa.
 
-### 03. dharness posee la invocación, no la configuración
+### 03. dharness posee la invocación, y solo la configuración que escribe él
 
-Alcance, orden, techo de recursos y código de salida. Cada herramienta conserva
-su configuración nativa, escrita por su propio `init`: dharness no la lee, no la
-escribe y no la traduce.
+Alcance, orden, techo de recursos y código de salida. De la configuración
+ajena no toca nada: escribe la suya en `.dharness/` y le agrega al archivo del
+proyecto una línea que apunta ahí.
 
 *Salió de:* tres revisiones girando alrededor de cómo compartir configuraciones
 entre repositorios. Puesto a resolverlo en concreto, el problema se disolvió: la
 configuración por proyecto es chica, es específica de ese repositorio, y las
 herramientas ya la generan. Lo caro y repetido era la ejecución.
+
+*Enmendado el 9 de agosto de 2026.* La primera versión decía que dharness no
+escribe configuración en absoluto, y dejó de ser cierta dos veces. La primera
+cuando lefthook y fallow resultaron componer con `extends`: escribir un archivo
+propio y referenciarlo es menos invasivo que fusionar el ajeno, no más. La
+segunda cuando decidimos publicar un paquete de reglas propio, porque los
+umbrales que necesita no caben en la severidad que react-doctor acepta y tienen
+que vivir en un archivo. La frontera real no es escribir o no escribir: es de
+quién es el archivo.
 
 ### 04. Un comando que no se puede nombrar está haciendo dos cosas
 

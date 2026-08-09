@@ -40,3 +40,18 @@ this file only explains the _why_, it never replaces the _how_.
 - [2026-08-09]: `fallow list --boundaries` prints the expanded zones with file counts and warns when a zone matches nothing — that is the configuration check.
 - [2026-08-09]: gremlins produced 94%, 0% and 0% efficacy across three identical runs, so it cannot stand behind a gate.
 - [2026-08-09]: Mermaid in a published artifact needs `theme: "base"` with explicit `themeVariables`, and a `<br/>` inside a label eats the surrounding space.
+- [2026-08-09]: StrykerJS exposes no way to fail on survivors from the command line — neither `--break` nor `--thresholds.break` exists, so the verdict has to come from reading its report.
+- [2026-08-09]: `--dryRunOnly` completes without writing any report, so the test count it produces exists only in the line of prose that states it.
+- [2026-08-09]: Stryker's `cleanTempDir` only runs on a successful exit, and even set to `always` a sandbox can stay locked for a moment on Windows, so removal needs retries.
+- [2026-08-09]: A tool's binary name is not its package name: `stryker` comes from `@stryker-mutator/core`, and asking a registry for the binary name fetches something else.
+- [2026-08-09]: Repository-local state belongs in the git common directory: git ignores it, worktrees share it, and it dies with the repository instead of outliving it in a hashed cache.
+- [2026-08-09]: lefthook and fallow both compose with `extends`, so a tool can own its own config file and the project's own file only gains one line.
+- [2026-08-09]: `lefthook-local.yml` is auto-merged without touching the project's config, but it is conventionally gitignored, so it cannot carry anything meant to be shared.
+- [2026-08-09]: `react-doctor install --yes` writes five things — skills for every detected agent, a package script, a dev dependency, a git hook that competes with an existing gate, and a CI workflow — and has no flag to ask for the skill alone.
+- [2026-08-09]: `claude mcp add <name> <command> [args]` is not interactive, and fallow ships the `fallow-mcp` binary in its own package.
+- [2026-08-09]: An ESLint rule runs unmodified as a react-doctor plugin, `messageId` and `meta.messages` included, but `sourceCode.getJSDocComment` is present and throws.
+- [2026-08-09]: react-doctor rule severity accepts only `error`, `warn` or `off`, so a rule cannot carry a threshold and `context.options` arrives empty.
+- [2026-08-09]: oxlint has neither `no-restricted-syntax` nor `jsdoc/require-jsdoc`, which is why shape and documentation rules cannot be expressed as configuration.
+- [2026-08-09]: react-doctor does not run oxlint's core rules from `.oxlintrc.json`; adopting that config means reading severities for its own rules, not executing others.
+- [2026-08-09]: fallow rejects an unknown config key by listing every valid one, and `fallow recommend --format json` classifies each decision as detected, defaulted or taste, with the question already shaped for an agent to ask.
+- [2026-08-09]: In fallow's boundaries a type-only import still crosses a zone while an external package does not, and `boundary-violation` defaults to `error`.
