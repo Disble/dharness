@@ -6,8 +6,8 @@ import (
 	"io"
 	"strings"
 
-	"dharness/internal/project"
-	"dharness/internal/tool"
+	"github.com/Disble/dharness/internal/project"
+	"github.com/Disble/dharness/internal/tool"
 )
 
 // RunSync prints what this project still needs, derived from what dharness
@@ -91,6 +91,15 @@ func RunSync(args []string, stdout io.Writer) error {
 		fmt.Fprintf(stdout, "If it reports an implausible share of the project as unreachable, the graph is\nrooted in the wrong place. Write %s declaring this project's real entry\npoints, then run it again and confirm the figure collapsed.\n\n", fallowConfigName)
 	}
 
+	if measured := p.ReadEvidence().ScopedMutation; measured != nil {
+		if steps == 0 {
+			fmt.Fprintf(stdout, "Nothing to do. Scoped mutation ran %d test(s) for %s when it was measured.\n",
+				measured.RelatedTests, measured.MeasuredPath)
+			return nil
+		}
+		return nil
+	}
+
 	step("Measure whether scoped mutation testing is viable here")
 	fmt.Fprintf(stdout, "Stryker mutates the paths you name, but the test runner decides which tests to\nrun by reading the import graph. Barrel files inflate that graph until every\ntest counts as related, and the scoping disappears.\n\n")
 	fmt.Fprintf(stdout, "    dharness mutate --dry-run <a source file>\n\n")
@@ -117,17 +126,8 @@ func missingTools(p project.Project) []string {
 	var missing []string
 	for _, name := range []string{tool.ReactDoctor, tool.Fallow, tool.Stryker} {
 		if !p.Resolve(name).Local {
-			missing = append(missing, packageOf(name))
+			missing = append(missing, project.Package(name))
 		}
 	}
 	return missing
-}
-
-// packageOf maps a binary name to the package that provides it. Stryker's
-// binary is `stryker`; its package is not.
-func packageOf(binary string) string {
-	if binary == tool.Stryker {
-		return "@stryker-mutator/core"
-	}
-	return binary
 }

@@ -1,13 +1,16 @@
 package cli
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 
-	"dharness/internal/project"
-	"dharness/internal/runner"
-	"dharness/internal/tool"
+	"github.com/Disble/dharness/internal/project"
+	"github.com/Disble/dharness/internal/runner"
+	"github.com/Disble/dharness/internal/tool"
 )
 
 // defaultConcurrency is deliberately below the core count Stryker would pick.
@@ -20,6 +23,20 @@ const defaultConcurrency = 2
 // ErrNoMutatePaths reports a run with nothing to mutate.
 var ErrNoMutatePaths = errors.New("mutate needs at least one path, for example: dharness mutate src/thing.ts")
 
+// SurvivorsError reports mutants that no test noticed.
+//
+// It exists because Stryker will not report this itself: its exit code says
+// nothing about survivors unless a threshold is set in a config file, and there
+// is no command line equivalent. Verified by running it — a run with six killed
+// mutants and one survivor exited 0.
+type SurvivorsError struct {
+	Survivors []tool.Survivor
+}
+
+func (e *SurvivorsError) Error() string {
+	return fmt.Sprintf("%d mutant(s) survived: a test would not have noticed this code breaking", len(e.Survivors))
+}
+
 // RunMutate runs mutation testing over exactly the paths it is given.
 //
 // This is a command, not a gate. Mutation testing answers whether a test would
@@ -30,13 +47,11 @@ var ErrNoMutatePaths = errors.New("mutate needs at least one path, for example: 
 // --dry-run answers a different question with the same machinery: how many
 // tests a scoped run would actually execute. Stryker does not derive that from
 // the paths, the test runner derives it from the import graph, and barrel files
-// inflate that graph until every test counts as related. Measuring it costs one
-// initial test run and mutates nothing.
+// inflate that graph until every test counts as related.
 func RunMutate(args []string, stdout io.Writer) error {
 	flags := newFlagSet("mutate <path...>", stdout, "Run mutation testing over the given files. Use it once their tests are green.")
 	concurrency := flags.Int("concurrency", defaultConcurrency, "Stryker workers")
 	dryRun := flags.Bool("dry-run", false, "measure how many tests a scoped run executes, without mutating anything")
-	breakAt := flags.Int("break", tool.AnySurvivorFails, "fail below this mutation score; 0 defers to the project's own Stryker configuration")
 	paths, err := parseInterspersed(flags, args)
 	if err != nil {
 		return err
@@ -63,22 +78,81 @@ func RunMutate(args []string, stdout io.Writer) error {
 		return err
 	}
 
-	// A project that configured Stryker chose its own thresholds and reporters,
-	// so dharness leaves both alone, on the same rule that governs testRunner.
-	threshold := *breakAt
-	if p.HasStrykerConfig() {
-		threshold = 0
-	}
-
-	strykerArgs := tool.StrykerMutate(paths, testRunner, *concurrency, threshold)
 	if *dryRun {
 		fmt.Fprintln(stdout, "Running the initial test run only, to count the tests the runner considers related.")
-		strykerArgs = tool.StrykerDryRun(paths, testRunner)
+
+		// The count only exists in the output: --dryRunOnly writes no report.
+		var transcript bytes.Buffer
+		if err := runStryker(p, dir, tool.StrykerDryRun(paths, testRunner), io.MultiWriter(stdout, &transcript)); err != nil {
+			return err
+		}
+		return recordMeasurement(p, transcript.String(), paths[0], stdout)
 	}
 
-	if err := runner.Run(p.Resolve(tool.Stryker).Command(dir, strykerArgs...), stdout, stdout); err != nil {
+	incremental, err := p.CachePath("stryker-incremental.json")
+	if err != nil {
+		return err
+	}
+
+	if err := runStryker(p, dir, tool.StrykerMutate(paths, testRunner, incremental, *concurrency), stdout); err != nil {
+		return err
+	}
+	return reportSurvivors(dir, stdout)
+}
+
+func runStryker(p project.Project, dir string, args []string, stdout io.Writer) error {
+	command := p.Resolve(tool.Stryker).Command(dir, args...)
+	command.LowPriority = true
+
+	if err := runner.Run(command, stdout, stdout); err != nil {
 		fmt.Fprint(stdout, pointer(p, tool.Stryker))
 		return err
 	}
 	return nil
+}
+
+// recordMeasurement persists what the dry run cost, so sync can stop asking.
+//
+// Without it sync has no terminal state: every step it prints is derived from
+// the tree, and this one is not derivable at all — it takes a full initial test
+// run to learn. A repository that never records it is asked forever.
+func recordMeasurement(p project.Project, transcript, path string, stdout io.Writer) error {
+	related, err := tool.RelatedTests(transcript)
+	if err != nil {
+		return err
+	}
+	if err := p.RecordScopedMutation(path, related); err != nil {
+		return err
+	}
+
+	fmt.Fprintf(stdout, "\n%d test(s) ran for %s. Recorded in %s/, which is meant to be committed.\n",
+		related, path, project.EvidenceDir)
+	return nil
+}
+
+// reportSurvivors turns Stryker's report into the exit code it does not
+// produce. A missing report is not a pass: it means the run said nothing.
+func reportSurvivors(dir string, stdout io.Writer) error {
+	path := filepath.Join(dir, tool.MutationReportPath)
+
+	file, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("mutation ran but wrote no report at %s, so its verdict cannot be read: %w", tool.MutationReportPath, err)
+	}
+	defer func() { _ = file.Close() }()
+
+	survivors, err := tool.Survivors(file)
+	if err != nil {
+		return err
+	}
+	if len(survivors) == 0 {
+		fmt.Fprintln(stdout, "\nEvery mutant was caught: these tests notice this code breaking.")
+		return nil
+	}
+
+	fmt.Fprintf(stdout, "\n%d mutant(s) survived — a test would not have noticed:\n\n", len(survivors))
+	for _, survivor := range survivors {
+		fmt.Fprintf(stdout, "  %s\n", survivor)
+	}
+	return &SurvivorsError{Survivors: survivors}
 }

@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"dharness/internal/project"
-	"dharness/internal/runner"
+	"github.com/Disble/dharness/internal/project"
+	"github.com/Disble/dharness/internal/runner"
 )
 
 // record captures what would have been invoked, so the gate's order and flags
@@ -18,10 +18,14 @@ import (
 type record struct {
 	commands []runner.Command
 	fail     map[string]error
+	emit     string
 }
 
-func (r *record) run(cmd runner.Command, _, _ io.Writer) error {
+func (r *record) run(cmd runner.Command, stdout, _ io.Writer) error {
 	r.commands = append(r.commands, cmd)
+	if r.emit != "" {
+		_, _ = io.WriteString(stdout, r.emit)
+	}
 	return r.fail[toolOf(cmd)]
 }
 
@@ -156,9 +160,7 @@ func TestMutatePairsIncrementalWithForceAndBoundsConcurrency(t *testing.T) {
 	captured, root := stub(t, "")
 	mutable(t, root)
 
-	if err := RunMutate([]string{"src/a.ts", "src/b.ts"}, io.Discard); err != nil {
-		t.Fatalf("RunMutate() = %v", err)
-	}
+	_ = RunMutate([]string{"src/a.ts", "src/b.ts"}, io.Discard)
 
 	args := strings.Join(captured.commands[0].Args, " ")
 	for _, want := range []string{"--mutate src/a.ts", "--mutate src/b.ts", "--incremental", "--force", "--concurrency 2"} {
@@ -172,6 +174,8 @@ func TestMutateDryRunMeasuresWithoutMutating(t *testing.T) {
 	captured, root := stub(t, "")
 	mutable(t, root)
 
+	captured.emit = "16:52:00 INFO DryRunExecutor Initial test run succeeded. Ran 3 tests in 0 seconds.\n"
+
 	if err := RunMutate([]string{"src/a.ts", "--dry-run"}, io.Discard); err != nil {
 		t.Fatalf("RunMutate() = %v", err)
 	}
@@ -183,6 +187,61 @@ func TestMutateDryRunMeasuresWithoutMutating(t *testing.T) {
 	if strings.Contains(args, "--force") {
 		t.Errorf("--dry-run must not mutate: %s", args)
 	}
+
+	// Without the measurement recorded, sync has no terminal state and asks for
+	// it on every run, forever.
+	measured := project.Describe(root).ReadEvidence().ScopedMutation
+	if measured == nil {
+		t.Fatal("the measurement was not recorded")
+	}
+	if measured.RelatedTests != 3 || measured.MeasuredPath != "src/a.ts" {
+		t.Errorf("recorded %+v, want 3 tests for src/a.ts", measured)
+	}
+}
+
+func writeReport(t *testing.T, root, contents string) {
+	t.Helper()
+	writeFile(t, filepath.Join(root, "reports", "mutation", "mutation.json"), contents)
+}
+
+// Stryker prints surviving mutants and exits 0. If dharness reads the report
+// and stays quiet too, the command reports success on tests that would not
+// notice the code breaking.
+func TestMutateFailsOnSurvivors(t *testing.T) {
+	_, root := stub(t, "")
+	mutable(t, root)
+	writeReport(t, root, `{"files":{"src/a.ts":{"mutants":[
+		{"status":"Killed","mutatorName":"BooleanLiteral","location":{"start":{"line":1}}},
+		{"status":"Survived","mutatorName":"EqualityOperator","location":{"start":{"line":7}}},
+		{"status":"Timeout","mutatorName":"ArithmeticOperator","location":{"start":{"line":9}}},
+		{"status":"NoCoverage","mutatorName":"StringLiteral","location":{"start":{"line":11}}}
+	]}}}`)
+
+	var out bytes.Buffer
+	err := RunMutate([]string{"src/a.ts"}, &out)
+
+	var survivors *SurvivorsError
+	if !errors.As(err, &survivors) {
+		t.Fatalf("RunMutate() = %v, want SurvivorsError", err)
+	}
+	// A timeout is a detection, and an uncovered mutant is a coverage gap.
+	// Neither is a test that failed to notice a change it did observe.
+	if len(survivors.Survivors) != 1 {
+		t.Fatalf("reported %d survivors, want 1: %+v", len(survivors.Survivors), survivors.Survivors)
+	}
+	if !strings.Contains(out.String(), "src/a.ts:7 EqualityOperator") {
+		t.Errorf("output does not locate the survivor:\n%s", out.String())
+	}
+}
+
+// A run that wrote no report measured nothing, and silence is not a pass.
+func TestMutateFailsWhenThereIsNoReportToRead(t *testing.T) {
+	_, root := stub(t, "")
+	mutable(t, root)
+
+	if err := RunMutate([]string{"src/a.ts"}, io.Discard); err == nil {
+		t.Fatal("RunMutate() = nil with no report; a missing verdict is not a pass")
+	}
 }
 
 // Nobody writes their flags before their paths. The standard flag package stops
@@ -191,9 +250,7 @@ func TestMutateAcceptsFlagsAfterPaths(t *testing.T) {
 	captured, root := stub(t, "")
 	mutable(t, root)
 
-	if err := RunMutate([]string{"src/a.ts", "--concurrency", "4", "src/b.ts"}, io.Discard); err != nil {
-		t.Fatalf("RunMutate() = %v", err)
-	}
+	_ = RunMutate([]string{"src/a.ts", "--concurrency", "4", "src/b.ts"}, io.Discard)
 
 	args := strings.Join(captured.commands[0].Args, " ")
 	for _, want := range []string{"--mutate src/a.ts", "--mutate src/b.ts", "--concurrency 4"} {
@@ -206,43 +263,41 @@ func TestMutateAcceptsFlagsAfterPaths(t *testing.T) {
 	}
 }
 
-// Stryker's own default is `break: null`, documented as "never let your build
-// fail". A mutate that reports survivors and exits 0 is a command nobody can
-// act on, so the threshold is not optional.
-func TestMutateMakesTheExitCodeMeanSomething(t *testing.T) {
+// Stryker exposes no way to fail on survivors from the command line: --break
+// and --thresholds.break were both rejected as unknown options. The json
+// reporter is what makes a verdict possible at all, and it runs at low
+// priority because it is the one thing here that can saturate a machine.
+func TestMutateAsksForTheReportItNeedsToJudge(t *testing.T) {
 	captured, root := stub(t, "")
 	mutable(t, root)
 
-	if err := RunMutate([]string{"src/a.ts"}, io.Discard); err != nil {
-		t.Fatalf("RunMutate() = %v", err)
-	}
+	_ = RunMutate([]string{"src/a.ts"}, io.Discard)
 
 	args := strings.Join(captured.commands[0].Args, " ")
-	if !strings.Contains(args, "--break 100") {
-		t.Errorf("stryker would exit 0 with survivors: %s", args)
+	if !strings.Contains(args, "--reporters clear-text,json") {
+		t.Errorf("without the json reporter there is no verdict to read: %s", args)
 	}
-	if !strings.Contains(args, "--reporters clear-text") {
-		t.Errorf("the progress bar and the html file are still on: %s", args)
+	if strings.Contains(args, "--break") {
+		t.Errorf("--break does not exist in Stryker and was rejected when tried: %s", args)
+	}
+	if !captured.commands[0].LowPriority {
+		t.Error("mutation ran at normal priority; it is the one command that can freeze the machine")
 	}
 }
 
 // A project that configured Stryker chose its thresholds and reporters on
 // purpose; overruling them from a default would be dharness deciding something
 // that is not its business.
-func TestMutateDefersThresholdsToAProjectThatConfiguredStryker(t *testing.T) {
+func TestMutateDefersTheRunnerToAProjectThatConfiguredStryker(t *testing.T) {
 	captured, root := stub(t, "")
 	mutable(t, root)
 	writeFile(t, filepath.Join(root, "stryker.config.mjs"), "export default {}")
 
-	if err := RunMutate([]string{"src/a.ts"}, io.Discard); err != nil {
-		t.Fatalf("RunMutate() = %v", err)
-	}
+	_ = RunMutate([]string{"src/a.ts"}, io.Discard)
 
 	args := strings.Join(captured.commands[0].Args, " ")
-	for _, mine := range []string{"--break", "--reporters", "--testRunner"} {
-		if strings.Contains(args, mine) {
-			t.Errorf("dharness overruled the project's own %s: %s", mine, args)
-		}
+	if strings.Contains(args, "--testRunner") {
+		t.Errorf("dharness overruled the project's own runner: %s", args)
 	}
 	if !strings.Contains(args, "--incremental") {
 		t.Errorf("dharness dropped what it does own: %s", args)

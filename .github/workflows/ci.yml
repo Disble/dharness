@@ -1,0 +1,24 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        # Windows is not optional here: the .cmd shim routing that makes a
+        # locally installed tool reachable only exists on that platform.
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - run: gofmt -l . | tee /dev/stderr | (! read)
+        shell: bash
+      - run: go vet ./...
+      - run: go test ./... -race

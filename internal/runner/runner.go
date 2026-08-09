@@ -25,6 +25,16 @@ type Command struct {
 	Name  string
 	Args  []string
 	Dir   string
+
+	// LowPriority asks the operating system to schedule this process behind
+	// whatever the machine is already doing.
+	//
+	// It is set for mutation testing, which is the one thing here that can
+	// saturate a machine for minutes. Capping worker count is not the same
+	// remedy: fewer workers still compete at the same priority, while a lower
+	// priority yields the moment something else wants the CPU. The run takes
+	// slightly longer in wall clock and the machine stays usable throughout.
+	LowPriority bool
 }
 
 func (c Command) String() string {
@@ -71,7 +81,20 @@ func execute(cmd Command, stdout, stderr io.Writer) error {
 	process.Stdout = stdout
 	process.Stderr = stderr
 
-	err := process.Run()
+	// Priority is applied on both sides of Start because the two platforms
+	// offer it at different moments: Windows sets a creation flag, POSIX
+	// renices a process that already exists.
+	if cmd.LowPriority {
+		beforeStart(process)
+	}
+	if err := process.Start(); err != nil {
+		return &StartError{Command: cmd.String(), Cause: err}
+	}
+	if cmd.LowPriority {
+		afterStart(process.Process.Pid)
+	}
+
+	err := process.Wait()
 	if err == nil {
 		return nil
 	}

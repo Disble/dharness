@@ -9,7 +9,7 @@ import (
 	"io"
 	"os"
 
-	"dharness/internal/project"
+	"github.com/Disble/dharness/internal/project"
 )
 
 // newFlagSet builds a subcommand flag set that reports on the caller's writer

@@ -61,32 +61,6 @@ func FallowAudit() []string {
 	return []string{"audit"}
 }
 
-// AnySurvivorFails is the threshold below which Stryker exits non-zero.
-//
-// 100 means any surviving mutant fails the command. That is severe for a whole
-// repository and exactly right for this one: mutate always runs over paths you
-// named, whose tests you just wrote, and the question being asked is whether
-// those tests would notice the code breaking. A survivor is a no.
-const AnySurvivorFails = 100
-
-// verdict returns the arguments that make the exit code mean something.
-//
-// Stryker's own default is `break: null`, documented as "never let your build
-// fail": it reports surviving mutants and exits 0. A command whose failure has
-// to be read out of its prose is not a command an agent — or a tired human —
-// can act on, so dharness sets the threshold and the exit code becomes the
-// answer.
-//
-// The reporters are trimmed for the same reason. The default set includes
-// progress, which paints a live bar into a stream that is usually a pipe, and
-// html, which writes a file report nobody in this flow opens.
-func verdict(breakAt int) []string {
-	return []string{
-		"--break", strconv.Itoa(breakAt),
-		"--reporters", "clear-text",
-	}
-}
-
 // runner returns the --testRunner argument, or nothing when the project's own
 // configuration already answers it.
 //
@@ -114,21 +88,23 @@ func runner(testRunner string) []string {
 //
 // --concurrency is passed explicitly because the default is derived from the
 // core count, and Stryker is the only tool here that can saturate the machine.
-// A breakAt of zero leaves the threshold and the reporters to the project's own
-// Stryker configuration, on the same rule as testRunner: what the project
-// decided deliberately is not something a default should overrule.
-func StrykerMutate(paths []string, testRunner string, concurrency, breakAt int) []string {
+// The verdict is not a flag. Stryker exposes no --break and no dotted
+// equivalent, so the exit code has to come from reading the report it writes;
+// see Survivors.
+func StrykerMutate(paths []string, testRunner, incrementalFile string, concurrency int) []string {
 	args := []string{"run"}
 	args = append(args, mutate(paths)...)
 	args = append(args, runner(testRunner)...)
 	args = append(args,
 		"--incremental",
+		"--incrementalFile", incrementalFile,
 		"--force",
 		"--concurrency", strconv.Itoa(concurrency),
+		// clear-text so a person can read it, json so dharness can reach a
+		// verdict. progress paints a live bar into what is usually a pipe, and
+		// html writes a file report nobody in this flow opens.
+		"--reporters", "clear-text,json",
 	)
-	if breakAt > 0 {
-		args = append(args, verdict(breakAt)...)
-	}
 	return args
 }
 
@@ -142,7 +118,7 @@ func StrykerDryRun(paths []string, testRunner string) []string {
 	args := []string{"run"}
 	args = append(args, mutate(paths)...)
 	args = append(args, runner(testRunner)...)
-	return append(args, "--dryRunOnly")
+	return append(args, "--dryRunOnly", "--reporters", "clear-text,json")
 }
 
 func mutate(paths []string) []string {

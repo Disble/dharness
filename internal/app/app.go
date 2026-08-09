@@ -11,8 +11,8 @@ import (
 	"io"
 	"os"
 
-	"dharness/internal/cli"
-	"dharness/internal/runner"
+	"github.com/Disble/dharness/internal/cli"
+	"github.com/Disble/dharness/internal/runner"
 )
 
 // Version is set from main via ldflags at build time.

@@ -5,9 +5,9 @@ import (
 	"io"
 	"strings"
 
-	"dharness/internal/project"
-	"dharness/internal/runner"
-	"dharness/internal/tool"
+	"github.com/Disble/dharness/internal/project"
+	"github.com/Disble/dharness/internal/runner"
+	"github.com/Disble/dharness/internal/tool"
 )
 
 // RunCheck is the commit gate.

@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"os"
 
-	"dharness/internal/app"
+	"github.com/Disble/dharness/internal/app"
 )
 
 // version is set via ldflags at build time.

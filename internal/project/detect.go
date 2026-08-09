@@ -9,6 +9,8 @@
 package project
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -16,7 +18,7 @@ import (
 	"runtime"
 	"strings"
 
-	"dharness/internal/runner"
+	"github.com/Disble/dharness/internal/runner"
 )
 
 // Project is everything dharness detected about a repository.
@@ -47,6 +49,19 @@ var remoteExec = map[string][]string{
 	"npm":  {"npx", "--yes"},
 }
 
+// packages maps a binary name to the package that provides it. Stryker's
+// binary is `stryker`; its package is not, and asking a registry for `stryker`
+// fetches something else entirely.
+var packages = map[string]string{"stryker": "@stryker-mutator/core"}
+
+// Package returns the npm package that provides a tool's binary.
+func Package(tool string) string {
+	if name, ok := packages[tool]; ok {
+		return name
+	}
+	return tool
+}
+
 // LatestSpec pins the remote form to the published version.
 //
 // Measured, not assumed: `npx react-doctor` resolved 0.2.1 from a stale cache
@@ -54,7 +69,7 @@ var remoteExec = map[string][]string{
 // silently, with flags rejected as unknown that the current release documents.
 // An unpinned remote invocation is not "whatever is current", it is "whatever
 // this machine happened to download once".
-func LatestSpec(tool string) string { return tool + "@latest" }
+func LatestSpec(tool string) string { return Package(tool) + "@latest" }
 
 // Describe inspects root. It never fails: an undetected field is empty, and
 // callers decide whether that matters.
@@ -218,6 +233,26 @@ func (p Project) HookWired() bool {
 		}
 	}
 	return false
+}
+
+// CachePath returns a writable path for state that belongs to a run rather
+// than to the repository, keyed so two projects never collide.
+//
+// Stryker's incremental file defaults to reports/ inside the project. Its json
+// report cannot be moved at all — neither --jsonReporter.fileName nor any
+// dotted form of it exists — but the incremental file can, and it is the one
+// that would otherwise be committed or wiped by accident.
+func (p Project) CachePath(name string) (string, error) {
+	base, err := os.UserCacheDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve the cache directory: %w", err)
+	}
+	digest := sha256.Sum256([]byte(p.Root))
+	dir := filepath.Join(base, "dharness", hex.EncodeToString(digest[:8]))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("create the cache directory: %w", err)
+	}
+	return filepath.Join(dir, name), nil
 }
 
 // InstallCommand is how this project's package manager adds dev dependencies.

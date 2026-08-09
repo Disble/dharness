@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"dharness/internal/runner"
+	"github.com/Disble/dharness/internal/runner"
 )
 
 func TestRunArgsWithoutArgumentsPrintsHelp(t *testing.T) {
