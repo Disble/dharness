@@ -1,9 +1,8 @@
 package setup
 
-// The rules package is not written yet, so its shape is pinned here rather
-// than discovered later. Everything that consumes it — the install step, the
+// Everything that consumes the rules package — the install step, the
 // react-doctor declaration, the thresholds file — reads these constants, so
-// when the package is published the only thing that has to match is this file.
+// the whole contract with it is this one file.
 //
 // The prefix comes from the plugin's own `meta.name`, not from the package
 // name. Verified by running: a rule declared as `dharness/max-file-lines`
@@ -26,7 +25,7 @@ const (
 var Rules = []string{
 	"max-file-lines",
 	"require-jsdoc",
-	"require-exported-variable-jsdoc",
+	"require-variable-jsdoc",
 	"role-file-shape",
 	"folder-ownership",
 	"pure-index-barrel",

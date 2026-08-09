@@ -55,3 +55,6 @@ this file only explains the _why_, it never replaces the _how_.
 - [2026-08-09]: react-doctor does not run oxlint's core rules from `.oxlintrc.json`; adopting that config means reading severities for its own rules, not executing others.
 - [2026-08-09]: fallow rejects an unknown config key by listing every valid one, and `fallow recommend --format json` classifies each decision as detected, defaulted or taste, with the question already shaped for an agent to ask.
 - [2026-08-09]: In fallow's boundaries a type-only import still crosses a zone while an external package does not, and `boundary-violation` defaults to `error`.
+- [2026-08-09]: A comment above `export function f() {}` belongs to the export statement, not to the function inside it, so asking the inner node finds nothing and every documented export reports as bare.
+- [2026-08-09]: ESLint's `estree` types describe JavaScript only — interfaces, type aliases and enums exist solely in the AST the TypeScript parser hands over, so a rule that reads them has to name the shape it reads.
+- [2026-08-09]: A rule that relies on config globs for scope reports every file in the project under react-doctor, whose rule configuration is a severity and nothing else.
