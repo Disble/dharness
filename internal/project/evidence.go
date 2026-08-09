@@ -8,8 +8,27 @@ import (
 	"time"
 )
 
-// EvidenceDir is the one directory dharness owns inside a repository.
-const EvidenceDir = ".dharness"
+// Dir is the one directory dharness owns inside a repository.
+const Dir = ".dharness"
+
+// dirIgnore keeps the directory self-contained: it declares what of its own
+// contents is machine-local instead of asking the project's root .gitignore to
+// know about dharness at all.
+//
+// The shape is an allow list on purpose. Ignoring everything and naming the
+// files that describe this repository means a transient file added later is
+// ignored by default, and a file meant to be shared has to be declared. The
+// opposite shape leaks state into commits the first time something new appears.
+const dirIgnore = `# dharness — this directory is written by dharness.
+# Everything here is machine-local unless it is named below, so transient files
+# (incremental reports, caches) never show up in git.
+*
+!.gitignore
+!lefthook.yml
+!fallow.jsonc
+!rules.json
+!evidence.json
+`
 
 // evidenceFile holds facts that cost something to obtain and cannot be derived
 // from the tree.
@@ -45,7 +64,27 @@ type ScopedMutation struct {
 const evidenceSchema = "dharness.evidence/v1"
 
 func (p Project) evidencePath() string {
-	return filepath.Join(p.Root, EvidenceDir, evidenceFile)
+	return filepath.Join(p.Root, Dir, evidenceFile)
+}
+
+// EnsureDir creates the owned directory and its ignore rules, and returns the
+// path to a file inside it.
+//
+// Every write into the directory goes through here so the ignore file can
+// never be missing when the first transient file appears.
+func (p Project) EnsureDir(name string) (string, error) {
+	dir := filepath.Join(p.Root, Dir)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("create %s: %w", Dir, err)
+	}
+
+	ignore := filepath.Join(dir, ".gitignore")
+	if _, err := os.Stat(ignore); err != nil {
+		if err := os.WriteFile(ignore, []byte(dirIgnore), 0o600); err != nil {
+			return "", fmt.Errorf("write %s: %w", ignore, err)
+		}
+	}
+	return filepath.Join(dir, name), nil
 }
 
 // ReadEvidence returns what was recorded, or a zero value when nothing was.
@@ -77,8 +116,8 @@ func (p Project) RecordScopedMutation(path string, relatedTests int) error {
 	if err != nil {
 		return fmt.Errorf("encode the evidence: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Join(p.Root, EvidenceDir), 0o755); err != nil {
-		return fmt.Errorf("create %s: %w", EvidenceDir, err)
+	if err := os.MkdirAll(filepath.Join(p.Root, Dir), 0o755); err != nil {
+		return fmt.Errorf("create %s: %w", Dir, err)
 	}
 	return os.WriteFile(p.evidencePath(), append(raw, '\n'), 0o600)
 }

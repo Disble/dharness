@@ -87,11 +87,14 @@ func runner(testRunner string) []string {
 // everything outside the scope would be lost.
 //
 // --concurrency is passed explicitly because the default is derived from the
-// core count, and Stryker is the only tool here that can saturate the machine.
+// core count. It stays deliberately small rather than sized from whatever the
+// machine has free at this instant: the process already runs at reduced
+// priority, which yields continuously instead of going stale a minute into a
+// long run, and a scoped mutation over named paths does not need more.
 // The verdict is not a flag. Stryker exposes no --break and no dotted
 // equivalent, so the exit code has to come from reading the report it writes;
 // see Survivors.
-func StrykerMutate(paths []string, testRunner, incrementalFile string, concurrency int) []string {
+func StrykerMutate(paths []string, testRunner, incrementalFile, sandbox string, concurrency int) []string {
 	args := []string{"run"}
 	args = append(args, mutate(paths)...)
 	args = append(args, runner(testRunner)...)
@@ -100,6 +103,11 @@ func StrykerMutate(paths []string, testRunner, incrementalFile string, concurren
 		"--incrementalFile", incrementalFile,
 		"--force",
 		"--concurrency", strconv.Itoa(concurrency),
+		// The sandbox goes where dharness can find it again and clean it.
+		// cleanTempDir only runs on a successful exit by default, so a failed
+		// run leaves a copy of the project inside the repository.
+		"--tempDirName", sandbox,
+		"--cleanTempDir", "always",
 		// clear-text so a person can read it, json so dharness can reach a
 		// verdict. progress paints a live bar into what is usually a pipe, and
 		// html writes a file report nobody in this flow opens.

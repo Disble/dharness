@@ -9,8 +9,6 @@
 package project
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -233,26 +231,6 @@ func (p Project) HookWired() bool {
 		}
 	}
 	return false
-}
-
-// CachePath returns a writable path for state that belongs to a run rather
-// than to the repository, keyed so two projects never collide.
-//
-// Stryker's incremental file defaults to reports/ inside the project. Its json
-// report cannot be moved at all — neither --jsonReporter.fileName nor any
-// dotted form of it exists — but the incremental file can, and it is the one
-// that would otherwise be committed or wiped by accident.
-func (p Project) CachePath(name string) (string, error) {
-	base, err := os.UserCacheDir()
-	if err != nil {
-		return "", fmt.Errorf("resolve the cache directory: %w", err)
-	}
-	digest := sha256.Sum256([]byte(p.Root))
-	dir := filepath.Join(base, "dharness", hex.EncodeToString(digest[:8]))
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", fmt.Errorf("create the cache directory: %w", err)
-	}
-	return filepath.Join(dir, name), nil
 }
 
 // InstallCommand is how this project's package manager adds dev dependencies.

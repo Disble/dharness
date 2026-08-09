@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -89,12 +90,26 @@ func RunMutate(args []string, stdout io.Writer) error {
 		return recordMeasurement(p, transcript.String(), paths[0], stdout)
 	}
 
-	incremental, err := p.CachePath("stryker-incremental.json")
+	incremental, err := p.StatePath("stryker-incremental.json")
 	if err != nil {
 		return err
 	}
+	// A corrupt incremental report makes Stryker fail in a way that reads like
+	// a problem with the code under test. Discarding it costs one full run.
+	project.DiscardIfUnreadable(incremental, json.Valid)
 
-	if err := runStryker(p, dir, tool.StrykerMutate(paths, testRunner, incremental, *concurrency), stdout); err != nil {
+	sandbox, err := p.EnsureDir("stryker-tmp")
+	if err != nil {
+		return err
+	}
+	// Cleaned before as well as after: a previous run killed mid-flight leaves
+	// a copy of the project behind, and Stryker will not reuse it.
+	if err := runner.RemoveSandbox(sandbox); err != nil {
+		return fmt.Errorf("clear the previous mutation sandbox: %w", err)
+	}
+	defer func() { _ = runner.RemoveSandbox(sandbox) }()
+
+	if err := runStryker(p, dir, tool.StrykerMutate(paths, testRunner, incremental, sandbox, *concurrency), stdout); err != nil {
 		return err
 	}
 	return reportSurvivors(dir, stdout)
@@ -126,7 +141,7 @@ func recordMeasurement(p project.Project, transcript, path string, stdout io.Wri
 	}
 
 	fmt.Fprintf(stdout, "\n%d test(s) ran for %s. Recorded in %s/, which is meant to be committed.\n",
-		related, path, project.EvidenceDir)
+		related, path, project.Dir)
 	return nil
 }
 
