@@ -12,8 +12,10 @@ decision that produced it, and a change is accepted or rejected by citing them.
     git config core.hooksPath .githooks   # once per clone: enables the gate
     go build ./...
     go vet ./...
-    go test ./... -race
+    go test ./...
     gofmt -l .
+    go run ./tools/mutationstaged -dry
+    go run ./tools/mutationstaged
     bash scripts/verify-gate.sh           # proves the gate still refuses
 
 The local gate is `.githooks/pre-commit` and runs what CI runs. There is no hook
@@ -23,14 +25,17 @@ and needs nothing installed, since bash ships with Git for Windows. lefthook is
 a binary to fetch plus `lefthook install`, which for three commands from the Go
 toolchain buys nothing.
 
-There is no package manager and no dependency: the module is stdlib-only, and a
-proposal that adds a dependency has to argue against that first.
+The product remains stdlib-only. The module has one development-only dependency:
+`github.com/gtramontina/ooze`, used exclusively by the repository's staged Go
+mutation wrapper and its test support. A proposal that adds another dependency
+has to argue against the stdlib-only product boundary first.
 
 ## Repo-owned rules with no equivalent below
 
-**Every invocation lives in `internal/tool`.** The flags dharness passes are the
-product. A command assembled anywhere else is a second source of truth for the
-one thing this binary is for.
+**Every product invocation lives in `internal/tool`.** The flags dharness passes
+to react-doctor, fallow and StrykerJS are the product. Repository development
+tools under `tools/` own their own tested process boundary and never add a fourth
+wrapped CLI to dharness.
 
 **Seam what cannot be controlled, nothing else.** Process execution, git, the
 working directory and build info are package-level vars with a
@@ -227,12 +232,15 @@ boundaries are unstated will be mistaken for a complete one.
 
 The cycle is RED → GREEN → **MUTATE** → REFACTOR. **Load the `mutation-tdd` skill
 after a test goes green** — it owns the decision table and the survivor-triage
-rules. This surface has no automated runner, so the MUTATE step is manual and
-deliberately not a hook.
+rules. The systematic MUTATE step is `go run ./tools/mutationstaged`; it scopes
+ooze to staged production lines and fails loudly when the computed scope would
+execute no mutants.
 
-**The manual check.** Delete the guard the test claims to cover, run only that
-test, confirm it FAILS, then restore with `git checkout -- <file>`. Run the single
-test, never the suite — the suite is the wrong tool and the wrong cost.
+**The focused manual check.** During an edit with nothing staged, delete the
+guard the test claims to cover, prove the source changed with
+`git diff --quiet -- <file>`, run only the owning test, confirm it FAILS, then
+restore the guard. This is rapid feedback for one known suspicion; it never
+replaces the systematic staged run.
 
 Mandatory for concurrency and lock tests, defensive branches (nil guards, clamps,
 fallbacks, early returns), error and timeout paths, and any test written to close
@@ -242,9 +250,10 @@ Branches the scheduler cannot reach need direct invocation of the unexported
 function from an in-package test. A stress loop that never reaches the branch
 passes while proving nothing.
 
-**Report which guards you deleted and whether each survived.** A test that still
-passes with its guard deleted proves nothing, and neither the suite nor the
-coverage number will say so.
+**Report both forms of evidence.** Name manually deleted guards and whether each
+survived, then report the staged wrapper's mutant totals and survivors. A test
+that still passes with its guard deleted proves nothing, and a hand-selected
+mutant cannot survey cases nobody thought to choose.
 
 <!-- /standards:mutation:manual -->
 
@@ -271,4 +280,10 @@ Repo-owned. Silence is drift; a stated deviation is a decision.
 - `deviates: P08 — no generated config.` Nothing in this repository is
   tool-owned, so there is no marker to merge behind. The files dharness
   generates in *other* repositories do follow it, under `.dharness/`.
+- `deviates: stdlib-only module — development tooling only.` ooze v0.2.0 and its
+  transitive modules compile `tools/mutationstaged` and
+  `internal/testsupport/mutation`; `cmd/dharness` and the three wrapped product
+  invocations do not import them. The trade buys systematic staged-line mutation
+  coverage and an executable silent-no-op guard that the standard library does
+  not provide.
 

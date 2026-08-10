@@ -49,9 +49,12 @@ true; it is a memory aid and never a substitute for a check that enforces it.
     git config core.hooksPath .githooks   # once per clone: enables the gate
     go build ./...
     go vet ./...
-    go test ./... -race
+    go test ./...
     gofmt -l .
+    go run ./tools/mutationstaged -dry
+    go run ./tools/mutationstaged
     bash scripts/verify-gate.sh           # proves the gate still refuses
 
-Stdlib only. There is no dependency and no package manager, and a proposal that
-adds one argues against that first.
+The dharness product is stdlib-only. ooze is the sole development dependency and
+belongs only to staged Go mutation tooling; see `docs/mutation-testing.md` and
+the recorded deviation in `AGENTS.md`.
