@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.0](https://github.com/Disble/dharness/compare/v0.1.0...v0.2.0) (2026-08-10)
+
+
+### Features
+
+* run wrapped tools from remote latest ([5ac96c8](https://github.com/Disble/dharness/commit/5ac96c8bb0e2bfbe8b27347ad0843ff610dfd17e))
+
+
+### Bug Fixes
+
+* **setup:** restore package state after failed init ([01b05c7](https://github.com/Disble/dharness/commit/01b05c78cf56ba61b3e9d5dfbec127fc1b252964))
+
 ## 0.1.0 (2026-08-10)
 
 
