@@ -18,7 +18,16 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: stable
-      - run: gofmt -l . | tee /dev/stderr | (! read)
+      # Written out rather than piped through /dev/stderr, which does not
+      # exist in the Git Bash that runs this step on the Windows runner.
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "These files are not gofmt'd:"
+            echo "$unformatted"
+            exit 1
+          fi
         shell: bash
       - run: go vet ./...
       - run: go test ./... -race
