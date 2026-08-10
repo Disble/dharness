@@ -76,13 +76,13 @@ func RunCheck(args []string, stdout io.Writer) error {
 		// out where one report ends and the next begins.
 		fmt.Fprintf(stdout, "\n── %s ──\n", stage.tool)
 
-		command := p.Resolve(stage.tool).Command(p.Source, stage.args...)
+		command := tool.RemoteLatest(p.PackageManager, stage.tool, p.Source, stage.args...)
 		if err := runner.Run(command, stdout, stdout); err != nil {
 			if skipped := stages[index+1:]; len(skipped) > 0 {
 				fmt.Fprintf(stdout, "\n%s failed, so %s did not run. There may be more to fix behind it.\n",
 					stage.tool, names(skipped))
 			}
-			fmt.Fprint(stdout, pointer(p, stage.tool))
+			fmt.Fprint(stdout, pointer(tool.RemoteLatest(p.PackageManager, stage.tool, p.Source, "--help")))
 			return err
 		}
 	}

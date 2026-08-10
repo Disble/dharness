@@ -57,7 +57,7 @@ func hookManager(p project.Project) manager {
 	if _, err := os.Stat(filepath.Join(p.Root, ".husky")); err == nil {
 		return managerHusky
 	}
-	if p.Resolve("lefthook").Local {
+	if p.LocalBinary("lefthook") != "" {
 		return managerLefthook
 	}
 	return managerNone
@@ -69,10 +69,6 @@ func installed(p project.Project, pkg string) bool {
 	}
 	_, err := os.Stat(filepath.Join(p.Source, "node_modules", filepath.FromSlash(pkg)))
 	return err == nil
-}
-
-func asMissingRunner(err error, target **project.MissingStrykerRunnerError) bool {
-	return errors.As(err, target)
 }
 
 // gateInstalled reports whether git will actually run the gate, which is a

@@ -6,14 +6,85 @@
 // means a flag is changed in one place and reviewed as a whole.
 package tool
 
-import "strconv"
+import (
+	"errors"
+	"fmt"
+	"strconv"
+	"strings"
 
-// Names as they appear in node_modules/.bin.
+	"github.com/Disble/dharness/internal/runner"
+)
+
+// Binary names exposed by the wrapped packages.
 const (
 	ReactDoctor = "react-doctor"
 	Fallow      = "fallow"
 	Stryker     = "stryker"
 )
+
+const strykerCoreLatest = "@stryker-mutator/core@latest"
+
+var strykerRunnerPackages = map[string]string{
+	"vitest": "@stryker-mutator/vitest-runner",
+	"jest":   "@stryker-mutator/jest-runner",
+}
+
+// ErrUnsupportedStrykerExecution identifies a package manager or runner that
+// cannot form the required transient Core-plus-runner environment.
+var ErrUnsupportedStrykerExecution = errors.New("unsupported Stryker remote execution")
+
+// LatestSpec names the current release of the package behind a wrapped binary.
+// The explicit tag matters: npx once resolved react-doctor 0.2.1 from cache
+// while react-doctor@latest resolved 0.9.11.
+func LatestSpec(binary string) string {
+	if binary == Stryker {
+		return strykerCoreLatest
+	}
+	return binary + "@latest"
+}
+
+// StrykerCommand provisions Core and its selected official runner in one
+// transient package environment. Every argument is a separate token so paths
+// and package specs remain safe through the Windows cmd.exe shim.
+func StrykerCommand(packageManager string, yarnPnP bool, dir, testRunner string, configuredAppendPlugins []string, args ...string) (runner.Command, error) {
+	runnerPackage, ok := strykerRunnerPackages[testRunner]
+	if !ok {
+		return runner.Command{}, fmt.Errorf("%w: Stryker has no supported remote package for test runner %q; use vitest or jest", ErrUnsupportedStrykerExecution, testRunner)
+	}
+
+	runnerLatest := runnerPackage + "@latest"
+	if packageManager == "yarn" && yarnPnP {
+		return runner.Command{}, fmt.Errorf("%w: Stryker cannot run in a Yarn Plug'n'Play project because the remote runner cannot resolve the project's test dependencies; configure nodeLinker: node-modules, run yarn install, then retry", ErrUnsupportedStrykerExecution)
+	}
+	if !knownManager(packageManager) {
+		return runner.Command{}, fmt.Errorf("%w: Stryker has no transient multi-package route for package manager %q; use npm, pnpm, yarn, or bun", ErrUnsupportedStrykerExecution, packageManager)
+	}
+	name, remoteArgs := transientPackages(packageManager, []string{strykerCoreLatest, runnerLatest}, Stryker)
+
+	appendPlugins := append([]string{}, configuredAppendPlugins...)
+	if !contains(appendPlugins, runnerPackage) {
+		appendPlugins = append(appendPlugins, runnerPackage)
+	}
+	commandArgs := append(remoteArgs, args...)
+	commandArgs = append(commandArgs, "--appendPlugins", strings.Join(appendPlugins, ","))
+
+	return runner.Command{
+		Label:       Stryker,
+		Name:        name,
+		Args:        commandArgs,
+		Dir:         dir,
+		LowPriority: true,
+	}, nil
+}
+
+func contains(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
 
 // ReactDoctorStaged scopes react-doctor to the index.
 //
@@ -64,11 +135,9 @@ func FallowAudit() []string {
 // runner returns the --testRunner argument, or nothing when the project's own
 // configuration already answers it.
 //
-// Stryker needs no config file at all — every option is available on the
-// command line, and command line arguments overrule the file when both exist.
-// That is why dharness never runs `stryker init`: the only thing init does that
-// flags cannot is install the runner plugin, which is a package manager job.
-func runner(testRunner string) []string {
+// Command-line arguments overrule the config file, so this stays empty when the
+// project's own config selected its runner.
+func testRunnerArgs(testRunner string) []string {
 	if testRunner == "" {
 		return nil
 	}
@@ -97,7 +166,7 @@ func runner(testRunner string) []string {
 func StrykerMutate(paths []string, testRunner, incrementalFile, sandbox string, concurrency int) []string {
 	args := []string{"run"}
 	args = append(args, mutate(paths)...)
-	args = append(args, runner(testRunner)...)
+	args = append(args, testRunnerArgs(testRunner)...)
 	args = append(args,
 		"--incremental",
 		"--incrementalFile", incrementalFile,
@@ -133,7 +202,7 @@ func StrykerMutate(paths []string, testRunner, incrementalFile, sandbox string, 
 func StrykerDryRun(paths []string, testRunner string, concurrency int) []string {
 	args := []string{"run"}
 	args = append(args, mutate(paths)...)
-	args = append(args, runner(testRunner)...)
+	args = append(args, testRunnerArgs(testRunner)...)
 	return append(args,
 		"--dryRunOnly",
 		"--concurrency", strconv.Itoa(concurrency),

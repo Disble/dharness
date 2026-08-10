@@ -68,9 +68,35 @@ func TestDetectTestRunnerReadsDeclaredDependencies(t *testing.T) {
 	}
 }
 
-func TestResolvePrefersTheProjectCopyOverTheRemoteForm(t *testing.T) {
+func TestDetectYarnPlugAndPlayFromGeneratedLoaders(t *testing.T) {
+	for _, evidence := range []string{".pnp.cjs", ".pnp.loader.mjs"} {
+		t.Run(evidence, func(t *testing.T) {
+			root := t.TempDir()
+			write(t, filepath.Join(root, "package.json"), `{"packageManager":"yarn@4.9.1","devDependencies":{"vitest":"^4.0.0"}}`)
+			write(t, filepath.Join(root, evidence), "")
+
+			if p := Describe(root); !p.YarnPnP {
+				t.Errorf("Project = %+v, want confirmed Yarn PnP", p)
+			}
+		})
+	}
+}
+
+func TestYarnNodeModulesLayoutDoesNotReportPlugAndPlay(t *testing.T) {
 	root := t.TempDir()
-	name := "fallow"
+	write(t, filepath.Join(root, "package.json"), `{"packageManager":"yarn@4.9.1","devDependencies":{"vitest":"^4.0.0"}}`)
+	if err := os.MkdirAll(filepath.Join(root, "node_modules"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if p := Describe(root); p.YarnPnP {
+		t.Errorf("Project = %+v, want node_modules layout", p)
+	}
+}
+
+func TestLocalBinaryFindsTheProjectHelper(t *testing.T) {
+	root := t.TempDir()
+	name := "lefthook"
 	if runtime.GOOS == "windows" {
 		name += ".cmd"
 	}
@@ -80,37 +106,13 @@ func TestResolvePrefersTheProjectCopyOverTheRemoteForm(t *testing.T) {
 	}
 	write(t, filepath.Join(binDir, name), "")
 
-	resolved := Describe(root).Resolve("fallow")
+	resolved := Describe(root).LocalBinary("lefthook")
 
-	if !resolved.Local {
-		t.Fatalf("Resolve() did not find the installed copy, got %+v", resolved)
+	if resolved == "" {
+		t.Fatal("LocalBinary() did not find the installed copy")
 	}
-	if !strings.Contains(resolved.Name, "node_modules") {
-		t.Errorf("Resolve() = %q, want a node_modules path", resolved.Name)
-	}
-}
-
-// yarn v1 has no dlx and telling it to use one produces an unhelpful failure,
-// so yarn resolves through npx, which works under both major versions.
-func TestResolveFallsBackToTheRemoteFormPerPackageManager(t *testing.T) {
-	cases := map[string]string{
-		"bun":  "bunx",
-		"pnpm": "pnpm",
-		"yarn": "npx",
-		"npm":  "npx",
-	}
-
-	for manager, want := range cases {
-		t.Run(manager, func(t *testing.T) {
-			resolved := Project{Root: t.TempDir(), PackageManager: manager}.Resolve("fallow")
-
-			if resolved.Local {
-				t.Fatal("Resolve() reported a local copy that does not exist")
-			}
-			if resolved.Name != want {
-				t.Errorf("Resolve() = %q, want %q", resolved.Name, want)
-			}
-		})
+	if !strings.Contains(resolved, "node_modules") {
+		t.Errorf("LocalBinary() = %q, want a node_modules path", resolved)
 	}
 }
 
@@ -209,26 +211,5 @@ func write(t *testing.T, path, contents string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
-	}
-}
-
-// An unpinned remote invocation is not "whatever is current": npx resolved a
-// cached 0.2.1 while @latest resolved 0.9.11, and the gate failed on flags the
-// current release documents.
-func TestResolvePinsTheRemoteFormToLatest(t *testing.T) {
-	for _, manager := range []string{"bun", "pnpm", "yarn", "npm"} {
-		t.Run(manager, func(t *testing.T) {
-			resolved := Project{Root: t.TempDir(), PackageManager: manager}.Resolve("fallow")
-
-			invocation := strings.Join(append([]string{resolved.Name}, resolved.Args...), " ")
-			if !strings.Contains(invocation, "fallow@latest") {
-				t.Errorf("remote invocation is unpinned: %q", invocation)
-			}
-			if manager == "npm" || manager == "yarn" {
-				if !strings.Contains(invocation, "--yes") {
-					t.Errorf("npx would stop to ask permission inside a hook: %q", invocation)
-				}
-			}
-		})
 	}
 }

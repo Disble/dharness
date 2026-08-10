@@ -1,11 +1,10 @@
 // Package project resolves what dharness needs to know about a repository:
 // which package manager runs it, which test runner it uses, and where each
-// wrapped tool lives.
+// wrapped tool runs.
 //
-// Nothing here reads a tool's configuration. Detection is deliberately shallow
-// — lockfile names and package.json dependencies — because the moment dharness
-// starts interpreting the tools' own config it becomes responsible for keeping
-// up with their schemas.
+// Detection is deliberately shallow: lockfile names, package.json dependencies,
+// and the one Stryker config field needed to provision its remote runner. The
+// narrow config boundary keeps the project's explicit testRunner authoritative.
 package project
 
 import (
@@ -15,8 +14,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-
-	"github.com/Disble/dharness/internal/runner"
 )
 
 // Project is everything dharness detected about a repository.
@@ -37,6 +34,7 @@ type Project struct {
 	Source         string
 	PackageManager string
 	TestRunner     string
+	YarnPnP        bool
 }
 
 // HasSource reports whether this repository holds a JS project to analyse.
@@ -69,41 +67,6 @@ var lockfiles = []struct{ file, manager string }{
 	{"package-lock.json", "npm"},
 }
 
-// remoteExec is how each package manager runs a package that is not installed.
-//
-// yarn v1 has no dlx, and distinguishing it from Berry would mean parsing
-// yarn's own version; npx works under both, so yarn resolves there. npx also
-// carries --yes so it never stops to ask permission inside a git hook, where
-// nobody is watching to answer.
-var remoteExec = map[string][]string{
-	"bun":  {"bunx"},
-	"pnpm": {"pnpm", "dlx"},
-	"yarn": {"npx", "--yes"},
-	"npm":  {"npx", "--yes"},
-}
-
-// packages maps a binary name to the package that provides it. Stryker's
-// binary is `stryker`; its package is not, and asking a registry for `stryker`
-// fetches something else entirely.
-var packages = map[string]string{"stryker": "@stryker-mutator/core"}
-
-// Package returns the npm package that provides a tool's binary.
-func Package(tool string) string {
-	if name, ok := packages[tool]; ok {
-		return name
-	}
-	return tool
-}
-
-// LatestSpec pins the remote form to the published version.
-//
-// Measured, not assumed: `npx react-doctor` resolved 0.2.1 from a stale cache
-// while `npx react-doctor@latest` resolved 0.9.11 — seven minor versions apart,
-// silently, with flags rejected as unknown that the current release documents.
-// An unpinned remote invocation is not "whatever is current", it is "whatever
-// this machine happened to download once".
-func LatestSpec(tool string) string { return Package(tool) + "@latest" }
-
 // Describe inspects a directory that is both the repository and the JS project,
 // which is what a conventional layout looks like. Discover is the entry point
 // that tells the two apart.
@@ -112,11 +75,13 @@ func Describe(root string) Project { return At(root, root) }
 // At describes a repository whose JS project lives in source. It never fails:
 // an undetected field is empty, and callers decide whether that matters.
 func At(root, source string) Project {
+	packageManager := detectPackageManager(source)
 	return Project{
 		Root:           root,
 		Source:         source,
-		PackageManager: detectPackageManager(source),
+		PackageManager: packageManager,
 		TestRunner:     detectTestRunner(source),
+		YarnPnP:        packageManager == "yarn" && detectYarnPnP(source),
 	}
 }
 
@@ -160,26 +125,43 @@ func declaredPackageManager(source string) string {
 	}
 
 	name, _, _ := strings.Cut(strings.TrimSpace(pkg.PackageManager), "@")
-	if _, known := installCommands[strings.ToLower(name)]; known {
+	if knownPackageManager(strings.ToLower(name)) {
 		return strings.ToLower(name)
 	}
 	return ""
 }
 
+func knownPackageManager(name string) bool {
+	switch name {
+	case "bun", "pnpm", "yarn", "npm":
+		return true
+	default:
+		return false
+	}
+}
+
 func detectTestRunner(source string) string {
+	runners := detectTestRunners(source)
+	if len(runners) == 1 {
+		return runners[0]
+	}
+	return ""
+}
+
+func detectTestRunners(source string) []string {
 	if source == "" {
-		return ""
+		return nil
 	}
 	raw, err := os.ReadFile(filepath.Join(source, "package.json"))
 	if err != nil {
-		return ""
+		return nil
 	}
 	var pkg struct {
 		Dependencies    map[string]string `json:"dependencies"`
 		DevDependencies map[string]string `json:"devDependencies"`
 	}
 	if json.Unmarshal(raw, &pkg) != nil {
-		return ""
+		return nil
 	}
 	declared := func(name string) bool {
 		if _, ok := pkg.Dependencies[name]; ok {
@@ -188,42 +170,21 @@ func detectTestRunner(source string) string {
 		_, ok := pkg.DevDependencies[name]
 		return ok
 	}
-	switch {
-	case declared("vitest"):
-		return "vitest"
-	case declared("jest"), declared("jest-expo"):
-		return "jest"
+	var runners []string
+	if declared("vitest") {
+		runners = append(runners, "vitest")
 	}
-	return ""
-}
-
-// Binary is a resolved way to invoke a wrapped tool.
-type Binary struct {
-	Tool  string
-	Name  string
-	Args  []string
-	Local bool
-}
-
-// Command turns a resolved binary plus tool arguments into one invocation.
-func (b Binary) Command(root string, args ...string) runner.Command {
-	return runner.Command{
-		Label: b.Tool,
-		Name:  b.Name,
-		Args:  append(append([]string{}, b.Args...), args...),
-		Dir:   root,
+	if declared("jest") || declared("jest-expo") {
+		runners = append(runners, "jest")
 	}
+	return runners
 }
 
-// Resolve prefers the copy installed in the project.
-//
-// A locally installed tool is faster, works offline, and does not change under
-// you mid-task — which matters because the gate runs on every commit and a new
-// release can change severities. The remote form is a fallback for a project
-// that has not installed the tool, not the intended path.
-func (p Project) Resolve(tool string) Binary {
+// LocalBinary returns the installed path of a project helper, when present.
+// Wrapped CLI resolution lives in internal/tool and never calls this function.
+func (p Project) LocalBinary(binary string) string {
 	if p.HasSource() {
-		base := filepath.Join(p.Source, "node_modules", ".bin", tool)
+		base := filepath.Join(p.Source, "node_modules", ".bin", binary)
 
 		candidates := []string{base}
 		if runtime.GOOS == "windows" {
@@ -231,39 +192,45 @@ func (p Project) Resolve(tool string) Binary {
 		}
 		for _, candidate := range candidates {
 			if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-				return Binary{Tool: tool, Name: candidate, Local: true}
+				return candidate
 			}
 		}
 	}
-
-	exec, ok := remoteExec[p.PackageManager]
-	if !ok {
-		exec = remoteExec["npm"]
-	}
-	return Binary{Tool: tool, Name: exec[0], Args: append(append([]string{}, exec[1:]...), LatestSpec(tool))}
+	return ""
 }
 
 // strykerConfigFiles are the names Stryker itself looks for.
 var strykerConfigFiles = []string{
+	"stryker.conf.json",
+	"stryker.conf.js",
+	"stryker.conf.mjs",
+	"stryker.conf.cjs",
+	"stryker.config.json",
+	"stryker.config.js",
 	"stryker.config.mjs",
 	"stryker.config.cjs",
-	"stryker.config.js",
-	"stryker.config.json",
-	"stryker.conf.mjs",
-	"stryker.conf.js",
-	"stryker.conf.json",
 	".stryker.conf.json",
+	".stryker.conf.js",
+	".stryker.conf.mjs",
+	".stryker.conf.cjs",
+	".stryker.config.json",
+	".stryker.config.js",
+	".stryker.config.mjs",
+	".stryker.config.cjs",
 }
 
-// HasStrykerConfig reports whether the project configured Stryker itself.
-//
-// It decides one thing: whether dharness supplies --testRunner. Command line
-// arguments overrule the config file, so passing it unconditionally would let a
-// detection mistake override a correct decision the project already made. When
-// the project has said nothing, something has to.
-func (p Project) HasStrykerConfig() bool {
+func (p Project) strykerConfigFile() string {
 	for _, name := range strykerConfigFiles {
 		if _, err := os.Stat(filepath.Join(p.Source, name)); err == nil {
+			return name
+		}
+	}
+	return ""
+}
+
+func detectYarnPnP(source string) bool {
+	for _, name := range []string{".pnp.cjs", ".pnp.loader.mjs"} {
+		if info, err := os.Stat(filepath.Join(source, name)); err == nil && !info.IsDir() {
 			return true
 		}
 	}
@@ -316,81 +283,89 @@ func (p Project) HookWired() bool {
 	return false
 }
 
-// InstallCommand is how this project's package manager adds dev dependencies.
-func (p Project) InstallCommand() string {
-	if command, ok := installCommands[p.PackageManager]; ok {
-		return command
-	}
-	return installCommands["npm"]
-}
-
-// RemoteExec is how this project's package manager runs a package it has not
-// installed — bunx, pnpm dlx, npx.
-func (p Project) RemoteExec() string {
-	exec, ok := remoteExec[p.PackageManager]
-	if !ok {
-		exec = remoteExec["npm"]
-	}
-	return strings.Join(exec, " ")
-}
-
-// runnerPlugins maps a detected test runner to the Stryker plugin that drives it.
-var runnerPlugins = map[string]string{
-	"vitest": "@stryker-mutator/vitest-runner",
-	"jest":   "@stryker-mutator/jest-runner",
-}
-
-// installCommands is how each package manager adds development dependencies.
-var installCommands = map[string]string{
-	"bun":  "bun add -d",
-	"pnpm": "pnpm add -D",
-	"yarn": "yarn add -D",
-	"npm":  "npm install --save-dev",
-}
-
-// MissingStrykerRunnerError reports a project that can be mutated in principle
-// but has no runner plugin installed.
-//
-// This is the one job `stryker init` did that flags cannot replace, so the
-// error carries the exact command that does it instead.
-type MissingStrykerRunnerError struct {
-	TestRunner string
-	Plugin     string
-	Install    string
-}
-
-func (e *MissingStrykerRunnerError) Error() string {
-	if e.TestRunner == "" {
-		return "no test runner found in package.json; Stryker needs vitest or jest to drive the tests"
-	}
-	return fmt.Sprintf(
-		"Stryker cannot drive %s without its runner plugin; install it with: %s @stryker-mutator/core %s",
-		e.TestRunner, e.Install, e.Plugin,
-	)
-}
-
-// StrykerRunner returns the value for --testRunner, or an empty string when the
-// project's own configuration already answers it.
-//
-//nolint:revive // the two return values answer two different questions.
-func (p Project) StrykerRunner() (string, error) {
-	plugin, known := runnerPlugins[p.TestRunner]
-	if !known {
-		return "", &MissingStrykerRunnerError{TestRunner: p.TestRunner}
+// PackageStateFiles are the manifest and lockfiles the detected package manager
+// may rewrite. Setup snapshots them before an install so rollback is byte exact.
+func (p Project) PackageStateFiles() []string {
+	manager := p.PackageManager
+	if !knownPackageManager(manager) {
+		manager = "npm"
 	}
 
-	if _, err := os.Stat(filepath.Join(p.Source, "node_modules", plugin)); err != nil {
-		install, ok := installCommands[p.PackageManager]
-		if !ok {
-			install = installCommands["npm"]
+	files := []string{filepath.Join(p.Source, "package.json")}
+	for _, entry := range lockfiles {
+		if entry.manager == manager {
+			files = append(files, filepath.Join(p.Source, entry.file))
 		}
-		return "", &MissingStrykerRunnerError{TestRunner: p.TestRunner, Plugin: plugin, Install: install}
+	}
+	return files
+}
+
+// StrykerSelection identifies the runner Core must load and whether the
+// project's config owns the corresponding testRunner argument.
+type StrykerSelection struct {
+	TestRunner    string
+	Configured    bool
+	AppendPlugins []string
+}
+
+// StrykerRunnerError reports a runner selection that cannot be translated into
+// a safe transient Core-plus-runner environment.
+type StrykerRunnerError struct{ message string }
+
+func (e *StrykerRunnerError) Error() string { return e.message }
+
+// StrykerRunner selects the supported runner package that must accompany remote
+// Core. JSON configs are read only for testRunner; executable configs are left
+// untouched and rejected because evaluating or approximating them would make
+// dharness an interpreter for project-owned configuration.
+func (p Project) StrykerRunner() (StrykerSelection, error) {
+	if config := p.strykerConfigFile(); config != "" {
+		if filepath.Ext(config) != ".json" {
+			return StrykerSelection{}, &StrykerRunnerError{message: fmt.Sprintf(
+				"Stryker cannot safely determine testRunner from %s; use a JSON Stryker config with testRunner set to vitest or jest",
+				config,
+			)}
+		}
+
+		raw, err := os.ReadFile(filepath.Join(p.Source, config))
+		if err != nil {
+			return StrykerSelection{}, &StrykerRunnerError{message: fmt.Sprintf("Stryker cannot read %s: %v; fix the config and retry", config, err)}
+		}
+		var configured struct {
+			TestRunner    string   `json:"testRunner"`
+			AppendPlugins []string `json:"appendPlugins"`
+		}
+		if err := json.Unmarshal(raw, &configured); err != nil {
+			return StrykerSelection{}, &StrykerRunnerError{message: fmt.Sprintf("Stryker cannot read testRunner from %s: %v; fix the JSON config and retry", config, err)}
+		}
+		if configured.TestRunner == "" {
+			return StrykerSelection{}, &StrykerRunnerError{message: fmt.Sprintf("Stryker config %s must set testRunner to vitest or jest so its remote runner can be provisioned", config)}
+		}
+		if !supportedStrykerRunner(configured.TestRunner) {
+			return StrykerSelection{}, &StrykerRunnerError{message: fmt.Sprintf("Stryker config %s selects unsupported testRunner %q; dharness supports vitest or jest", config, configured.TestRunner)}
+		}
+		return StrykerSelection{TestRunner: configured.TestRunner, Configured: true, AppendPlugins: configured.AppendPlugins}, nil
 	}
 
-	if p.HasStrykerConfig() {
-		return "", nil
+	runners := detectTestRunners(p.Source)
+	if len(runners) == 0 && p.TestRunner != "" {
+		runners = []string{p.TestRunner}
 	}
-	return p.TestRunner, nil
+	switch len(runners) {
+	case 0:
+		return StrykerSelection{}, &StrykerRunnerError{message: "Stryker found no supported test runner in package.json; declare vitest or jest, or set testRunner in a JSON Stryker config"}
+	case 1:
+		if !supportedStrykerRunner(runners[0]) {
+			return StrykerSelection{}, &StrykerRunnerError{message: fmt.Sprintf("Stryker cannot provision unsupported test runner %q; use vitest or jest", runners[0])}
+		}
+		return StrykerSelection{TestRunner: runners[0]}, nil
+	default:
+		return StrykerSelection{}, &StrykerRunnerError{message: "Stryker found both vitest and jest in package.json; set testRunner to vitest or jest in a JSON Stryker config"}
+	}
+}
+
+func supportedStrykerRunner(testRunner string) bool {
+	return testRunner == "vitest" || testRunner == "jest"
 }
 
 // IsSourceFile reports whether a repository path is something the wrapped

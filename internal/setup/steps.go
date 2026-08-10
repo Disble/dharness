@@ -49,7 +49,7 @@ func (s installStep) Describe(p project.Project) string {
 		p.InstallCommand(), strings.Join(missing(p), " "))
 }
 
-func (installStep) Apply(p project.Project, _ *Writer) error {
+func (installStep) Apply(p project.Project, w *Writer) error {
 	packages := missing(p)
 	if len(packages) == 0 {
 		return nil
@@ -246,12 +246,12 @@ func (mcpStep) Apply(p project.Project, w *Writer) error {
 		}
 	}
 
-	// The binary ships with fallow, so it is reached the way the project
-	// reaches everything else it installed rather than from a global PATH.
-	command := strings.Fields(p.RemoteExec())
+	// The binary ships with fallow, so the remote executor names that package
+	// explicitly rather than asking the registry for a package named fallow-mcp.
+	binary := tool.RemotePackageBinary(p.PackageManager, tool.LatestSpec(tool.Fallow), "fallow-mcp", p.Source)
 	config.Servers["fallow"] = mcpServer{
-		Command: command[0],
-		Args:    append(command[1:], "fallow-mcp"),
+		Command: binary.Name,
+		Args:    binary.Args,
 	}
 	return w.WriteJSON(path, config)
 }
@@ -296,8 +296,12 @@ func (hookInstallStep) Apply(p project.Project, w *Writer) error {
 		return appendHuskyGate(p, w)
 	}
 
-	binary := p.Resolve("lefthook")
-	return runner.Run(binary.Command(p.Root, "install"), os.Stdout, os.Stderr)
+	path := p.LocalBinary("lefthook")
+	command := tool.RemoteLatest(p.PackageManager, "lefthook", p.Root, "install")
+	if path != "" {
+		command = tool.Installed("lefthook", path, p.Root, "install")
+	}
+	return runner.Run(command, os.Stdout, os.Stderr)
 }
 
 // --------------------------------------------------------- agent skill
@@ -318,7 +322,7 @@ func (agentSkillStep) Satisfied(p project.Project) bool {
 }
 
 func (agentSkillStep) Describe(p project.Project) string {
-	return fmt.Sprintf("    %s %s install\n\nChoose the skill and decline the rest.", p.RemoteExec(), project.LatestSpec(tool.ReactDoctor))
+	return fmt.Sprintf("    %s %s install\n\nChoose the skill and decline the rest.", tool.RemoteExec(p.PackageManager), tool.LatestSpec(tool.ReactDoctor))
 }
 
 func (agentSkillStep) Why() string {

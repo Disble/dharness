@@ -6,11 +6,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/Disble/dharness/internal/project"
 	"github.com/Disble/dharness/internal/runner"
+	"github.com/Disble/dharness/internal/tool"
 )
 
 // record captures what would have been invoked, so the gate's order and flags
@@ -67,15 +69,15 @@ func stub(t *testing.T, staged string) (*record, string) {
 	return captured, root
 }
 
-// mutable turns the stub root into a project Stryker can actually drive:
-// vitest declared, and its runner plugin present in node_modules.
+// mutable turns the stub root into a project Stryker can actually drive. The
+// runner plugin deliberately stays absent: remote execution provisions it.
 func mutable(t *testing.T, root string) {
 	t.Helper()
 
 	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"devDependencies":{"vitest":"^4.0.0"}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(root, "node_modules", "@stryker-mutator", "vitest-runner"), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "package-lock.json"), []byte(`{"lockfileVersion":3}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -95,6 +97,58 @@ func TestCheckRunsReactDoctorBeforeFallow(t *testing.T) {
 	}
 	if got := toolOf(captured.commands[1]); got != "fallow" {
 		t.Errorf("second command = %q, want fallow", got)
+	}
+}
+
+func TestCheckRunsRemoteLatestEvenWhenWrappedToolsAreInstalled(t *testing.T) {
+	captured, root := stub(t, "src/a.ts\n")
+	binDir := filepath.Join(root, "node_modules", ".bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"react-doctor", "fallow"} {
+		writeFile(t, filepath.Join(binDir, binaryName(name)), "")
+	}
+
+	if err := RunCheck(nil, io.Discard); err != nil {
+		t.Fatalf("RunCheck() = %v", err)
+	}
+
+	want := []runner.Command{
+		{Label: "react-doctor", Name: "npx", Args: append([]string{"--yes", "react-doctor@latest"}, tool.ReactDoctorStaged()...), Dir: root},
+		{Label: "fallow", Name: "npx", Args: []string{"--yes", "fallow@latest", "audit"}, Dir: root},
+	}
+	if len(captured.commands) != len(want) {
+		t.Fatalf("ran %d commands, want %d: %+v", len(captured.commands), len(want), captured.commands)
+	}
+	for i := range want {
+		got := captured.commands[i]
+		if got.Label != want[i].Label || got.Name != want[i].Name || got.Dir != want[i].Dir || !slices.Equal(got.Args, want[i].Args) {
+			t.Errorf("command %d = %s %v in %s, want %s %v in %s", i, got.Name, got.Args, got.Dir, want[i].Name, want[i].Args, want[i].Dir)
+		}
+	}
+}
+
+func TestRemoteExecutionFailureDoesNotFallBackToTheProjectCopy(t *testing.T) {
+	captured, root := stub(t, "src/a.ts\n")
+	binDir := filepath.Join(root, "node_modules", ".bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(binDir, binaryName("react-doctor")), "")
+	remoteErr := &runner.ExitError{Command: "react-doctor", Code: 1}
+	captured.fail["react-doctor"] = remoteErr
+
+	err := RunCheck(nil, io.Discard)
+
+	if !errors.Is(err, remoteErr) {
+		t.Fatalf("RunCheck() = %v, want the remote failure", err)
+	}
+	if len(captured.commands) != 1 {
+		t.Fatalf("remote failure ran %d commands, want no local retry: %+v", len(captured.commands), captured.commands)
+	}
+	if captured.commands[0].Name != "npx" {
+		t.Errorf("failed command used %q, want npx", captured.commands[0].Name)
 	}
 }
 
@@ -170,6 +224,28 @@ func TestMutateWithoutPathsExplainsWhatItNeeds(t *testing.T) {
 
 	if !errors.Is(err, ErrNoMutatePaths) {
 		t.Fatalf("RunMutate() = %v, want ErrNoMutatePaths", err)
+	}
+}
+
+func TestStrykerRunsRemoteLatestEvenWhenInstalled(t *testing.T) {
+	captured, root := stub(t, "")
+	binDir := filepath.Join(root, "node_modules", ".bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(binDir, binaryName("stryker")), "")
+
+	p := project.Project{Root: root, Source: root, PackageManager: "npm"}
+	if err := runStryker(p, root, project.StrykerSelection{TestRunner: "vitest"}, []string{"run"}, io.Discard); err != nil {
+		t.Fatalf("runStryker() = %v", err)
+	}
+
+	if len(captured.commands) != 1 {
+		t.Fatalf("ran %d commands, want 1: %+v", len(captured.commands), captured.commands)
+	}
+	want := runner.Command{Label: "stryker", Name: "npx", Args: []string{"--yes", "--package=@stryker-mutator/core@latest", "--package=@stryker-mutator/vitest-runner@latest", "stryker", "run", "--appendPlugins", "@stryker-mutator/vitest-runner"}, Dir: root, LowPriority: true}
+	if got := captured.commands[0]; got.Label != want.Label || got.Name != want.Name || got.Dir != want.Dir || got.LowPriority != want.LowPriority || !slices.Equal(got.Args, want.Args) {
+		t.Errorf("runStryker command = %s %v in %s (low priority %t), want %s %v in %s (low priority %t)", got.Name, got.Args, got.Dir, got.LowPriority, want.Name, want.Args, want.Dir, want.LowPriority)
 	}
 }
 
@@ -307,16 +383,24 @@ func TestMutateAsksForTheReportItNeedsToJudge(t *testing.T) {
 // A project that configured Stryker chose its thresholds and reporters on
 // purpose; overruling them from a default would be dharness deciding something
 // that is not its business.
-func TestMutateDefersTheRunnerToAProjectThatConfiguredStryker(t *testing.T) {
+func TestMutateUsesTheConfiguredRunnerWithoutOverridingIt(t *testing.T) {
 	captured, root := stub(t, "")
 	mutable(t, root)
-	writeFile(t, filepath.Join(root, "stryker.config.mjs"), "export default {}")
+	writeFile(t, filepath.Join(root, "stryker.config.json"), `{"testRunner":"jest","appendPlugins":["custom-plugin"]}`)
 
+	// The stub does not write a mutation report; reaching that expected error
+	// proves the command passed the runner-selection boundary.
 	_ = RunMutate([]string{"src/a.ts"}, io.Discard)
 
 	args := strings.Join(captured.commands[0].Args, " ")
 	if strings.Contains(args, "--testRunner") {
 		t.Errorf("dharness overruled the project's own runner: %s", args)
+	}
+	if !strings.Contains(args, "@stryker-mutator/jest-runner@latest") {
+		t.Errorf("configured runner was not provisioned with Core: %s", args)
+	}
+	if !strings.Contains(args, "--appendPlugins custom-plugin,@stryker-mutator/jest-runner") {
+		t.Errorf("configured appendPlugins were not preserved: %s", args)
 	}
 	if !strings.Contains(args, "--incremental") {
 		t.Errorf("dharness dropped what it does own: %s", args)
@@ -355,12 +439,13 @@ func TestFailureNamesTheToolNotItsResolvedPath(t *testing.T) {
 	if err := os.MkdirAll(binDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeFile(t, filepath.Join(binDir, binaryName("fallow")), "")
+	writeFile(t, filepath.Join(binDir, binaryName("lefthook")), "")
 
-	command := project.Describe(root).Resolve("fallow").Command(root, "audit")
+	p := project.Describe(root)
+	command := tool.Installed("lefthook", p.LocalBinary("lefthook"), root, "install")
 
-	if command.String() != "fallow" {
-		t.Errorf("command reports %q, want fallow", command.String())
+	if command.String() != "lefthook" {
+		t.Errorf("command reports %q, want lefthook", command.String())
 	}
 	if !strings.Contains(command.Name, "node_modules") {
 		t.Errorf("command would not execute the installed copy: %q", command.Name)

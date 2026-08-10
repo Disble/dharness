@@ -82,9 +82,14 @@ func TestSyncSpeaksTheProjectsOwnPackageManager(t *testing.T) {
 		writeFile(t, filepath.Join(root, "package.json"), `{"devDependencies":{"vitest":"^4.0.0"}}`)
 	})
 
-	for _, want := range []string{"bun add -d", setup.RulesPackage, "@stryker-mutator/vitest-runner"} {
+	for _, want := range []string{"bun add -d", setup.RulesPackage} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output does not mention %q:\n%s", want, out)
+		}
+	}
+	for _, remote := range []string{"@stryker-mutator/core", "@stryker-mutator/vitest-runner", "@stryker-mutator/jest-runner"} {
+		if strings.Contains(out, remote) {
+			t.Errorf("init would install remote Stryker package %q:\n%s", remote, out)
 		}
 	}
 	if strings.Contains(out, "npm install") {

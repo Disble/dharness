@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/Disble/dharness/internal/project"
+	"github.com/Disble/dharness/internal/runner"
 )
 
 // newFlagSet builds a subcommand flag set that reports on the caller's writer
@@ -81,10 +83,11 @@ var workingDirectory = os.Getwd
 // The pointer uses the remote form on purpose. These CLIs are meant to be run
 // at their latest version, that is how they are used in practice, and an
 // exploratory question is exactly where that costs nothing.
-func pointer(p project.Project, tool string) string {
+func pointer(command runner.Command) string {
+	invocation := strings.Join(append([]string{command.Name}, command.Args...), " ")
 	return fmt.Sprintf(
-		"\ndharness wraps the gate, not %s itself. For anything beyond pass or fail —\nwhy a finding fired, what it means, which rules exist — ask the tool:\n\n    %s %s --help\n",
-		tool, p.RemoteExec(), project.LatestSpec(tool),
+		"\ndharness wraps the gate, not %s itself. For anything beyond pass or fail —\nwhy a finding fired, what it means, which rules exist — ask the tool:\n\n    %s\n",
+		command.String(), invocation,
 	)
 }
 

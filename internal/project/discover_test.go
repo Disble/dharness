@@ -97,7 +97,7 @@ func TestDiscoverReportsNoJSProjectRatherThanGuessing(t *testing.T) {
 	if p.PackageManager != "" {
 		t.Errorf("PackageManager = %q, want none", p.PackageManager)
 	}
-	if p.Resolve("fallow").Local {
+	if p.LocalBinary("lefthook") != "" {
 		t.Error("Resolve() found a local binary in a repository with no JS project")
 	}
 }

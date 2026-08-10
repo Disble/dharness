@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/Disble/dharness/internal/project"
+	"github.com/Disble/dharness/internal/tool"
 )
 
 // ArchitecturePrompt is the last thing init prints, and the only part of
@@ -23,7 +24,8 @@ import (
 // keeps the project's own configuration untouched.
 func ArchitecturePrompt(p project.Project) string {
 	owned := filepath.ToSlash(filepath.Join(project.Dir, ownedFallow))
-	remote := p.RemoteExec()
+	remote := tool.RemoteExec(p.PackageManager)
+	fallow := tool.LatestSpec(tool.Fallow)
 
 	var b strings.Builder
 	b.WriteString("## Left to you: decide this project's architecture\n\n")
@@ -54,12 +56,12 @@ func ArchitecturePrompt(p project.Project) string {
 	b.WriteString("writing the `boundaries` block there is the whole change.\n\n")
 
 	b.WriteString("### How to check the result\n\n")
-	fmt.Fprintf(&b, "    %s fallow list --boundaries\n\n", remote)
+	fmt.Fprintf(&b, "    %s %s list --boundaries\n\n", remote, fallow)
 	b.WriteString("It prints every zone with the number of files it matched and the rules already\n")
 	b.WriteString("expanded, and warns when a zone matched nothing — which is what a glob that\n")
 	b.WriteString("does not fit this tree looks like. A zone with zero files is a mistake, not a\n")
 	b.WriteString("style choice.\n\n")
-	fmt.Fprintf(&b, "    %s fallow dead-code --boundary-violations\n\n", remote)
+	fmt.Fprintf(&b, "    %s %s dead-code --boundary-violations\n\n", remote, fallow)
 	b.WriteString("Then read what the declaration costs today. Violations that already exist are\n")
 	b.WriteString("reported but do not block: the gate fails only on the ones a change\n")
 	b.WriteString("introduces, so an architecture can be declared on a codebase that does not\n")

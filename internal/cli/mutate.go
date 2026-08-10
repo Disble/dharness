@@ -87,9 +87,13 @@ func RunMutate(args []string, stdout io.Writer) error {
 		return err
 	}
 
-	testRunner, err := p.StrykerRunner()
+	selection, err := p.StrykerRunner()
 	if err != nil {
 		return err
+	}
+	testRunnerArg := selection.TestRunner
+	if selection.Configured {
+		testRunnerArg = ""
 	}
 
 	if *dryRun {
@@ -97,7 +101,7 @@ func RunMutate(args []string, stdout io.Writer) error {
 
 		// The count only exists in the output: --dryRunOnly writes no report.
 		var transcript bytes.Buffer
-		if err := runStryker(p, p.Source, tool.StrykerDryRun(paths, testRunner, *concurrency), io.MultiWriter(stdout, &transcript)); err != nil {
+		if err := runStryker(p, p.Source, selection, tool.StrykerDryRun(paths, testRunnerArg, *concurrency), io.MultiWriter(stdout, &transcript)); err != nil {
 			return err
 		}
 		return recordMeasurement(p, transcript.String(), paths[0], stdout)
@@ -122,7 +126,7 @@ func RunMutate(args []string, stdout io.Writer) error {
 	}
 	defer func() { _ = runner.RemoveSandbox(sandbox) }()
 
-	if err := runStryker(p, p.Source, tool.StrykerMutate(paths, testRunner, incremental, sandbox, *concurrency), stdout); err != nil {
+	if err := runStryker(p, p.Source, selection, tool.StrykerMutate(paths, testRunnerArg, incremental, sandbox, *concurrency), stdout); err != nil {
 		return err
 	}
 	return reportSurvivors(p.Source, stdout)
@@ -172,12 +176,17 @@ func scopePaths(p project.Project, dir string, paths []string) ([]string, error)
 	return scoped, nil
 }
 
-func runStryker(p project.Project, dir string, args []string, stdout io.Writer) error {
-	command := p.Resolve(tool.Stryker).Command(dir, args...)
-	command.LowPriority = true
+func runStryker(p project.Project, dir string, selection project.StrykerSelection, args []string, stdout io.Writer) error {
+	command, err := tool.StrykerCommand(p.PackageManager, p.YarnPnP, dir, selection.TestRunner, selection.AppendPlugins, args...)
+	if err != nil {
+		return err
+	}
 
 	if err := runner.Run(command, stdout, stdout); err != nil {
-		fmt.Fprint(stdout, pointer(p, tool.Stryker))
+		help, helpErr := tool.StrykerCommand(p.PackageManager, p.YarnPnP, dir, selection.TestRunner, selection.AppendPlugins, "run", "--help")
+		if helpErr == nil {
+			fmt.Fprint(stdout, pointer(help))
+		}
 		return err
 	}
 	return nil

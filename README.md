@@ -36,6 +36,13 @@ dharness check     # the commit gate: react-doctor on the staged change, then fa
 dharness mutate <path...>   # find out whether these files' tests would notice the code breaking
 ```
 
+Stryker's JSON config must select `vitest` or `jest`; dharness preserves that
+selection and any `appendPlugins` while adding the remote runner it provisions.
+Executable `.js`, `.mjs` and `.cjs` configs stop with a clear error because
+determining their runner would require dharness to execute project code. Yarn
+projects with `node_modules` use the npx transient route. Yarn Plug'n'Play must
+switch to `nodeLinker: node-modules` and run `yarn install` before mutation.
+
 `init` installs what is missing, writes the files dharness owns into
 `.dharness/`, points the project's own configuration at them with one `extends`
 line, wires the gate into git, and ends by handing the architecture analysis to
@@ -68,14 +75,19 @@ neither can: whether the tests would notice the code breaking.
   principles, each traced to the decision that produced it.
 - [`docs/learning-log.md`](docs/learning-log.md) — what turned out to be true,
   dated, one line each.
+- [`docs/mutation-testing.md`](docs/mutation-testing.md) — staged-line Go
+  mutation testing for contributors.
 - [`AGENTS.md`](AGENTS.md) — the engineering doctrine, for humans and agents.
 
 ## Development
 
 ```
 git config core.hooksPath .githooks   # once per clone: enables the local gate
-go test ./... -race
+go test ./...
+go run ./tools/mutationstaged -dry   # inspect staged Go mutation scope
+go run ./tools/mutationstaged        # execute staged Go mutants
 bash scripts/verify-gate.sh           # proves the gate still refuses
 ```
 
-Stdlib only. There is no dependency and no package manager.
+The shipped dharness binary remains stdlib-only. ooze is a development-only Go
+module dependency used by the repository mutation wrapper.
