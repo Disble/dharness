@@ -77,6 +77,25 @@ umbrales que necesita no caben en la severidad que react-doctor acepta y tienen
 que vivir en un archivo. La frontera real no es escribir o no escribir: es de
 quién es el archivo.
 
+*Enmendado el 10 de agosto de 2026.* Poseer la invocación también fija su
+resolución: las tres CLIs salen siempre del ejecutor remoto del gestor detectado
+como `react-doctor@latest`, `fallow@latest` y
+`@stryker-mutator/core@latest`. Sus copias en `node_modules/.bin` quedan fuera
+de la resolución y un fallo remoto se propaga sin fallback. Core y el runner de
+Stryker se provisionan juntos con `@latest` en un único entorno transitorio, y
+`--appendPlugins` hace explícita la carga sin pisar los plugins configurados por
+el proyecto. Toda la sintaxis de esas invocaciones vive en `internal/tool`; la
+detección entrega metadatos y nunca arma comandos. En Yarn con `node_modules`, la
+ruta transitoria conjunta es npx; la presencia de los loaders PnP la rechaza
+antes de ejecutar Stryker porque el runner remoto no puede resolver las
+dependencias de prueba del proyecto. Los dieciséis nombres de configuración por
+defecto se reconocen: JSON conserva `testRunner` y `appendPlugins`, mientras
+`.js`, `.mjs` y `.cjs` fallan con una corrección explícita porque conocer su
+selección exigiría ejecutar código ajeno. `init` instala solo el plugin de reglas
+que falte; esa instalación pertenece a la misma transacción que los archivos y,
+ante un fallo, desinstala exactamente lo agregado por esa ejecución y restaura
+byte por byte el manifiesto y el lockfile.
+
 ### 04. Un comando que no se puede nombrar está haciendo dos cosas
 
 El nombre no es presentación, es diagnóstico. Cuando ninguno encaja, casi siempre

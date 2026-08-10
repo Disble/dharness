@@ -10,11 +10,13 @@ import (
 
 // Writer records what a run touched so the whole thing can be undone.
 //
-// Every write goes through it, and the snapshot is taken before the first byte
-// changes. A file that did not exist is removed on undo; a file that did is
-// put back exactly as it was, contents and mode.
+// Every file change setup owns is snapshotted before the first byte changes. A
+// file that did not exist is removed on undo; a file that did is put back
+// exactly as it was, contents and mode. External side effects register their
+// compensation alongside those snapshots.
 type Writer struct {
-	touched []snapshot
+	touched       []snapshot
+	compensations []func() error
 }
 
 type snapshot struct {
@@ -22,6 +24,10 @@ type snapshot struct {
 	existed bool
 	data    []byte
 	mode    os.FileMode
+}
+
+func (w *Writer) compensate(action func() error) {
+	w.compensations = append(w.compensations, action)
 }
 
 // Write replaces a file, remembering what was there.
@@ -79,6 +85,9 @@ func (w *Writer) remember(path string) error {
 // says exactly what it could not put back.
 func (w *Writer) Undo() error {
 	var failures error
+	for i := len(w.compensations) - 1; i >= 0; i-- {
+		failures = errors.Join(failures, w.compensations[i]())
+	}
 
 	for i := len(w.touched) - 1; i >= 0; i-- {
 		taken := w.touched[i]

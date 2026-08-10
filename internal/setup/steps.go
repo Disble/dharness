@@ -45,8 +45,8 @@ func (installStep) Satisfied(p project.Project) bool {
 }
 
 func (s installStep) Describe(p project.Project) string {
-	return fmt.Sprintf("Without them every run fetches over the network, inside a gate that runs on\nevery commit.\n\n    %s %s",
-		p.InstallCommand(), strings.Join(missing(p), " "))
+	return fmt.Sprintf("This package provides dharness's project lint rules.\n\n    %s %s",
+		tool.InstallCommand(p.PackageManager), strings.Join(missing(p), " "))
 }
 
 func (installStep) Apply(p project.Project, w *Writer) error {
@@ -55,28 +55,25 @@ func (installStep) Apply(p project.Project, w *Writer) error {
 		return nil
 	}
 
-	command := strings.Fields(p.InstallCommand())
-	return runner.Run(runner.Command{
-		Label: command[0],
-		Name:  command[0],
-		Args:  append(command[1:], packages...),
-		Dir:   p.Source,
-	}, os.Stdout, os.Stderr)
+	for _, path := range p.PackageStateFiles() {
+		if err := w.remember(path); err != nil {
+			return fmt.Errorf("snapshot package state before install: %w", err)
+		}
+	}
+
+	installErr := runner.Run(tool.InstallPackages(p.PackageManager, p.Source, packages), os.Stdout, os.Stderr)
+	w.compensate(func() error {
+		if err := runner.Run(tool.RemovePackages(p.PackageManager, p.Source, packages), os.Stdout, os.Stderr); err != nil {
+			return fmt.Errorf("remove integration packages added by this run: %w", err)
+		}
+		return nil
+	})
+	return installErr
 }
 
 // missing lists the packages this project needs and does not have.
 func missing(p project.Project) []string {
 	var packages []string
-	for _, name := range []string{tool.ReactDoctor, tool.Fallow, tool.Stryker} {
-		if !p.Resolve(name).Local {
-			packages = append(packages, project.Package(name))
-		}
-	}
-
-	var runnerErr *project.MissingStrykerRunnerError
-	if _, err := p.StrykerRunner(); asMissingRunner(err, &runnerErr) && runnerErr.Plugin != "" {
-		packages = append(packages, runnerErr.Plugin)
-	}
 	if !installed(p, RulesPackage) {
 		packages = append(packages, RulesPackage)
 	}
