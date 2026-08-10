@@ -25,7 +25,15 @@ archives:
 checksum:
   name_template: checksums.txt
 
+# release-please already wrote the notes into the release it created, from the
+# same commits and with the same exclusions. A second generator here would
+# overwrite them with its own wording, so goreleaser contributes binaries and
+# nothing else.
 changelog:
-  use: github
-  filters:
-    exclude: ['^docs:', '^test:', '^chore:']
+  disable: true
+
+# The release exists before goreleaser runs, because release-please created it
+# along with the tag. append uploads the archives into it instead of trying to
+# create a release that is already there.
+release:
+  mode: append
