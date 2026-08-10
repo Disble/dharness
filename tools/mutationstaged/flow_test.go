@@ -57,7 +57,18 @@ func TestMaterializeIndexUsesStagedIdentity(t *testing.T) {
 	staged := "package calc\nfunc Add(a, b int) int { return a - b }\n"
 	writeFixtureFile(t, root, "internal/calc/calc.go", staged)
 	gitFixture(t, root, "add", "internal/calc/calc.go")
+	gitFixture(t, root, "config", "core.autocrlf", "true")
 	writeFixtureFile(t, root, "internal/calc/calc.go", "package calc\nfunc Add(a, b int) int { return a * b }\n")
+
+	wantRoot := t.TempDir()
+	gitFixture(t, root, "checkout-index", "--all", "--prefix="+wantRoot+string(os.PathSeparator))
+	want, err := os.ReadFile(filepath.Join(wantRoot, "internal", "calc", "calc.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(want, []byte("\r\n")) {
+		t.Fatalf("checkout-index content = %q, want CRLF materialization", want)
+	}
 
 	sandbox, cleanup, err := materializeIndex(osProcessRunner{}, root)
 	if err != nil {
@@ -68,8 +79,11 @@ func TestMaterializeIndexUsesStagedIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(got) != staged {
-		t.Fatalf("sandbox content = %q, want staged %q", got, staged)
+	if !bytes.Equal(got, want) {
+		t.Fatalf("sandbox content = %q, want checkout-index content %q", got, want)
+	}
+	if bytes.Equal(got, []byte("package calc\nfunc Add(a, b int) int { return a * b }\n")) {
+		t.Fatalf("sandbox content = %q, must not use unstaged worktree content", got)
 	}
 }
 
