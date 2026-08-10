@@ -22,6 +22,11 @@ That is what lives here.
 go install github.com/Disble/dharness/cmd/dharness@latest
 ```
 
+`@latest` resolves to the newest tagged release. Releases are cut by
+release-please from the conventional commits on main — it opens a pull request
+carrying the version and the `CHANGELOG.md` entry, and merging it tags the
+release and builds the binaries. Nothing about a release is decided by hand.
+
 ## Use
 
 ```
