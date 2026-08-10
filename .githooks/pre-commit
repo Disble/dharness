@@ -5,10 +5,12 @@
 #
 #     git config core.hooksPath .githooks
 #
-# There is no hook manager here on purpose. lefthook would be the first
-# dependency in a module that has none, and for a repository whose entire check
-# is three commands from the Go toolchain, git's own core.hooksPath is the
-# standard way to do this and costs nothing.
+# There is no hook manager here on purpose, and not because of dependencies:
+# lefthook is itself written in Go and `go install` would fetch it happily. The
+# reason is what each option costs to enable. This is one git command and needs
+# nothing installed — bash ships with Git for Windows, so anyone who can clone
+# this can run it. lefthook is a binary to fetch plus `lefthook install`, and
+# for three commands from the Go toolchain that buys nothing.
 set -euo pipefail
 
 fail() {

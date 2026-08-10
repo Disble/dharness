@@ -17,8 +17,11 @@ decision that produced it, and a change is accepted or rejected by citing them.
     bash scripts/verify-gate.sh           # proves the gate still refuses
 
 The local gate is `.githooks/pre-commit` and runs what CI runs. There is no hook
-manager: lefthook would be the first dependency in a module that has none, and
-for three commands from the Go toolchain git's own `core.hooksPath` is enough.
+manager, and not because of dependencies — lefthook is written in Go and `go
+install` would fetch it. The reason is enablement cost: this is one git command
+and needs nothing installed, since bash ships with Git for Windows. lefthook is
+a binary to fetch plus `lefthook install`, which for three commands from the Go
+toolchain buys nothing.
 
 There is no package manager and no dependency: the module is stdlib-only, and a
 proposal that adds a dependency has to argue against that first.
