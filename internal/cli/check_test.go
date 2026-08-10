@@ -369,3 +369,32 @@ func TestFailureHandsOffToTheToolsOwnHelp(t *testing.T) {
 		t.Errorf("failure points a bun project at npx:\n%s", text)
 	}
 }
+
+// A repository with no commits still runs react-doctor, which only needs the
+// index, and skips fallow, which needs something to compare against. Failing
+// the first commit on a tool error would land exactly one step after adoption.
+func TestCheckSkipsFallowUntilThereIsHistory(t *testing.T) {
+	captured, _ := stub(t, "src/a.ts\n")
+
+	t.Cleanup(project.SetGitOutputForTest(func(_ string, args ...string) ([]byte, error) {
+		if len(args) > 0 && args[0] == "rev-parse" {
+			return nil, errors.New("fatal: Needed a single revision")
+		}
+		return []byte("src/a.ts\n"), nil
+	}))
+
+	var out bytes.Buffer
+	if err := RunCheck(nil, &out); err != nil {
+		t.Fatalf("RunCheck() = %v, want nil", err)
+	}
+
+	if len(captured.commands) != 1 {
+		t.Fatalf("ran %d commands, want only react-doctor: %v", len(captured.commands), captured.commands)
+	}
+	if got := toolOf(captured.commands[0]); got != "react-doctor" {
+		t.Errorf("ran %q, want react-doctor", got)
+	}
+	if !strings.Contains(out.String(), "no commits yet") {
+		t.Errorf("the gate skipped fallow without saying why:\n%s", out.String())
+	}
+}

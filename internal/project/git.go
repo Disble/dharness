@@ -42,6 +42,16 @@ func (e *NotAGitRepositoryError) Error() string {
 	)
 }
 
+// HasCommits reports whether the repository has any history behind the index.
+//
+// It exists because a repository with no commits has nothing to compare a
+// change against, which is not a broken configuration — it is the first
+// commit, and it happens right after adoption.
+func HasCommits(dir string) bool {
+	_, err := gitOutput(dir, "rev-parse", "--verify", "HEAD")
+	return err == nil
+}
+
 // StagedSourceFiles lists the staged paths the wrapped tools can analyse.
 //
 // --diff-filter=ACMR drops deletions: a deleted file has no content to check,

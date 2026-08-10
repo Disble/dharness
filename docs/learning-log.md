@@ -58,3 +58,12 @@ this file only explains the _why_, it never replaces the _how_.
 - [2026-08-09]: A comment above `export function f() {}` belongs to the export statement, not to the function inside it, so asking the inner node finds nothing and every documented export reports as bare.
 - [2026-08-09]: ESLint's `estree` types describe JavaScript only — interfaces, type aliases and enums exist solely in the AST the TypeScript parser hands over, so a rule that reads them has to name the shape it reads.
 - [2026-08-09]: A rule that relies on config globs for scope reports every file in the project under react-doctor, whose rule configuration is a severity and nothing else.
+- [2026-08-09]: npm returns E404 on an unauthenticated publish, so "not found" can mean "I do not know who you are" rather than anything about the package.
+- [2026-08-09]: A trusted publisher cannot be configured before the package exists, so the first publish needs a token and only later releases can be OIDC-only.
+- [2026-08-09]: npm validates `package.json` against the signed provenance attestation and rejects the publish when `repository.url` does not match the repository the build came from.
+- [2026-08-09]: release-please cannot open its pull request until the repository allows Actions to create one, which is a repository setting rather than a workflow permission.
+- [2026-08-09]: Explicit per-job `permissions:` override the repository default, so `default_workflow_permissions` can stay `read` even for a workflow that writes.
+- [2026-08-09]: A pull request opened with `GITHUB_TOKEN` does not trigger workflow runs, which is why the publish job has to live inside the release workflow.
+- [2026-08-09]: `tee /dev/stderr` does not exist in the Git Bash the Windows runner uses, so a check can fail on how it reports rather than on what it found.
+- [2026-08-09]: The Windows runner checks out CRLF by default and gofmt counts a CRLF file as unformatted, so the format check failed on every file at once.
+- [2026-08-09]: `fallow audit` cannot detect a base branch in a repository with no commits, which is exactly the first commit after adoption.
