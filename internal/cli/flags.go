@@ -88,6 +88,19 @@ func pointer(p project.Project, tool string) string {
 	)
 }
 
+// noSourceMessage explains the one state in which dharness has nothing to say.
+//
+// Every tool dharness wraps analyses JavaScript, so a repository with no place
+// a package manager installs is not a repository dharness can gate. Saying so
+// is the honest answer; the alternative — the old default of "npm" — reported a
+// Go module as an npm project and offered to install into it.
+func noSourceMessage(p project.Project) string {
+	return fmt.Sprintf(
+		"No JS project found in %s: nothing there holds a lockfile, so there is no\nplace a package manager installs and nothing for the wrapped tools to analyse.\n\nIf the project is there but has never been installed, install it first — the\nlockfile is what dharness looks for.",
+		p.Root,
+	)
+}
+
 func orNotDetected(value string) string {
 	if value == "" {
 		return "not detected"
