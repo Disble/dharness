@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/Disble/dharness/internal/project"
 	"github.com/Disble/dharness/internal/runner"
@@ -81,6 +82,11 @@ func RunMutate(args []string, stdout io.Writer) error {
 		return fmt.Errorf("%s", noSourceMessage(p))
 	}
 
+	paths, err = scopePaths(p, dir, paths)
+	if err != nil {
+		return err
+	}
+
 	testRunner, err := p.StrykerRunner()
 	if err != nil {
 		return err
@@ -120,6 +126,50 @@ func RunMutate(args []string, stdout io.Writer) error {
 		return err
 	}
 	return reportSurvivors(p.Source, stdout)
+}
+
+// PathOutsideSourceError reports a path Stryker could never have mutated.
+//
+// It names both directories because the mistake it catches is a reasonable
+// one: in a split layout the path that is correct to type and the path Stryker
+// receives are different, and a tool that silently mutated nothing would look
+// like a suite with no survivors.
+type PathOutsideSourceError struct {
+	Path   string
+	Source string
+}
+
+func (e *PathOutsideSourceError) Error() string {
+	return fmt.Sprintf("%s is outside this project's JS source (%s), and Stryker only mutates what is inside it", e.Path, e.Source)
+}
+
+// scopePaths re-expresses the paths a person typed the way Stryker will read
+// them.
+//
+// Paths are typed relative to the directory the command was run from, and
+// Stryker runs in the JS project, which in a split layout is a different
+// directory. `dharness mutate frontend/src/a.ts` from the repository root would
+// otherwise reach Stryker as `frontend/src/a.ts` interpreted from inside
+// frontend/ — a path that does not exist, mutated with no complaint.
+//
+// A path outside the JS project is refused rather than clamped, because there
+// is no correct path to guess at and mutating nothing is indistinguishable from
+// mutating something that survived nothing.
+func scopePaths(p project.Project, dir string, paths []string) ([]string, error) {
+	scoped := make([]string, 0, len(paths))
+	for _, given := range paths {
+		absolute := given
+		if !filepath.IsAbs(absolute) {
+			absolute = filepath.Join(dir, absolute)
+		}
+
+		rel, err := filepath.Rel(p.Source, absolute)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return nil, &PathOutsideSourceError{Path: given, Source: p.Source}
+		}
+		scoped = append(scoped, filepath.ToSlash(rel))
+	}
+	return scoped, nil
 }
 
 func runStryker(p project.Project, dir string, args []string, stdout io.Writer) error {
