@@ -97,7 +97,7 @@ func RunMutate(args []string, stdout io.Writer) error {
 
 		// The count only exists in the output: --dryRunOnly writes no report.
 		var transcript bytes.Buffer
-		if err := runStryker(p, p.Source, tool.StrykerDryRun(paths, testRunner), io.MultiWriter(stdout, &transcript)); err != nil {
+		if err := runStryker(p, p.Source, tool.StrykerDryRun(paths, testRunner, *concurrency), io.MultiWriter(stdout, &transcript)); err != nil {
 			return err
 		}
 		return recordMeasurement(p, transcript.String(), paths[0], stdout)

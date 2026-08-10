@@ -122,11 +122,23 @@ func StrykerMutate(paths []string, testRunner, incrementalFile, sandbox string, 
 // scoped review is viable in a repository: the runner derives which tests to
 // run from the import graph, and barrel files inflate that graph until every
 // test counts as related.
-func StrykerDryRun(paths []string, testRunner string) []string {
+//
+// It carries the same --concurrency as the mutation run, and leaving it off was
+// a hole rather than a decision. The initial test run is where Stryker starts
+// its runner processes, so the phase the budget was written for is the one that
+// went unbudgeted: measured on a 20-thread machine, a dry run announced
+// "Creating 19 test runner process(es)" and took longer than the mutation it
+// was measuring. The budget is a resource budget, and it does not stop applying
+// because this run mutates nothing.
+func StrykerDryRun(paths []string, testRunner string, concurrency int) []string {
 	args := []string{"run"}
 	args = append(args, mutate(paths)...)
 	args = append(args, runner(testRunner)...)
-	return append(args, "--dryRunOnly", "--reporters", "clear-text,json")
+	return append(args,
+		"--dryRunOnly",
+		"--concurrency", strconv.Itoa(concurrency),
+		"--reporters", "clear-text,json",
+	)
 }
 
 func mutate(paths []string) []string {
