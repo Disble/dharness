@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# The local gate. One entrypoint, and it runs what CI runs.
+#
+# Enable it once per clone:
+#
+#     git config core.hooksPath .githooks
+#
+# There is no hook manager here on purpose. lefthook would be the first
+# dependency in a module that has none, and for a repository whose entire check
+# is three commands from the Go toolchain, git's own core.hooksPath is the
+# standard way to do this and costs nothing.
+set -euo pipefail
+
+fail() {
+	echo "" >&2
+	echo "pre-commit: $1" >&2
+	echo "Nothing was committed. Fix it and commit again; never pass --no-verify." >&2
+	exit 1
+}
+
+staged=$(git diff --cached --name-only --diff-filter=ACMR -- '*.go')
+
+if [ -z "$staged" ]; then
+	echo "pre-commit: no staged Go files, nothing to check"
+	exit 0
+fi
+
+unformatted=$(gofmt -l $staged)
+if [ -n "$unformatted" ]; then
+	echo "$unformatted" >&2
+	fail "the files above are not gofmt'd. Run: gofmt -w ."
+fi
+
+go vet ./... || fail "go vet found something"
+
+# CI runs this with -race. It is left off here because the race detector needs a
+# C toolchain that a Windows checkout frequently does not have, and a gate that
+# cannot run is worse than one with a stated limit. Data races are caught in CI,
+# not by this hook.
+go test ./... || fail "a test failed"
+
+echo "pre-commit: gofmt, vet and tests passed"

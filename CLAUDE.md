@@ -46,10 +46,12 @@ true; it is a memory aid and never a substitute for a check that enforces it.
 
 ## Commands
 
+    git config core.hooksPath .githooks   # once per clone: enables the gate
     go build ./...
     go vet ./...
     go test ./... -race
     gofmt -l .
+    bash scripts/verify-gate.sh           # proves the gate still refuses
 
 Stdlib only. There is no dependency and no package manager, and a proposal that
 adds one argues against that first.

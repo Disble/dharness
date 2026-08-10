@@ -31,3 +31,10 @@ jobs:
         shell: bash
       - run: go vet ./...
       - run: go test ./... -race
+
+      # L5: a gate nobody has watched fail is indistinguishable from no gate.
+      # This asserts the local hook still refuses a broken file, so a hook that
+      # quietly stopped enforcing cannot reach main.
+      - name: Prove the local gate still fails
+        run: bash scripts/verify-gate.sh
+        shell: bash

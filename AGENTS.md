@@ -9,10 +9,16 @@ decision that produced it, and a change is accepted or rejected by citing them.
 
 ## Commands
 
+    git config core.hooksPath .githooks   # once per clone: enables the gate
     go build ./...
     go vet ./...
     go test ./... -race
     gofmt -l .
+    bash scripts/verify-gate.sh           # proves the gate still refuses
+
+The local gate is `.githooks/pre-commit` and runs what CI runs. There is no hook
+manager: lefthook would be the first dependency in a module that has none, and
+for three commands from the Go toolchain git's own `core.hooksPath` is enough.
 
 There is no package manager and no dependency: the module is stdlib-only, and a
 proposal that adds a dependency has to argue against that first.
@@ -254,10 +260,10 @@ Repo-owned. Silence is drift; a stated deviation is a decision.
 - `deviates: L1, L2 — empty.` Architecture rails and graph analysis run against
   the TypeScript projects dharness serves, never against dharness itself. `go
   vet` is the whole of L1 here.
-- `deviates: L4, L5, P06, P07 — no local gate.` The only gate is CI. dharness
-  installs a pre-commit gate into other repositories and has none of its own,
-  which is worth stating plainly rather than leaving to be discovered. P07 has
-  nothing to prove until L4 exists.
+- `deviates: P06 — the local gate omits -race.` The race detector needs a C
+  toolchain that a Windows checkout frequently does not have, and a gate that
+  cannot run is worse than one with a stated limit. CI runs `-race`; the hook
+  does not, so data races are caught after the push rather than before it.
 - `deviates: L7 — empty.` No agent-side hook wraps commit or push here.
 - `deviates: P08 — no generated config.` Nothing in this repository is
   tool-owned, so there is no marker to merge behind. The files dharness
