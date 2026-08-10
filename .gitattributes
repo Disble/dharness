@@ -1,0 +1,4 @@
+# Go tooling normalises to LF, and gofmt reports a CRLF file as unformatted,
+# so a Windows checkout with the runner's default autocrlf failed the format
+# check on every file in the repository at once.
+* text=auto eol=lf
