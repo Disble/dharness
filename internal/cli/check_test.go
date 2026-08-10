@@ -31,13 +31,32 @@ func (r *record) run(cmd runner.Command, stdout, _ io.Writer) error {
 
 func toolOf(cmd runner.Command) string { return cmd.String() }
 
+// gitStub answers the three questions the commands ask git, which is what a
+// conventional single-directory project looks like from the outside: the given
+// root is the repository, its lockfile makes it the JS project too, and the
+// staged list is whatever the test supplied.
+//
+// Tests write their staged paths newline-separated because that is readable;
+// git's real -z output is NUL-separated, so the stub does that conversion in
+// the one place rather than in every test.
+func gitStub(root, staged string) func(string, ...string) ([]byte, error) {
+	return func(_ string, args ...string) ([]byte, error) {
+		switch {
+		case len(args) >= 2 && args[0] == "rev-parse" && args[1] == "--show-toplevel":
+			return []byte(root + "\n"), nil
+		case len(args) >= 1 && args[0] == "ls-files":
+			return []byte("package-lock.json\x00"), nil
+		default:
+			return []byte(strings.ReplaceAll(staged, "\n", "\x00")), nil
+		}
+	}
+}
+
 func stub(t *testing.T, staged string) (*record, string) {
 	t.Helper()
 
 	root := t.TempDir()
-	t.Cleanup(project.SetGitOutputForTest(func(string, ...string) ([]byte, error) {
-		return []byte(staged), nil
-	}))
+	t.Cleanup(project.SetGitOutputForTest(gitStub(root, staged)))
 
 	previous := workingDirectory
 	workingDirectory = func() (string, error) { return root, nil }
@@ -374,13 +393,17 @@ func TestFailureHandsOffToTheToolsOwnHelp(t *testing.T) {
 // index, and skips fallow, which needs something to compare against. Failing
 // the first commit on a tool error would land exactly one step after adoption.
 func TestCheckSkipsFallowUntilThereIsHistory(t *testing.T) {
-	captured, _ := stub(t, "src/a.ts\n")
+	captured, root := stub(t, "src/a.ts\n")
 
-	t.Cleanup(project.SetGitOutputForTest(func(_ string, args ...string) ([]byte, error) {
-		if len(args) > 0 && args[0] == "rev-parse" {
+	// Only the HEAD lookup fails: a repository with no commits still has a
+	// toplevel and an index, and answering everything with an error would be
+	// testing a repository that does not exist rather than one with no history.
+	answer := gitStub(root, "src/a.ts\n")
+	t.Cleanup(project.SetGitOutputForTest(func(dir string, args ...string) ([]byte, error) {
+		if len(args) >= 2 && args[0] == "rev-parse" && args[1] == "--verify" {
 			return nil, errors.New("fatal: Needed a single revision")
 		}
-		return []byte("src/a.ts\n"), nil
+		return answer(dir, args...)
 	}))
 
 	var out bytes.Buffer

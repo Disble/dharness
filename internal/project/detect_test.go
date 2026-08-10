@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -19,7 +20,10 @@ func TestDetectPackageManagerPrefersBunOverOlderLockfiles(t *testing.T) {
 		{"pnpm", []string{"pnpm-lock.yaml"}, "pnpm"},
 		{"yarn", []string{"yarn.lock"}, "yarn"},
 		{"npm", []string{"package-lock.json"}, "npm"},
-		{"none defaults to npm", nil, "npm"},
+		// Nothing found is not npm. A repository with no lockfile at all is a
+		// repository dharness has not identified, and saying "npm" there is a
+		// guess printed in the same sentence as the facts.
+		{"none detects nothing", nil, ""},
 		// A repository that migrated package managers can carry both files;
 		// the newer one is the one actually in use.
 		{"bun alongside npm", []string{"package-lock.json", "bun.lock"}, "bun"},
@@ -112,7 +116,7 @@ func TestResolveFallsBackToTheRemoteFormPerPackageManager(t *testing.T) {
 
 func TestStagedSourceFilesKeepsOnlyAnalysablePaths(t *testing.T) {
 	restore := SetGitOutputForTest(func(string, ...string) ([]byte, error) {
-		return []byte("src/a.tsx\nREADME.md\n\nsrc/b.ts\nlogo.svg\n"), nil
+		return []byte("src/a.tsx\x00README.md\x00\x00src/b.ts\x00logo.svg\x00"), nil
 	})
 	t.Cleanup(restore)
 
@@ -148,6 +152,56 @@ func TestStagedSourceFilesFailsWhenThereIsNoIndex(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "git repository") {
 		t.Errorf("error does not say what is missing: %s", err)
+	}
+}
+
+// Measured, not assumed: with core.quotePath at its default, `git diff
+// --cached --name-only` reports src/café.ts as the literal "src/caf\303\251.ts",
+// quotes included. filepath.Ext of that is `.ts"`, so IsSourceFile dropped it —
+// and when it was the only staged file the gate reported nothing to check and
+// exited 0. -z is what stops the gate passing over a change it never read.
+func TestStagedSourceFilesKeepsPathsGitWouldHaveQuoted(t *testing.T) {
+	var asked []string
+	t.Cleanup(SetGitOutputForTest(func(_ string, args ...string) ([]byte, error) {
+		asked = args
+		return []byte("src/café.ts\x00"), nil
+	}))
+
+	files, err := StagedSourceFiles(t.TempDir())
+	if err != nil {
+		t.Fatalf("StagedSourceFiles() = %v", err)
+	}
+	if len(files) != 1 || files[0] != "src/café.ts" {
+		t.Errorf("StagedSourceFiles() = %v, want the accented path intact", files)
+	}
+
+	if !slices.Contains(asked, "-z") {
+		t.Errorf("git was asked without -z, so it will quote non-ASCII paths: %v", asked)
+	}
+}
+
+// Corepack's field is the project stating which manager it uses. A declared
+// answer outranks one deduced from whatever happens to be on disk.
+func TestDetectPackageManagerPrefersTheDeclaredFieldOverTheLockfile(t *testing.T) {
+	cases := []struct {
+		name, declared, want string
+	}{
+		{"pinned version", `"bun@1.2.3"`, "bun"},
+		{"bare name", `"pnpm"`, "pnpm"},
+		{"unknown manager falls back to the lockfile", `"corepack-only@1"`, "npm"},
+		{"absent falls back to the lockfile", `""`, "npm"},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			root := t.TempDir()
+			write(t, filepath.Join(root, "package-lock.json"), "")
+			write(t, filepath.Join(root, "package.json"), `{"packageManager":`+testCase.declared+`}`)
+
+			if got := Describe(root).PackageManager; got != testCase.want {
+				t.Errorf("PackageManager = %q, want %q", got, testCase.want)
+			}
+		})
 	}
 }
 

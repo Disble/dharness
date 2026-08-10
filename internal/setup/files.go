@@ -64,7 +64,10 @@ func hookManager(p project.Project) manager {
 }
 
 func installed(p project.Project, pkg string) bool {
-	_, err := os.Stat(filepath.Join(p.Root, "node_modules", filepath.FromSlash(pkg)))
+	if !p.HasSource() {
+		return false
+	}
+	_, err := os.Stat(filepath.Join(p.Source, "node_modules", filepath.FromSlash(pkg)))
 	return err == nil
 }
 
@@ -104,16 +107,34 @@ func appendHuskyGate(p project.Project, w *Writer) error {
 // It looks for the reference rather than parsing, for the same reason the gate
 // check does: dharness does not own these files and has no business
 // understanding their structure to answer a yes-or-no question.
-func extendsWired(p project.Project, name, target string) bool {
-	raw, err := os.ReadFile(filepath.Join(p.Root, name))
+func extendsWired(dir, name, target string) bool {
+	raw, err := os.ReadFile(filepath.Join(dir, name))
 	return err == nil && strings.Contains(string(raw), target)
 }
 
+// ownedFrom names a file dharness owns the way a config living in dir has to
+// spell it.
+//
+// The owned directory sits at the repository root, because the gate it holds
+// has to sit next to git. fallow's configuration lives with the JS project
+// instead, so in a split layout it reaches the owned file by going up —
+// `../.dharness/fallow.jsonc`. Both tools resolve `extends` relative to the
+// file that declares it, so the reference is computed from the declaring
+// directory rather than assumed to be the root.
+func ownedFrom(p project.Project, dir, name string) string {
+	owned := filepath.Join(p.Root, project.Dir, name)
+	rel, err := filepath.Rel(dir, owned)
+	if err != nil {
+		return filepath.ToSlash(filepath.Join(project.Dir, name))
+	}
+	return filepath.ToSlash(rel)
+}
+
 // wireFallowExtends adds the reference, creating the config when the project
-// has none.
+// has none. fallow's config belongs to the JS project, so it is written there.
 func wireFallowExtends(p project.Project, w *Writer) error {
-	target := filepath.ToSlash(filepath.Join(project.Dir, ownedFallow))
-	path := filepath.Join(p.Root, fallowConfig)
+	target := ownedFrom(p, p.Source, ownedFallow)
+	path := filepath.Join(p.Source, fallowConfig)
 
 	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
 		return w.Write(path, fmt.Appendf(nil, "{\n  \"extends\": [%q]\n}\n", target))
@@ -123,9 +144,10 @@ func wireFallowExtends(p project.Project, w *Writer) error {
 		fallowConfig, target)
 }
 
-// wireLefthookExtends does the same for the gate.
+// wireLefthookExtends does the same for the gate, which belongs to the
+// repository because that is where git looks for it.
 func wireLefthookExtends(p project.Project, w *Writer) error {
-	target := filepath.ToSlash(filepath.Join(project.Dir, ownedLefthook))
+	target := ownedFrom(p, p.Root, ownedLefthook)
 	path := filepath.Join(p.Root, lefthookConfig)
 
 	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {

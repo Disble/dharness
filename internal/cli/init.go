@@ -28,10 +28,20 @@ func RunInit(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	p := project.Describe(dir)
+	p, err := project.Discover(dir)
+	if err != nil {
+		return err
+	}
 
 	fmt.Fprintf(stdout, "# dharness in %s\n\n", p.Root)
-	fmt.Fprintf(stdout, "Package manager: %s. Test runner: %s.\n\n", p.PackageManager, orNotDetected(p.TestRunner))
+	if !p.HasSource() {
+		fmt.Fprintln(stdout, noSourceMessage(p))
+		return nil
+	}
+	if rel := p.SourceRel(); rel != "" {
+		fmt.Fprintf(stdout, "JS project: %s/ — the repository root keeps the hook.\n", rel)
+	}
+	fmt.Fprintf(stdout, "Package manager: %s. Test runner: %s.\n\n", orNotDetected(p.PackageManager), orNotDetected(p.TestRunner))
 
 	pending := setup.Pending(p)
 	if len(pending) > 0 {

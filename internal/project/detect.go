@@ -20,10 +20,45 @@ import (
 )
 
 // Project is everything dharness detected about a repository.
+//
+// Root and Source are two answers a conventional layout collapses into one.
+// Root is the repository — git, the hook manager, the directory dharness owns.
+// Source is where the package manager installs, which is where the wrapped
+// tools have to run. A Wails project keeps Go at the root and the whole
+// frontend in a subdirectory, and every question below belongs to exactly one
+// of the two. Treating them as one is what made a Go module report as an npm
+// project.
+//
+// Source is empty when the repository holds no JS project at all. That is a
+// real state and it is not the same as "npm": it means the tools have nothing
+// to run on, and a command that needs them says so instead of guessing.
 type Project struct {
 	Root           string
+	Source         string
 	PackageManager string
 	TestRunner     string
+}
+
+// HasSource reports whether this repository holds a JS project to analyse.
+func (p Project) HasSource() bool { return p.Source != "" }
+
+// SourceRel is Source expressed the way a config file at the repository root
+// has to name it: relative, forward slashes. It is empty when the two roots are
+// one directory, which is the case that needs no such key at all.
+//
+// The comparison is directory identity rather than string equality, because
+// Root arrives from git in the spelling the kernel gave it and Source is built
+// by joining onto it. On a case-insensitive volume those two spellings can
+// differ while naming one directory.
+func (p Project) SourceRel() string {
+	if !p.HasSource() || sameDirectory(p.Root, p.Source) {
+		return ""
+	}
+	rel, err := filepath.Rel(p.Root, p.Source)
+	if err != nil {
+		return ""
+	}
+	return filepath.ToSlash(rel)
 }
 
 var lockfiles = []struct{ file, manager string }{
@@ -69,27 +104,73 @@ func Package(tool string) string {
 // this machine happened to download once".
 func LatestSpec(tool string) string { return Package(tool) + "@latest" }
 
-// Describe inspects root. It never fails: an undetected field is empty, and
-// callers decide whether that matters.
-func Describe(root string) Project {
+// Describe inspects a directory that is both the repository and the JS project,
+// which is what a conventional layout looks like. Discover is the entry point
+// that tells the two apart.
+func Describe(root string) Project { return At(root, root) }
+
+// At describes a repository whose JS project lives in source. It never fails:
+// an undetected field is empty, and callers decide whether that matters.
+func At(root, source string) Project {
 	return Project{
 		Root:           root,
-		PackageManager: detectPackageManager(root),
-		TestRunner:     detectTestRunner(root),
+		Source:         source,
+		PackageManager: detectPackageManager(source),
+		TestRunner:     detectTestRunner(source),
 	}
 }
 
-func detectPackageManager(root string) string {
+// detectPackageManager asks the project before deducing anything.
+//
+// package.json's `packageManager` field is Corepack's, and it is the project
+// stating which manager it uses rather than dharness inferring it from what
+// happens to be on disk. A declared answer outranks a deduced one, so it is
+// read first; the lockfile is the deduction, and it is a good one.
+//
+// Nothing found returns nothing. The previous default of "npm" was not a
+// detection, it was a guess printed in the same sentence as the real answers,
+// and in a repository with no package.json at all it was confidently wrong.
+func detectPackageManager(source string) string {
+	if source == "" {
+		return ""
+	}
+	if declared := declaredPackageManager(source); declared != "" {
+		return declared
+	}
 	for _, entry := range lockfiles {
-		if _, err := os.Stat(filepath.Join(root, entry.file)); err == nil {
+		if _, err := os.Stat(filepath.Join(source, entry.file)); err == nil {
 			return entry.manager
 		}
 	}
-	return "npm"
+	return ""
 }
 
-func detectTestRunner(root string) string {
-	raw, err := os.ReadFile(filepath.Join(root, "package.json"))
+// declaredPackageManager reads Corepack's field, which carries a version the
+// name has to be split from: `bun@1.2.3`.
+func declaredPackageManager(source string) string {
+	raw, err := os.ReadFile(filepath.Join(source, "package.json"))
+	if err != nil {
+		return ""
+	}
+	var pkg struct {
+		PackageManager string `json:"packageManager"`
+	}
+	if json.Unmarshal(raw, &pkg) != nil {
+		return ""
+	}
+
+	name, _, _ := strings.Cut(strings.TrimSpace(pkg.PackageManager), "@")
+	if _, known := installCommands[strings.ToLower(name)]; known {
+		return strings.ToLower(name)
+	}
+	return ""
+}
+
+func detectTestRunner(source string) string {
+	if source == "" {
+		return ""
+	}
+	raw, err := os.ReadFile(filepath.Join(source, "package.json"))
 	if err != nil {
 		return ""
 	}
@@ -141,15 +222,17 @@ func (b Binary) Command(root string, args ...string) runner.Command {
 // release can change severities. The remote form is a fallback for a project
 // that has not installed the tool, not the intended path.
 func (p Project) Resolve(tool string) Binary {
-	base := filepath.Join(p.Root, "node_modules", ".bin", tool)
+	if p.HasSource() {
+		base := filepath.Join(p.Source, "node_modules", ".bin", tool)
 
-	candidates := []string{base}
-	if runtime.GOOS == "windows" {
-		candidates = []string{base + ".cmd", base + ".exe", base}
-	}
-	for _, candidate := range candidates {
-		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-			return Binary{Tool: tool, Name: candidate, Local: true}
+		candidates := []string{base}
+		if runtime.GOOS == "windows" {
+			candidates = []string{base + ".cmd", base + ".exe", base}
+		}
+		for _, candidate := range candidates {
+			if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+				return Binary{Tool: tool, Name: candidate, Local: true}
+			}
 		}
 	}
 
@@ -180,7 +263,7 @@ var strykerConfigFiles = []string{
 // the project has said nothing, something has to.
 func (p Project) HasStrykerConfig() bool {
 	for _, name := range strykerConfigFiles {
-		if _, err := os.Stat(filepath.Join(p.Root, name)); err == nil {
+		if _, err := os.Stat(filepath.Join(p.Source, name)); err == nil {
 			return true
 		}
 	}
@@ -198,7 +281,7 @@ var fallowConfigFiles = []string{".fallowrc.json", ".fallowrc.jsonc", "fallow.to
 // wrong place and most of the project reports as unreachable.
 func (p Project) HasFallowConfig() bool {
 	for _, name := range fallowConfigFiles {
-		if _, err := os.Stat(filepath.Join(p.Root, name)); err == nil {
+		if _, err := os.Stat(filepath.Join(p.Source, name)); err == nil {
 			return true
 		}
 	}
@@ -296,7 +379,7 @@ func (p Project) StrykerRunner() (string, error) {
 		return "", &MissingStrykerRunnerError{TestRunner: p.TestRunner}
 	}
 
-	if _, err := os.Stat(filepath.Join(p.Root, "node_modules", plugin)); err != nil {
+	if _, err := os.Stat(filepath.Join(p.Source, "node_modules", plugin)); err != nil {
 		install, ok := installCommands[p.PackageManager]
 		if !ok {
 			install = installCommands["npm"]

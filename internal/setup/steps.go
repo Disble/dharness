@@ -16,13 +16,33 @@ import (
 // what keeps lefthook and husky from becoming a variable anywhere else.
 const gateCommand = "dharness check"
 
+// gateConfig is the lefthook configuration dharness owns.
+//
+// The `root` key is lefthook's own, and it is the whole reason dharness does
+// not have to solve this itself: the hook is installed at the repository root
+// because that is where git looks for it, but in a split layout the tools have
+// to run where the package manager installed them. lefthook already changes
+// directory per command, so dharness names the directory and stops there.
+//
+// It is emitted only when the two roots really differ. A key that says `root:
+// ./` in a conventional repository is noise in a file people read.
+func gateConfig(p project.Project) string {
+	gate := fmt.Sprintf("pre-commit:\n  commands:\n    dharness:\n      run: %s\n", gateCommand)
+	if rel := p.SourceRel(); rel != "" {
+		gate += fmt.Sprintf("      root: %s/\n", rel)
+	}
+	return gate
+}
+
 // ---------------------------------------------------------------- install
 
 type installStep struct{}
 
 func (installStep) ID() string { return "install what this project is missing" }
 
-func (installStep) Satisfied(p project.Project) bool { return len(missing(p)) == 0 }
+func (installStep) Satisfied(p project.Project) bool {
+	return !p.HasSource() || len(missing(p)) == 0
+}
 
 func (s installStep) Describe(p project.Project) string {
 	return fmt.Sprintf("Without them every run fetches over the network, inside a gate that runs on\nevery commit.\n\n    %s %s",
@@ -40,7 +60,7 @@ func (installStep) Apply(p project.Project, _ *Writer) error {
 		Label: command[0],
 		Name:  command[0],
 		Args:  append(command[1:], packages...),
-		Dir:   p.Root,
+		Dir:   p.Source,
 	}, os.Stdout, os.Stderr)
 }
 
@@ -90,8 +110,7 @@ func (ownedFilesStep) Apply(p project.Project, w *Writer) error {
 		return err
 	}
 
-	gate := fmt.Sprintf("pre-commit:\n  commands:\n    dharness:\n      run: %s\n", gateCommand)
-	if err := w.Write(filepath.Join(p.Root, project.Dir, ownedLefthook), []byte(gate)); err != nil {
+	if err := w.Write(filepath.Join(p.Root, project.Dir, ownedLefthook), []byte(gateConfig(p))); err != nil {
 		return err
 	}
 
@@ -112,9 +131,10 @@ type extendsStep struct{}
 func (extendsStep) ID() string { return "point the project's config at the files dharness owns" }
 
 func (extendsStep) Satisfied(p project.Project) bool {
-	return extendsWired(p, fallowConfig, filepath.ToSlash(filepath.Join(project.Dir, ownedFallow))) &&
-		(hookManager(p) != managerLefthook ||
-			extendsWired(p, lefthookConfig, filepath.ToSlash(filepath.Join(project.Dir, ownedLefthook))))
+	fallowWired := !p.HasSource() || extendsWired(p.Source, fallowConfig, ownedFrom(p, p.Source, ownedFallow))
+	lefthookWired := hookManager(p) != managerLefthook ||
+		extendsWired(p.Root, lefthookConfig, ownedFrom(p, p.Root, ownedLefthook))
+	return fallowWired && lefthookWired
 }
 
 func (extendsStep) Describe(project.Project) string {
@@ -122,8 +142,10 @@ func (extendsStep) Describe(project.Project) string {
 }
 
 func (extendsStep) Apply(p project.Project, w *Writer) error {
-	if err := wireFallowExtends(p, w); err != nil {
-		return err
+	if p.HasSource() {
+		if err := wireFallowExtends(p, w); err != nil {
+			return err
+		}
 	}
 	if hookManager(p) == managerLefthook {
 		return wireLefthookExtends(p, w)
@@ -138,7 +160,10 @@ type doctorConfigStep struct{}
 func (doctorConfigStep) ID() string { return "declare the rules react-doctor should run" }
 
 func (doctorConfigStep) Satisfied(p project.Project) bool {
-	raw, err := os.ReadFile(filepath.Join(p.Root, doctorConfig))
+	if !p.HasSource() {
+		return true
+	}
+	raw, err := os.ReadFile(filepath.Join(p.Source, doctorConfig))
 	if err != nil {
 		return false
 	}
@@ -159,7 +184,7 @@ func (doctorConfigStep) Describe(project.Project) string {
 }
 
 func (doctorConfigStep) Apply(p project.Project, w *Writer) error {
-	path := filepath.Join(p.Root, doctorConfig)
+	path := filepath.Join(p.Source, doctorConfig)
 
 	config := doctorConfigFile{Rules: map[string]string{}}
 	if raw, err := os.ReadFile(path); err == nil {

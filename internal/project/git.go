@@ -56,17 +56,64 @@ func HasCommits(dir string) bool {
 //
 // --diff-filter=ACMR drops deletions: a deleted file has no content to check,
 // and passing one to a tool is an error rather than a finding.
+//
+// -z is not a detail. Without it git quotes any path that is not plain ASCII —
+// `src/café.ts` arrives as the literal `"src/caf\303\251.ts"`, quotes included.
+// filepath.Ext of that is `.ts"`, which matches no extension, so IsSourceFile
+// drops it and the file leaves the gate's scope. When it was the only staged
+// file the gate then reported nothing to check and exited 0: a pass over a
+// change nothing looked at. -z emits the bytes raw, separated by NUL.
 func StagedSourceFiles(dir string) ([]string, error) {
-	out, err := gitOutput(dir, "diff", "--cached", "--name-only", "--diff-filter=ACMR")
+	out, err := gitOutput(dir, "diff", "--cached", "--name-only", "--diff-filter=ACMR", "-z")
 	if err != nil {
 		return nil, &NotAGitRepositoryError{Dir: dir, Cause: err}
 	}
 
 	var files []string
-	for line := range strings.SplitSeq(string(out), "\n") {
-		if path := strings.TrimSpace(line); path != "" && IsSourceFile(path) {
+	for _, path := range splitNUL(out) {
+		if IsSourceFile(path) {
 			files = append(files, path)
 		}
 	}
 	return files, nil
+}
+
+// StagedSourceFiles lists the staged paths that belong to this project's JS
+// source, which is the only part of the repository the wrapped tools can say
+// anything about.
+//
+// git reports paths relative to the repository, so the scope is applied here
+// rather than by running git from the subdirectory: a Wails repository stages
+// Go and TypeScript in one commit, and the Go half must not decide whether the
+// frontend gate runs.
+func (p Project) StagedSourceFiles() ([]string, error) {
+	staged, err := StagedSourceFiles(p.Root)
+	if err != nil || !p.HasSource() {
+		return nil, err
+	}
+
+	prefix := p.SourceRel()
+	if prefix == "" {
+		return staged, nil
+	}
+
+	var scoped []string
+	for _, file := range staged {
+		if strings.HasPrefix(file, prefix+"/") {
+			scoped = append(scoped, file)
+		}
+	}
+	return scoped, nil
+}
+
+// splitNUL reads git's -z output: NUL-separated paths, in the bytes the
+// filesystem holds, with no quoting and no trailing empty record.
+func splitNUL(out []byte) []string {
+	var paths []string
+	for field := range strings.SplitSeq(string(out), "\x00") {
+		if field != "" {
+			paths = append(paths, field)
+		}
+	}
+	return paths
 }

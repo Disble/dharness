@@ -73,7 +73,14 @@ func RunMutate(args []string, stdout io.Writer) error {
 		return err
 	}
 
-	p := project.Describe(dir)
+	p, err := project.Discover(dir)
+	if err != nil {
+		return err
+	}
+	if !p.HasSource() {
+		return fmt.Errorf("%s", noSourceMessage(p))
+	}
+
 	testRunner, err := p.StrykerRunner()
 	if err != nil {
 		return err
@@ -84,7 +91,7 @@ func RunMutate(args []string, stdout io.Writer) error {
 
 		// The count only exists in the output: --dryRunOnly writes no report.
 		var transcript bytes.Buffer
-		if err := runStryker(p, dir, tool.StrykerDryRun(paths, testRunner), io.MultiWriter(stdout, &transcript)); err != nil {
+		if err := runStryker(p, p.Source, tool.StrykerDryRun(paths, testRunner), io.MultiWriter(stdout, &transcript)); err != nil {
 			return err
 		}
 		return recordMeasurement(p, transcript.String(), paths[0], stdout)
@@ -109,10 +116,10 @@ func RunMutate(args []string, stdout io.Writer) error {
 	}
 	defer func() { _ = runner.RemoveSandbox(sandbox) }()
 
-	if err := runStryker(p, dir, tool.StrykerMutate(paths, testRunner, incremental, sandbox, *concurrency), stdout); err != nil {
+	if err := runStryker(p, p.Source, tool.StrykerMutate(paths, testRunner, incremental, sandbox, *concurrency), stdout); err != nil {
 		return err
 	}
-	return reportSurvivors(dir, stdout)
+	return reportSurvivors(p.Source, stdout)
 }
 
 func runStryker(p project.Project, dir string, args []string, stdout io.Writer) error {
