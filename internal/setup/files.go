@@ -63,6 +63,22 @@ func hookManager(p project.Project) manager {
 	return managerNone
 }
 
+// declaresBoundaries reports whether a fallow config declares an architecture.
+//
+// It looks for the quoted key rather than the bare word, and that is not a
+// detail: these files are JSONC, and a config that points at dharness carries
+// a sentence like "Architecture boundaries live in the file dharness owns" in
+// a comment. A bare substring answers yes to that sentence, which would make
+// every correctly wired project report a conflict it does not have.
+//
+// A parser would be exact, and it is still not worth one: the product is
+// stdlib-only, and a comment that quotes the key is a file written to defeat
+// this check rather than an accident.
+func declaresBoundaries(path string) bool {
+	raw, err := os.ReadFile(path)
+	return err == nil && strings.Contains(string(raw), `"boundaries"`)
+}
+
 // gateInstalled reports whether git will actually run the gate, which is a
 // different question from whether the configuration mentions it.
 func gateInstalled(p project.Project) bool {

@@ -127,7 +127,10 @@ func (ownedFilesStep) Apply(p project.Project, w *Writer) error {
 
 	// The boundaries block is deliberately absent: zones encode intent, and
 	// no detection can read intent off a tree. The model fills this in.
-	architecture := "{\n  // dharness writes this file; the architecture below is decided by analysis,\n  // not by detection. See `dharness init`.\n}\n"
+	// The boundaries block goes here and nowhere else: fallow's `extends`
+	// replaces the key rather than merging it, so the same block in the
+	// project's own config would silently discard this one.
+	architecture := "{\n  // dharness writes this file; the architecture below is decided by analysis,\n  // not by detection. Declare `boundaries` here rather than in the project's\n  // own fallow config: `extends` replaces this key, it does not merge it.\n  //\n  // See `dharness sync`.\n}\n"
 	if err := w.Write(filepath.Join(p.Root, project.Dir, ownedFallow), []byte(architecture)); err != nil {
 		return err
 	}
@@ -212,6 +215,48 @@ func (lefthookExtendsStep) Delegated(p project.Project) (string, bool) {
 
 func (lefthookExtendsStep) Apply(p project.Project, w *Writer) error {
 	return wireLefthookExtends(p, w)
+}
+
+// --------------------------------------------------- boundaries owner
+//
+// fallow's `extends` replaces a key rather than merging it. Measured against
+// fallow 3.14.0: a parent declaring `boundaries` is honoured until the child
+// declares its own, and from then on the parent's block is discarded whole —
+// no error, no warning, and the `extends` line still reads as correct.
+//
+// That makes it the one way dharness's architecture can stop being enforced
+// while everything else still looks wired, which is why it gets a step rather
+// than a line in another step's Describe.
+
+type boundariesOwnerStep struct{}
+
+func (boundariesOwnerStep) ID() string {
+	return "resolve the two architectures this project declares"
+}
+
+func (boundariesOwnerStep) Satisfied(p project.Project) bool {
+	return !p.HasSource() || !declaresBoundaries(filepath.Join(p.Source, fallowConfig))
+}
+
+func (boundariesOwnerStep) Describe(p project.Project) string {
+	return fmt.Sprintf(
+		"Move the zones and rules from %s into %s, or delete the block dharness\nowns and keep the project's. Either is a valid answer; having both is not,\nbecause only one of them runs and the file gives no sign of which.",
+		fallowConfig, filepath.ToSlash(filepath.Join(project.Dir, ownedFallow)))
+}
+
+// Delegated always returns ok == true where the step is unsatisfied: two
+// architectures cannot be merged by a rule. Which zones survive is a decision
+// about intent, and dharness does not hold it.
+func (boundariesOwnerStep) Delegated(project.Project) (string, bool) {
+	return fmt.Sprintf(
+		"%s declares its own `boundaries`, and fallow's `extends` replaces that key\nrather than merging it — the project's block replaces the one dharness owns\nentirely, without an error. Only one architecture is being enforced, and the\nconfiguration does not say which.",
+		fallowConfig), true
+}
+
+// Apply is unreachable: Delegated always answers ok == true, so applySteps
+// never calls it. Kept as a contract assertion, matching architectureStep.
+func (boundariesOwnerStep) Apply(project.Project, *Writer) error {
+	return fmt.Errorf("%s is delegated and must not be applied", boundariesOwnerStep{}.ID())
 }
 
 // -------------------------------------------------------- doctor config
@@ -435,8 +480,7 @@ func (architectureStep) ID() string { return "decide this project's architecture
 // literal text, not a JSONC parse. The product is stdlib-only, and "does the
 // file declare a boundaries block" does not need a parser to answer.
 func (architectureStep) Satisfied(p project.Project) bool {
-	raw, err := os.ReadFile(filepath.Join(p.Root, project.Dir, ownedFallow))
-	return err == nil && strings.Contains(string(raw), "boundaries")
+	return declaresBoundaries(filepath.Join(p.Root, project.Dir, ownedFallow))
 }
 
 func (architectureStep) Describe(p project.Project) string {

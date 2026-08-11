@@ -585,7 +585,10 @@ func TestOwnedFilesCarryTheThresholdsTheRulesCannot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(architecture), "boundaries") {
+	// The quoted key, not the bare word: the file's comment says where to
+	// declare boundaries, and saying where is not declaring one. Same
+	// discriminator declaresBoundaries uses.
+	if strings.Contains(string(architecture), `"boundaries"`) {
 		t.Errorf("dharness declared an architecture it cannot know:\n%s", architecture)
 	}
 }
@@ -778,5 +781,77 @@ func TestArchitecturePromptSaysHowToTurnOnTheBarrelRule(t *testing.T) {
 		if !strings.Contains(prompt, expected) {
 			t.Errorf("the architecture prompt omits %q:\n%s", expected, prompt)
 		}
+	}
+}
+
+// fallow's `extends` replaces a key rather than merging it, so a `boundaries`
+// block in the project's own config discards the one dharness owns — with no
+// error and no warning. The wiring still looks correct, which is what makes
+// it worth a step of its own.
+func TestProjectBoundariesAreReportedBecauseTheyReplaceTheOwnedOnes(t *testing.T) {
+	root := t.TempDir()
+	p := project.Project{Root: root, Source: root}
+
+	// Nothing declared: the owned file is the only architecture.
+	writeProjectFallow(t, root, `{"extends":["./.dharness/fallow.jsonc"]}`)
+	if !(boundariesOwnerStep{}).Satisfied(p) {
+		t.Error("Satisfied() = false with no boundaries in the project's own config")
+	}
+
+	// The word in a comment is not a declaration. This project's real config
+	// carries exactly this sentence, and a substring check would fire on it.
+	writeProjectFallow(t, root,
+		"{\n  // Architecture boundaries live in the file dharness owns.\n  \"extends\": [\"./.dharness/fallow.jsonc\"]\n}")
+	if !(boundariesOwnerStep{}).Satisfied(p) {
+		t.Error("Satisfied() = false for the word 'boundaries' inside a comment")
+	}
+
+	// A real declaration: fallow keeps this one and drops the owned block.
+	writeProjectFallow(t, root,
+		`{"extends":["./.dharness/fallow.jsonc"],"boundaries":{"zones":[]}}`)
+	if (boundariesOwnerStep{}).Satisfied(p) {
+		t.Error("Satisfied() = true while the project declares boundaries of its own")
+	}
+
+	why, ok := (boundariesOwnerStep{}).Delegated(p)
+	if !ok {
+		t.Fatal("Delegated() = false; dharness cannot merge two architectures")
+	}
+	if !strings.Contains(why, "replaces") {
+		t.Errorf("the reason does not say the owned block is replaced:\n%s", why)
+	}
+}
+
+// Without a JS project there is no config to conflict with — and asking is
+// not merely pointless, it is unsafe. Project.Source is empty, so the joined
+// path is `.fallowrc.json` relative to the working directory: dropping the
+// HasSource guard makes dharness read whatever config happens to sit where
+// the process was started. The chdir is what makes that observable.
+func TestBoundariesOwnerStepIsSatisfiedWithoutASource(t *testing.T) {
+	elsewhere := t.TempDir()
+	if err := os.WriteFile(filepath.Join(elsewhere, fallowConfig), []byte(`{"boundaries":{}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(elsewhere)
+
+	if !(boundariesOwnerStep{}).Satisfied(project.Project{Root: t.TempDir()}) {
+		t.Error("Satisfied() = false with no JS project: an unrelated config was read from the working directory")
+	}
+}
+
+// The same quoting rule guards the owned file: an agent that writes a comment
+// about boundaries before writing the block has not declared one yet.
+func TestArchitectureStepIgnoresBoundariesInAComment(t *testing.T) {
+	root := t.TempDir()
+	writeFallow(t, root, "{\n  // boundaries go here once the analysis is done\n}\n")
+	if (architectureStep{}).Satisfied(project.Project{Root: root}) {
+		t.Error("Satisfied() = true for the word 'boundaries' inside a comment")
+	}
+}
+
+func writeProjectFallow(t *testing.T, source, contents string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(source, fallowConfig), []byte(contents), 0o600); err != nil {
+		t.Fatal(err)
 	}
 }

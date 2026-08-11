@@ -82,3 +82,28 @@ produces a valid mutant somewhere.
 A cheap guard: have the virus assert that the position it is about to compare
 belongs to the file whose ranges it holds, and fail loudly rather than drop or
 keep the wrong node.
+
+## 5. A red suite reports a perfect score
+
+**Measured on 2026-08-11**, during the boundaries-ownership change.
+
+The wrapper was run with one test already failing on unmutated code. It
+reported **6 mutants, 6 killed, score 1.00** and exited 0 — the gate's own
+verdict said the change was perfectly covered.
+
+The arithmetic is doing exactly what it was told: a mutant "dies" when the
+test command fails, and a suite that already fails kills every mutant without
+any mutation being involved. The score is not wrong so much as meaningless,
+and nothing in the output distinguishes the two.
+
+The same run repeated against a green suite scored 0.83 with one survivor —
+a real gap, in a real guard, which the perfect score had hidden.
+
+This is the failure the repository names in its own first rules: a verdict
+that has to be read out of context rather than off an exit code. A gate that
+reports 1.00 when its inputs are broken is worse than one that reports
+nothing, because it answers the question it was asked.
+
+What would close it: run the test command once, unmutated, before releasing
+ooze, and refuse to score at all if it does not pass. A baseline that fails
+is not a low score — it is no measurement.

@@ -50,6 +50,7 @@ func Plan() []Step {
 		installStep{},
 		ownedFilesStep{},
 		fallowExtendsStep{},
+		boundariesOwnerStep{},
 		lefthookExtendsStep{},
 		doctorConfigStep{},
 		mcpStep{},
