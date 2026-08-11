@@ -106,6 +106,35 @@ func (p Project) StagedSourceFiles() ([]string, error) {
 	return scoped, nil
 }
 
+// PublishesBarrels reports whether this project's resolved Source tree
+// publishes at least one index.ts/index.tsx barrel, asked of git rather than
+// walked — matching Discover's own precedent of asking the tool: the index
+// already excludes node_modules and every generated tree for free, and
+// running the pathspec in Source scopes the answer to the JS project, so a
+// Wails repository's Go half never has to answer for its frontend.
+//
+// It answers from the index (git ls-files), not the working tree: an
+// unstaged barrel is not yet this project's published architecture, so it
+// does not count. That is deliberate — see the design's threat matrix.
+//
+// The leading "*/" in each pathspec is deliberate too: a single index.ts at
+// the source root is a package entry point, not evidence of barrel
+// publishing, and requires at least one directory component to match.
+//
+// A method rather than a Project field: the probe costs a subprocess, and
+// only doctorConfigStep's first-write default needs the answer — Discover
+// runs for every command and never asks about barrels.
+func (p Project) PublishesBarrels() bool {
+	if !p.InRepository || !p.HasSource() {
+		return false
+	}
+	out, err := gitOutput(p.Source, "ls-files", "-z", "--", "*/index.ts", "*/index.tsx")
+	if err != nil {
+		return false
+	}
+	return len(splitNUL(out)) > 0
+}
+
 // splitNUL reads git's -z output: NUL-separated paths, in the bytes the
 // filesystem holds, with no quoting and no trailing empty record.
 func splitNUL(out []byte) []string {

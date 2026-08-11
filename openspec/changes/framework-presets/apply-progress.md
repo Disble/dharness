@@ -474,3 +474,173 @@ changes `internal/setup/files.go`, `internal/setup/steps.go`, and adds two
   reconciliation is rejected, `boundaryCollision`'s `unreadable` branch and
   `describeUnreadableFallowConfig`/`delegateUnreadableFallowConfig` are the
   isolated surface to revert or replace.
+
+## Slice 4 — `folder-ownership` reclassification and `DefaultSeverity` parameterisation — DONE
+
+All of Phase 12, 13, 14, 15 (tasks 12.1–12.8, 13.1–13.7, 14.1, 15.1–15.3) are
+complete. Nothing from Slice 5 (real framework presets) was started, per the
+assigned scope — no Wails, Expo, or Next.js preset was written.
+
+### What was built
+
+- `internal/project/git.go` — `PublishesBarrels() bool`, a new method beside
+  the other git questions. Runs `git ls-files -z -- "*/index.ts"
+  "*/index.tsx"` in `p.Source` through the existing `gitOutput` seam, exactly
+  as the design specifies. Three early-return guards, in order:
+  `!p.InRepository`, `!p.HasSource()`, and a non-nil error from `gitOutput` —
+  all answer `false`, matching today's behaviour and never propagating an
+  error (the same swallow precedent `Discover` already sets). The doc comment
+  states both deliberate consequences directly: the probe reads the **index**
+  (`ls-files`), so an unstaged barrel does not count as published; and the
+  leading `*/` in each pathspec requires at least one directory component, so
+  a root-level `index.ts` (a package entry point) is not barrel evidence.
+- `internal/project/git_test.go` — new file. `stubBarrelIndex(t,
+  present...)` is a test helper that simulates git's own pathspec matching
+  via `path.Match` against the exact patterns the probe passes, rather than
+  returning a canned response regardless of the invocation — this is what
+  makes `TestPublishesBarrelsRequiresADirectoryComponent` an actual pin on
+  the leading `*/`: weakening the pathspec in production code changes what
+  the stub matches, not just what a fixed response happens to contain. Six
+  tests: barrel present (true), no matches (false), git error (false), the
+  two early-return guards (with a panicking stub proving the probe is never
+  even called, not merely that the answer is false), the unstaged-barrel
+  threat-matrix pin, and the directory-component pin.
+- `internal/setup/plugin.go` — `offByDefault` (the package-level map) is
+  deleted. `DefaultSeverity(rule string) string` becomes `DefaultSeverity(p
+  project.Project, rule string) string`, switching on `folder-ownership` via
+  `p.PublishesBarrels()`; every other rule still answers `"error"`,
+  unchanged. The comment block above it is rewritten, not dropped, per task
+  14.1: the eight-non-actionable-finding measurement stays verbatim, the
+  conclusion changes from "therefore off everywhere" to "therefore off where
+  the tree has no barrels" (error where it has at least one), and the
+  first-write-only limit (`doctorConfigStep.Satisfied` returns true as soon
+  as `RulesPackage` is in `plugins`, so this runs once, at first adoption) is
+  now stated in the same place a reader would otherwise assume
+  re-derivation happens on every `sync`.
+- `internal/setup/plugin_test.go` — new file. `TestDefaultSeverityCompilesOnlyWithAProject`
+  is the compile-time RED for the signature change — a call with two
+  arguments, which failed to build against the one-argument form
+  (`go vet ./internal/setup/...` reported "too many arguments in call to
+  DefaultSeverity" before the signature changed). `TestFolderOwnershipIsErrorWhereBarrelsExist`
+  / `TestFolderOwnershipIsOffWithoutBarrels` pin both directions of decision
+  6 end to end, through `DefaultSeverity` rather than `PublishesBarrels`
+  directly.
+- `internal/setup/steps.go` — the one call site inside
+  `doctorConfigStep.Apply`'s `if _, chosen := config.Rules[id]; !chosen`
+  branch gains `p`: `DefaultSeverity(p, id)`. Nothing else about that
+  branch's shape changed — the `!chosen` guard (§05) is untouched.
+- `internal/setup/steps_test.go` — two new tests, in the file the task list
+  names, using `stubMatch`/`doctorConfig`/`doctorConfigFile` already present
+  there. `TestDefaultSeverityNeverCalledWhenProjectChoseIt` writes a
+  `doctor.config.json` that already declares `dharness/folder-ownership`,
+  then runs `doctorConfigStep{}.Apply` with a `gitOutput` stub that panics if
+  called at all — proving the `!chosen` guard is unchanged, not merely that
+  the written value still matches what was chosen.
+  `TestAddingBarrelsAfterAdoptionDoesNotFlipSeverity` writes an already-adopted
+  `doctor.config.json` (`RulesPackage` already in `plugins`,
+  `folder-ownership` already `"off"`), stubs the barrel probe to report
+  barrels now exist, and asserts `doctorConfigStep{}.Satisfied` is still
+  `true` — pinning that a second `sync` never runs `Apply` again, so the
+  first-write-only limit holds structurally rather than by care. Both tests
+  passed on first write (no code change was needed to make them green), per
+  the task list's own note that these regression guards must already pass.
+
+### RED/GREEN evidence
+
+- Phase 12: `go test ./internal/project/...` failed to build — `p.PublishesBarrels
+  undefined (type Project has no field or method PublishesBarrels)` at all
+  seven call sites in `git_test.go` — before `PublishesBarrels` existed.
+  GREEN after `git.go` gained the method: all six new tests pass, full
+  package green.
+- Phase 13: `go vet ./internal/setup/...` failed with `too many arguments in
+  call to DefaultSeverity — have (project.Project, string) want (string)`
+  before the signature changed. GREEN after `plugin.go` and `steps.go`'s
+  call site were updated: all three new `plugin_test.go` tests pass, and the
+  two new `steps_test.go` tests (13.6/13.7) passed immediately — they pin
+  properties the existing `!chosen` guard and `Satisfied` check already had,
+  and the task list itself expected this ("write it to prove that, not
+  assume it").
+
+### Golden byte-identity (still the acceptance test that outranks everything else)
+
+`go test ./internal/setup/... -run TestGenericGoldenIsUnchanged -v` passes
+byte-for-byte against the Slice 1 fixtures, unmodified. This is the reason
+`golden_test.go`'s `renderGolden` stubs `gitOutput` to return `nil, nil` for
+every call: an empty `ls-files` response means `PublishesBarrels()` reads no
+barrels, `DefaultSeverity` answers `"off"` for `folder-ownership`, and both
+fixtures' `doctor.config.json` region already recorded `"dharness/folder-ownership":
+"off"` — confirmed by grepping both fixtures before making any change. No
+fixture under `testdata/golden/` was regenerated, hand-edited, or deleted.
+
+### Mutation evidence
+
+`go run ./tools/mutationstaged` over the staged set (`internal/project/git.go`,
+`internal/setup/plugin.go`, `internal/setup/steps.go` — `steps.go`'s one-line
+call-site change stages alongside these two, and mutationstaged scopes to the
+whole set of staged production files, not this slice's file list alone):
+**0.91** (20/22 killed, 2 survived) — floor (0.80) met.
+
+Both survivors are `Comparison Replace` mutants on
+`internal/project/git.go`'s **pre-existing, unmodified** guard in
+`StagedSourceFiles`: `if err != nil || !p.HasSource() {` → `if false ||
+!p.HasSource() {` and `if err != nil || false {`. This line is nowhere near
+this slice's change. Confirmed with
+`git diff --cached --unified=0 -- internal/project/git.go`: the entire
+staged diff for that file is one insertion, `@@ -108,0 +109,29 @@` (the new
+`PublishesBarrels` method, inserted after `StagedSourceFiles` ends) — no
+other line in the file is touched.
+
+This matches `docs/backlog/mutation-wrapper.md` entry 1
+("Line scope loses which file a byte offset came from") exactly: when more
+than one file is staged, the wrapper's byte-offset ranges are merged into one
+flat list with no file identity, so a range computed from one file's diff can
+land on a node in a different file. That entry's own measured symptom — "the
+run mutated it anyway... in a file with no changed lines" for a
+*different* file, three functions the diff never touched — is the identical
+shape reproduced here, one slice later, against a different pair of files.
+This is a known, already-recorded defect in the mutation tooling itself, not
+a gap in this slice's code, and fixing it is out of this slice's scope (it
+belongs to the wrapper's own backlog, not to `framework-presets`). Neither
+mutation-coverage target the design names for this slice — the Source-scope
+guard (Slice 2's) and the `*/index.ts` prefix (this slice's,
+`TestPublishesBarrelsRequiresADirectoryComponent`) — has a survivor.
+
+### Verification (all clean)
+
+```
+go build ./...        # exit 0
+go vet ./...           # exit 0
+gofmt -l .              # no output
+go test ./...           # ok, all 9 packages
+bash scripts/verify-gate.sh   # "verify-gate: the hook refused a broken file, as it must."
+git add -A && go run ./tools/mutationstaged
+  # Total: 22, Killed: 20, Survived: 2, Score: 0.91 (minimum: 0.80) — PASS
+  # (staged set: internal/project/git.go, internal/setup/plugin.go, internal/setup/steps.go)
+```
+
+### `dirIgnore` check
+
+No new committed file was introduced under `.dharness/` — this slice only
+touches `internal/project/git.go`, `internal/setup/plugin.go`,
+`internal/setup/steps.go`, and adds two `_test.go` files, all ordinary Go
+source outside `.dharness/` entirely. No `dirIgnore` edit needed.
+
+### Notes for Slice 5
+
+- `DefaultSeverity(p, rule)`'s new signature and `PublishesBarrels()` are
+  both stable surfaces now — Slice 5 does not touch either. No preset
+  manifest may name `folder-ownership` or any rule severity (spec's own
+  explicit non-requirement, already enforced structurally: no preset's
+  `Manifest.Facts` has anywhere to put a rule id, and nothing in
+  `internal/preset` imports `internal/setup`).
+- The golden fixtures' `doctor.config.json` region continuing to show
+  `"dharness/folder-ownership": "off"` is now derived (via the stubbed empty
+  `gitOutput`) rather than hard-coded (via the deleted `offByDefault` map) —
+  worth knowing if a future golden regeneration ever changes what
+  `renderGolden`'s `gitOutput` stub returns, since that stub now answers two
+  different questions (`Discover`'s lockfile/toplevel queries *and* the
+  barrel probe) with the same blanket `nil, nil`.
+- The mutation-wrapper's entry-1 defect (byte-offset scope losing file
+  identity) is now reproduced a second time, against a second pair of files,
+  independently of Slice 3's own encounters with this tool. Worth surfacing
+  to whoever picks up that backlog: it is not a one-off.

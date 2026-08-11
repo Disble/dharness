@@ -477,34 +477,34 @@ is deliberate — task 12.7 pins it so a future reader does not "fix" it.
 
 #### Phase 12: `PublishesBarrels` (spec: `rule-severity-derivation` req "derived from barrel presence in the tree, asked of git")
 
-- [ ] 12.1 RED `internal/project/git_test.go`:
+- [x] 12.1 RED `internal/project/git_test.go`:
       `TestPublishesBarrelsTrueWhenIndexHasABarrel` — `SetGitOutputForTest`
       stubs `git ls-files -z -- "*/index.ts" "*/index.tsx"` to return one
       path; `p.PublishesBarrels() == true`; fails, method does not exist
-- [ ] 12.2 GREEN `internal/project/git.go`: `PublishesBarrels() bool` — the
+- [x] 12.2 GREEN `internal/project/git.go`: `PublishesBarrels() bool` — the
       exact invocation from the design, run through the existing
       `gitOutput` seam, scoped to `p.Source`
-- [ ] 12.3 RED `internal/project/git_test.go`:
+- [x] 12.3 RED `internal/project/git_test.go`:
       `TestPublishesBarrelsFalseWithNoMatches` — empty `ls-files` output →
       `false`
-- [ ] 12.4 RED `internal/project/git_test.go`:
+- [x] 12.4 RED `internal/project/git_test.go`:
       `TestBarrelProbeAnswersOffWhenGitFails` — `gitOutput` stub returns a
       non-nil error → `false`, no propagated error (matches `Discover`'s
       swallow precedent)
-- [ ] 12.5 RED `internal/project/git_test.go`:
+- [x] 12.5 RED `internal/project/git_test.go`:
       `TestPublishesBarrelsFalseOutsideARepositoryOrWithoutSource` —
       `!p.InRepository` and `!p.HasSource()` both answer `false` without
       calling `gitOutput` at all (mutation-coverage target: assert the probe
       is *not invoked*, not merely that the answer is `false` — a stub that
       panics on call proves this)
-- [ ] 12.6 GREEN: the three early-return guards in `PublishesBarrels`
-- [ ] 12.7 RED `internal/project/git_test.go`:
+- [x] 12.6 GREEN: the three early-return guards in `PublishesBarrels`
+- [x] 12.7 RED `internal/project/git_test.go`:
       `TestUnstagedBarrelDoesNotCount` — `ls-files` stub returns nothing
       while a fixture-only note records that `index.ts` exists on disk (the
       test does not need a real file — it documents the stubbed-index case
       as the whole of the behaviour); asserts `false` — pins the new
       threat-matrix row explicitly so it is never "fixed" as a bug later
-- [ ] 12.8 RED `internal/project/git_test.go`:
+- [x] 12.8 RED `internal/project/git_test.go`:
       `TestPublishesBarrelsRequiresADirectoryComponent` — `ls-files` stub
       returns a root-level `index.ts` (no `*/` prefix match) and nothing
       else; asserts `false` — the mutation-coverage target the design names
@@ -513,32 +513,32 @@ is deliberate — task 12.7 pins it so a future reader does not "fix" it.
 
 #### Phase 13: `DefaultSeverity(p, rule)` (spec: `rule-severity-derivation` reqs "`offByDefault` removed", "derived from barrel presence", "first-write default only")
 
-- [ ] 13.1 RED `internal/setup/plugin_test.go`:
+- [x] 13.1 RED `internal/setup/plugin_test.go`:
       `TestDefaultSeverityCompilesOnlyWithAProject` — a compile-time-shaped
       test asserting the new two-argument signature exists (calling
       `DefaultSeverity(p, "folder-ownership")`); fails to compile against
       today's one-argument function — this is the RED for a signature
       change, proven by the build failing, not by a runtime assertion
-- [ ] 13.2 GREEN `internal/setup/plugin.go`: delete the package-level
+- [x] 13.2 GREEN `internal/setup/plugin.go`: delete the package-level
       `offByDefault` map; `DefaultSeverity(p project.Project, rule string)
       string` switches on `folder-ownership` via `p.PublishesBarrels()`;
       every other rule still answers `"error"`
-- [ ] 13.3 GREEN `internal/setup/steps.go`: the `DefaultSeverity` call site
+- [x] 13.3 GREEN `internal/setup/steps.go`: the `DefaultSeverity` call site
       inside `doctorConfigStep.Apply` gains `p`
-- [ ] 13.4 RED `internal/setup/plugin_test.go`:
+- [x] 13.4 RED `internal/setup/plugin_test.go`:
       `TestFolderOwnershipIsErrorWhereBarrelsExist` — a project fixture
       whose `PublishesBarrels() == true` (via `SetGitOutputForTest`);
       `DefaultSeverity(p, "dharness/folder-ownership") == "error"`
-- [ ] 13.5 RED `internal/setup/plugin_test.go`:
+- [x] 13.5 RED `internal/setup/plugin_test.go`:
       `TestFolderOwnershipIsOffWithoutBarrels` — inverse; `"off"`
-- [ ] 13.6 RED `internal/setup/steps_test.go`:
+- [x] 13.6 RED `internal/setup/steps_test.go`:
       `TestDefaultSeverityNeverCalledWhenProjectChoseIt` — a project whose
       `doctor.config.json` already declares a severity for
       `dharness/folder-ownership`; `doctorConfigStep.Apply` never calls
       `DefaultSeverity` for that id — assert via a `gitOutput` stub that
       panics if the barrel probe runs (proves the `!chosen` guard from
       §05 is unchanged, not merely that the written value matches)
-- [ ] 13.7 RED `internal/setup/steps_test.go`:
+- [x] 13.7 RED `internal/setup/steps_test.go`:
       `TestAddingBarrelsAfterAdoptionDoesNotFlipSeverity` — a project
       already satisfying `doctorConfigStep.Satisfied` (package already in
       `plugins`) that later gains barrels; a second `sync` leaves
@@ -548,7 +548,7 @@ is deliberate — task 12.7 pins it so a future reader does not "fix" it.
 
 #### Phase 14: documentation
 
-- [ ] 14.1 `internal/setup/plugin.go`: rewrite the comment block above
+- [x] 14.1 `internal/setup/plugin.go`: rewrite the comment block above
       `DefaultSeverity` (formerly above `offByDefault`, `plugin.go:74-88`)
       — keep the eight-non-actionable-finding measurement, change the
       conclusion from "therefore off everywhere" to "therefore off where
@@ -557,14 +557,23 @@ is deliberate — task 12.7 pins it so a future reader does not "fix" it.
 
 #### Phase 15: Slice 4 verification
 
-- [ ] 15.1 `go build ./...`, `go vet ./...`, `gofmt -l .`, `go test ./...`
+- [x] 15.1 `go build ./...`, `go vet ./...`, `gofmt -l .`, `go test ./...`
       clean
-- [ ] 15.2 `go run ./tools/mutationstaged` over `internal/project/git.go`,
+- [x] 15.2 `go run ./tools/mutationstaged` over `internal/project/git.go`,
       `internal/setup/plugin.go` — dry then real, floor 0.80; both
       mutation-coverage targets named in the design (Source-scope guard is
       Slice 2's, `*/index.ts` prefix is this slice's) must show no survivor
-      in this slice's files
-- [ ] 15.3 `bash scripts/verify-gate.sh`
+      in this slice's files. Score: 0.91 (20/22 killed). Both survivors are
+      in `internal/project/git.go`'s pre-existing, unmodified
+      `StagedSourceFiles` guard (`if err != nil || !p.HasSource() {`) —
+      matching `docs/backlog/mutation-wrapper.md` entry 1 exactly (staged
+      byte-offset ranges lose file identity when more than one file is
+      staged, so a range from one file gets matched against nodes in
+      another). Confirmed via `git diff --cached --unified=0 --
+      internal/project/git.go`: the actual staged change is one insertion,
+      `@@ -108,0 +109,29 @@`, nowhere near line 91. Neither
+      mutation-coverage target named for this slice survived
+- [x] 15.3 `bash scripts/verify-gate.sh`
 
 ---
 

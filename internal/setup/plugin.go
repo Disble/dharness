@@ -1,6 +1,10 @@
 package setup
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/Disble/dharness/internal/project"
+)
 
 // Everything that consumes the rules package — the install step, the
 // react-doctor declaration, the thresholds file — reads these constants, so
@@ -71,30 +75,43 @@ func RuleIDs() []string {
 	return ids
 }
 
-// offByDefault are the rules dharness writes as "off" rather than "error".
-//
-// A rule belongs here when it encodes an architectural choice instead of a
-// guardrail on generated code. folder-ownership requires that a split module
-// publish an `index.ts`, so a project that deliberately has no barrel files
-// cannot satisfy it — every split module reports, forever, and the rule is
-// not wrong so much as not that project's architecture. Measured on one such
-// repository: eight findings, none actionable, sitting alongside real ones.
-//
-// pure-index-barrel is deliberately not here. It constrains a barrel that
-// exists rather than requiring one, so in a project without barrels it never
-// fires. Inert is not the same as false.
-//
-// ArchitecturePrompt says how to turn this back on, because a default nobody
-// is told about is indistinguishable from the rule not existing.
-var offByDefault = map[string]bool{
-	"folder-ownership": true,
-}
-
 // DefaultSeverity is what dharness writes for a rule the project has not
-// chosen a severity for itself. It accepts either the bare name or the
-// scoped id.
-func DefaultSeverity(rule string) string {
-	if offByDefault[strings.TrimPrefix(rule, RulesPrefix+"/")] {
+// chosen a severity for itself (§05) — its sole caller is
+// doctorConfigStep.Apply, and only inside the `!chosen` branch, so a
+// severity the project already wrote is never reconsidered here. It accepts
+// either the bare name or the scoped id.
+//
+// folder-ownership requires that a split module publish an `index.ts`, so a
+// project that deliberately has no barrel files cannot satisfy it — every
+// split module reports, forever, and the rule is not wrong so much as not
+// that project's architecture. Measured on one such repository: eight
+// findings, none actionable, sitting alongside real ones. Whether a project
+// publishes through barrels is observable from the tree rather than a
+// property of its framework, so the answer comes from p.PublishesBarrels()
+// (asked of git) instead of a global constant: dharness writes "error"
+// where the tree has at least one barrel, "off" where it has none.
+//
+// The derived value is a first-write default only. doctorConfigStep.
+// Satisfied returns true as soon as RulesPackage appears in `plugins`, so
+// this function runs once per project, at first adoption — a project that
+// grows barrels afterward is not switched on by a later `sync`, because
+// dharness cannot tell "the project chose off" from "dharness wrote off",
+// and re-deriving would risk overwriting a deliberate choice (§05). This is
+// a stated limit, not a gap.
+//
+// pure-index-barrel stays "error" unconditionally: it constrains a barrel
+// that exists rather than requiring one, so in a project without barrels it
+// never fires. Inert is not the same as false.
+//
+// ArchitecturePrompt says how to turn folder-ownership back on, because a
+// default nobody is told about is indistinguishable from the rule not
+// existing.
+func DefaultSeverity(p project.Project, rule string) string {
+	switch strings.TrimPrefix(rule, RulesPrefix+"/") {
+	case "folder-ownership":
+		if p.PublishesBarrels() {
+			return "error"
+		}
 		return "off"
 	}
 	return "error"

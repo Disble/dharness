@@ -39,6 +39,18 @@ What would settle it: keep the ranges keyed by file and give the virus the file
 identity of the node it is inspecting, or confirm that ooze parses each file
 with a fresh `token.FileSet` and that the collision has some other cause.
 
+**Second occurrence, 2026-08-11, with sharper evidence.** A change that
+inserted a new method into `internal/project/git.go` — a pure insertion, the
+staged diff being one hunk at `@@ -108,0 +109,29 @@` — produced two survivors
+at line 91 of that same file, inside `StagedSourceFiles`, a function twenty
+lines *above* the insertion and untouched by the change. Five other files were
+staged in the same run.
+
+So this is not a one-off, and it has a cost beyond noise: a score reported for
+a slice is not a measure of that slice's coverage, and an author reading it is
+pushed toward writing tests for code their change never touched. The first
+occurrence could be read as a pure-deletion edge case; this one cannot.
+
 ## 2. The dry-run forecast and the real run disagree
 
 Same run, same staged set:

@@ -1,6 +1,7 @@
 package setup
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -297,5 +298,60 @@ func TestUncheckableConfigNoteIsSilentWhenTheConfigCanBeRead(t *testing.T) {
 
 	if note := UncheckableConfigNote(project.Project{Root: t.TempDir()}); note != "" {
 		t.Errorf("UncheckableConfigNote() = %q with no JS project: an unrelated config was read from the working directory", note)
+	}
+}
+
+// TestDefaultSeverityNeverCalledWhenProjectChoseIt proves the `!chosen`
+// guard (§05) is unchanged by the barrel probe: a project whose
+// doctor.config.json already declares a severity for folder-ownership must
+// never trigger the probe at all — the stub panics if it does, which is a
+// stronger pin than checking the written value merely still matches.
+func TestDefaultSeverityNeverCalledWhenProjectChoseIt(t *testing.T) {
+	root := t.TempDir()
+	chosen := `{"rules":{"dharness/folder-ownership":"warn"}}`
+	if err := os.WriteFile(filepath.Join(root, doctorConfig), []byte(chosen), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(project.SetGitOutputForTest(func(string, ...string) ([]byte, error) {
+		panic("DefaultSeverity must not probe for barrels when the project already chose a severity")
+	}))
+
+	p := project.Project{Root: root, Source: root, InRepository: true}
+	if err := (doctorConfigStep{}).Apply(p, &Writer{}); err != nil {
+		t.Fatalf("Apply() = %v", err)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(root, doctorConfig))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config doctorConfigFile
+	if err := json.Unmarshal(raw, &config); err != nil {
+		t.Fatal(err)
+	}
+	if got := config.Rules[RulesPrefix+"/folder-ownership"]; got != "warn" {
+		t.Errorf("folder-ownership = %q, want the project's own choice \"warn\" preserved", got)
+	}
+}
+
+// TestAddingBarrelsAfterAdoptionDoesNotFlipSeverity pins the first-write-only
+// limit as a property, not a gap: doctorConfigStep.Satisfied is already true
+// once RulesPackage is in `plugins`, so a second sync never runs Apply
+// again — folder-ownership stays at its original value even after the
+// project later grows barrels. The gitOutput stub answers "barrels exist"
+// and is never asked, because Satisfied never reads it.
+func TestAddingBarrelsAfterAdoptionDoesNotFlipSeverity(t *testing.T) {
+	root := t.TempDir()
+	adopted := `{"plugins":["dharness-eslint-plugin"],"rules":{"dharness/folder-ownership":"off"}}`
+	if err := os.WriteFile(filepath.Join(root, doctorConfig), []byte(adopted), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(project.SetGitOutputForTest(func(string, ...string) ([]byte, error) {
+		return []byte("components/index.ts"), nil // barrels now exist
+	}))
+
+	p := project.Project{Root: root, Source: root, InRepository: true}
+	if !(doctorConfigStep{}).Satisfied(p) {
+		t.Fatal("Satisfied() = false; the package is already in plugins, so a second sync must not run Apply again")
 	}
 }
