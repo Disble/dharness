@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.0.0](https://github.com/Disble/dharness/compare/v0.2.0...v1.0.0) (2026-08-11)
+
+
+### ⚠ BREAKING CHANGES
+
+* **cli:** dharness init no longer exists. There is one command, sync, which both adopts a repository and brings it up to date — there is no install command and a separate maintenance command (15). Anything invoking dharness init must call dharness sync instead. sync also writes now: the old read-only sync that only reported has been removed.
+
+### Features
+
+* **cli:** merge init into sync and make delegation a per-project answer ([af5f353](https://github.com/Disble/dharness/commit/af5f353c9b9256384d8bb9d4d735268c8dceffd2))
+
 ## [0.2.0](https://github.com/Disble/dharness/compare/v0.1.0...v0.2.0) (2026-08-10)
 
 
