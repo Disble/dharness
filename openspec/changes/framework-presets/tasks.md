@@ -131,19 +131,19 @@ this cannot be changed cheaply once shipped.
 
 #### Phase 4: `internal/preset` package skeleton (spec: `framework-presets` req "one package per framework")
 
-- [ ] 4.1 RED `internal/preset/preset_test.go`: `TestSchemaConstant` — asserts
+- [x] 4.1 RED `internal/preset/preset_test.go`: `TestSchemaConstant` — asserts
       `preset.Schema == "dharness.preset/v1"`; fails, package does not exist
-- [ ] 4.2 GREEN `internal/preset/preset.go`: `Scope`, `Schema`, `Preset`,
+- [x] 4.2 GREEN `internal/preset/preset.go`: `Scope`, `Schema`, `Preset`,
       `Match`, `Fact`, `Manifest` types per the design's Interfaces/Contracts
       section — no behaviour yet, compiles
-- [ ] 4.3 RED `internal/preset/preset_test.go`:
+- [x] 4.3 RED `internal/preset/preset_test.go`:
       `TestEveryFactCarriesEvidence` — walks a manifest with one fact whose
       `Because` is empty and asserts `Manifest.Validate()` returns a non-nil
       error; fails, `Validate` does not exist
-- [ ] 4.4 GREEN `internal/preset/preset.go`: `Manifest.Validate() error` —
+- [x] 4.4 GREEN `internal/preset/preset.go`: `Manifest.Validate() error` —
       non-empty `Because`, `json.Marshal`-able `Value`, `Schema ==
       dharness.preset/v1`, and the key `boundaries` rejected outright
-- [ ] 4.5 RED `internal/preset/preset_test.go`:
+- [x] 4.5 RED `internal/preset/preset_test.go`:
       `TestNoPresetContributesBoundaries` — a manifest with a fact keyed
       `boundaries` fails `Validate`; fails until 4.4's guard exists (may
       already pass if 4.4 lands first — write it anyway as its own named
@@ -151,68 +151,78 @@ this cannot be changed cheaply once shipped.
 
 #### Phase 5: `generic` and the registry's composition rule (spec: `framework-presets` reqs "registry selects through one switch", "`generic` reproduces today's behaviour", "precedence is fixed and total", "multi-preset composition by scope")
 
-- [ ] 5.1 RED `internal/preset/generic_test.go`: `TestGenericAlwaysMatches`
+- [x] 5.1 RED `internal/preset/generic_test.go`: `TestGenericAlwaysMatches`
       — `generic{}.Detect(p)` returns `matched == true`, evidence "no
       framework signal matched", empty `Manifest`; fails, `generic` does not
       exist
-- [ ] 5.2 GREEN `internal/preset/generic.go`: `generic` type, Root scope,
+- [x] 5.2 GREEN `internal/preset/generic.go`: `generic` type, Root scope,
       always matches, empty manifest
-- [ ] 5.3 RED `internal/preset/preset_test.go`: `TestResolveAlwaysReturnsAtLeastGeneric`
+- [x] 5.3 RED `internal/preset/preset_test.go`: `TestResolveAlwaysReturnsAtLeastGeneric`
       — `resolve(p, []Preset{generic{}})` never returns nil/empty; fails,
       `resolve`/`Resolve` do not exist
-- [ ] 5.4 GREEN `internal/preset/preset.go`: `Resolve(p)`/`resolve(p,
+- [x] 5.4 GREEN `internal/preset/preset.go`: `Resolve(p)`/`resolve(p,
       presets)` — Root scope before Source scope, registry order within a
       scope; `resolve` split out exactly so composition is testable against
       stubs
-- [ ] 5.5 RED `internal/preset/preset_test.go`:
+- [x] 5.5 RED `internal/preset/preset_test.go`:
       `TestSourceScopePresetsAreSkippedWithoutASource` — a stub Source-scope
       preset that always matches is absent from `resolve`'s output when
       `!p.HasSource()`; fails, no guard exists yet
-- [ ] 5.6 GREEN `internal/preset/preset.go`: the one `!p.HasSource()` guard
+- [x] 5.6 GREEN `internal/preset/preset.go`: the one `!p.HasSource()` guard
       in `resolve`, per Decision 3 ("one guard in `resolve`, not four copies
       inside four `Detect` methods")
-- [ ] 5.7 RED `internal/preset/preset_test.go`: `TestListKeysUnionAcrossScopes`
+- [x] 5.7 RED `internal/setup/owned_test.go`: `TestListKeysUnionAcrossScopes`
       — two stub presets (one Root, one Source) each contributing a
       different element to the same list key; composed result is the union
       in resolve order, duplicates removed, each element's evidence
-      preserved; fails, composition function does not exist
-- [ ] 5.8 GREEN `internal/preset/preset.go` (or `internal/setup/owned.go` —
-      whichever package Decision 8's `presetRegion` belongs to per the
-      design's File Changes table): list-key union using the existing
-      `dedupe` helper
-- [ ] 5.9 RED `internal/preset/preset_test.go`: `TestNoScalarKeyIsContributedTwice`
+      preserved; fails, composition function does not exist. **Judgment
+      call**: written in `internal/setup/owned_test.go`, not
+      `internal/preset/preset_test.go` — the design's File Changes table
+      assigns `presetRegion` (and the composition it performs) to
+      `internal/setup/owned.go`, and a test in `internal/preset` cannot call
+      an unexported `internal/setup` function without an import cycle
+- [x] 5.8 GREEN `internal/setup/owned.go`: list-key union using the
+      existing `dedupe` helper, inside `composeFacts` (`presetRegion`'s
+      composition step, per the Data Flow section of design.md)
+- [x] 5.9 RED `internal/setup/owned_test.go`: `TestNoScalarKeyIsContributedTwice`
       — two stub presets contributing the same scalar key; Root scope's
       value wins, both evidence strings render as a comment beside it; fails
       until the scalar branch exists
-- [ ] 5.10 GREEN: scalar-collision resolution per Decision 3's table (Root
-      wins, losing value + both evidences commented)
-- [ ] 5.11 GREEN `internal/preset/preset.go`: `Keys(matches []Match)
+- [x] 5.10 GREEN: scalar-collision resolution per Decision 3's table (Root
+      wins, losing value + both evidences commented), same judgment call as
+      5.7/5.8
+- [x] 5.11 GREEN `internal/preset/preset.go`: `Keys(matches []Match)
       []string` — enumerates contributed key names across matches, the
       mechanism proposal decision 4 and the collision step (Slice 3) depend
       on
 
 #### Phase 6: the delimited region — `internal/setup/owned.go` (spec: `owned-config-contribution` req "`ownedFilesStep.Apply` writes the union... instead of an empty object"; design Decision 8)
 
-- [ ] 6.1 RED `internal/setup/owned_test.go`: `TestRegionIsAbsentWhenNothingIsContributed`
+- [x] 6.1 RED `internal/setup/owned_test.go`: `TestRegionIsAbsentWhenNothingIsContributed`
       — `presetRegion(matches)` for `generic`'s empty manifest returns the
       empty string; fails, `presetRegion` does not exist
-- [ ] 6.2 GREEN `internal/setup/owned.go`: `presetRegion(matches
+- [x] 6.2 GREEN `internal/setup/owned.go`: `presetRegion(matches
       []preset.Match) string` — renders the union'd facts as JSONC comments +
       keys, or `""` when there is nothing to render
-- [ ] 6.3 RED `internal/setup/owned_test.go`:
+- [x] 6.3 RED `internal/setup/owned_test.go`:
       `TestApplyPreservesBoundariesOutsideTheRegion` — a fixture
       `.dharness/fallow.jsonc` with a hand-written `boundaries` block below
       the (absent) region markers; `ownedFilesStep.Apply` with a non-empty
       region rewrites only the bytes between the two markers and leaves
       `boundaries` byte-identical; fails, `Apply` still writes the file
-      wholesale
-- [ ] 6.4 GREEN `internal/setup/owned.go`: `replaceRegion(existing, region
+      wholesale. **Judgment call**: no preset with a non-empty manifest
+      exists until Slice 5, so this is written directly against
+      `replaceRegion` (the exact unit the design's Testing Strategy calls
+      testable in isolation) rather than through the full
+      `ownedFilesStep.Apply` — the property under test (bytes outside the
+      markers survive) is the same either way
+- [x] 6.4 GREEN `internal/setup/owned.go`: `replaceRegion(existing, region
       string) string` — marker literals fixed by this slice's decision
       point above; markers present → replace between them; markers absent
       and `region != ""` → insert immediately after the first `{`; `region
       == ""` → no region written at all (this is the byte-identity path
       `generic` depends on)
-- [ ] 6.5 RED `internal/setup/owned_test.go`:
+- [x] 6.5 RED `internal/setup/owned_test.go`:
       `TestRegionIsReinsertedWhenTheMarkersAreRemoved` — a fixture whose
       `fallow.jsonc` has neither marker but a non-empty region to write;
       `replaceRegion` inserts it immediately after the first `{`; fails
@@ -221,48 +231,62 @@ this cannot be changed cheaply once shipped.
       as argued, not measured; pin it against a fixture shaped like the
       motivating repository's own `.fallowrc.json` (opens with a `{` then a
       comment line)
-- [ ] 6.6 GREEN: fix any placement edge case 6.5 surfaces (e.g. a `{`
-      immediately followed by a comment rather than a newline)
-- [ ] 6.7 RED `internal/setup/steps_test.go` (or `owned_test.go`):
+- [x] 6.6 GREEN: fix any placement edge case 6.5 surfaces (e.g. a `{`
+      immediately followed by a comment rather than a newline) — none
+      surfaced; the first-brace-then-newline insertion already handled it
+- [x] 6.7 RED `internal/setup/owned_test.go`:
       `TestOwnedFilesSatisfiedComparesRegionBytesOnly` — `Satisfied` is
       `true` when the region's bytes equal what current matches render,
       `false` when they differ, regardless of unrelated bytes elsewhere in
       the file; fails, `Satisfied` still only checks file existence
-- [ ] 6.8 GREEN `internal/setup/steps.go`: `ownedFilesStep.Satisfied` gains
+- [x] 6.8 GREEN `internal/setup/steps.go`: `ownedFilesStep.Satisfied` gains
       the region-byte comparison (existence check stays for the other two
       owned files, which are still rewritten wholesale)
-- [ ] 6.9 GREEN `internal/setup/steps.go`: `ownedFilesStep.Apply` calls
+- [x] 6.9 GREEN `internal/setup/steps.go`: `ownedFilesStep.Apply` calls
       `preset.Resolve(p)` and writes through `replaceRegion`/`presetRegion`
       instead of the fixed empty-object literal
-- [ ] 6.10 RED `internal/setup/steps_test.go`: retarget
+- [x] 6.10 RED `internal/setup/golden_test.go`: retarget
       `TestGenericGoldenIsUnchanged` (Slice 1) to run against **today's
       registry** (registry + `generic` now exist) — this is the scenario
       "`generic` matches the golden byte-for-byte"; must still pass
-      unchanged against the Slice 1 fixtures, or a regression exists
-- [ ] 6.11 GREEN: fix whatever 6.10 reveals (expected: nothing, if 6.4's
+      unchanged against the Slice 1 fixtures, or a regression exists. No
+      change to the test itself was needed — `ownedFilesStep.Apply` now
+      routes through `preset.Resolve`/`presetRegion`/`replaceRegion`, and
+      `go test ./internal/setup -run TestGenericGoldenIsUnchanged` still
+      passes byte-for-byte against the Slice 1 fixtures unmodified
+- [x] 6.11 GREEN: fix whatever 6.10 reveals (expected: nothing, if 6.4's
       empty-region path is correct — this task exists to prove that rather
-      than assume it)
-- [ ] 6.12 GREEN `internal/setup/architecture_test.go` (or existing test
-      file): a test asserting `architectureStep.Satisfied` stays `false` on
-      a Wails-shaped fixture whose agent `boundaries` block has not been
-      written — Decision 8's second guard, independent of the first
+      than assume it). Nothing to fix — confirmed
+- [x] 6.12 GREEN `internal/setup/owned_test.go`:
+      `TestArchitectureStepStaysUnsatisfiedWithoutTheAgentBlock` — asserts
+      `architectureStep.Satisfied` stays `false` on a split-layout fixture
+      whose agent `boundaries` block has not been written after
+      `ownedFilesStep.Apply` runs — Decision 8's second guard, independent
+      of the first
 
 #### Phase 7: documentation
 
-- [ ] 7.1 `docs/learning-log.md`: one dated line recording the JSONC/
+- [x] 7.1 `docs/learning-log.md`: one dated line recording the JSONC/
       `json.Unmarshal` measurement (`.fallowrc.json` fails to parse as
       strict JSON on the motivating repository) and the chosen `dharness:
       presets` marker spelling from this slice's decision point
 
 #### Phase 8: Slice 2 verification
 
-- [ ] 8.1 `go build ./...`, `go vet ./...`, `gofmt -l .`, `go test ./...`
+- [x] 8.1 `go build ./...`, `go vet ./...`, `gofmt -l .`, `go test ./...`
       clean
-- [ ] 8.2 `go run ./tools/mutationstaged` over `internal/preset/`,
+- [x] 8.2 `go run ./tools/mutationstaged` over `internal/preset/`,
       `internal/setup/owned.go`, `internal/setup/steps.go` — dry then real,
       floor 0.80; a green `go test ./...` from 8.1 is the precondition for
-      trusting this score
-- [ ] 8.3 `bash scripts/verify-gate.sh`
+      trusting this score. Score 0.89 (84/94 killed). The 10 survivors are
+      all in `regionBounds`'s guard clause and are equivalent mutants: a
+      redundant `endIdx == -1` disjunct made dead by the adjacent
+      `endIdx < beginIdx` clause, an `endIdx <= beginIdx` variant that is
+      unreachable because the two distinct marker literals can never share
+      an index, and four "return a different dead value on the `ok ==
+      false` path" mutants that no caller ever reads (`replaceRegion` and
+      `regionBytes` both branch on `ok` before touching `begin`/`end`)
+- [x] 8.3 `bash scripts/verify-gate.sh`
 
 ---
 

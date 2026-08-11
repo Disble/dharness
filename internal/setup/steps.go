@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Disble/dharness/internal/preset"
 	"github.com/Disble/dharness/internal/project"
 	"github.com/Disble/dharness/internal/runner"
 	"github.com/Disble/dharness/internal/tool"
@@ -96,13 +97,25 @@ type ownedFilesStep struct{}
 
 func (ownedFilesStep) ID() string { return "write the files dharness owns" }
 
+// Satisfied checks lefthook.yml and rules.json for existence, as before —
+// dharness owns both outright and rewrites them wholesale every run, so
+// existence is the whole question. fallow.jsonc is different: it is
+// co-owned with the agent's `boundaries` block, so only the delimited
+// region's bytes are compared against what the currently matched presets
+// would render (design decision 8) — the rest of the file, boundaries
+// included, is never read here.
 func (ownedFilesStep) Satisfied(p project.Project) bool {
-	for _, name := range []string{ownedLefthook, ownedFallow, ownedRules} {
+	for _, name := range []string{ownedLefthook, ownedRules} {
 		if _, err := os.Stat(filepath.Join(p.Root, project.Dir, name)); err != nil {
 			return false
 		}
 	}
-	return true
+
+	raw, err := os.ReadFile(filepath.Join(p.Root, project.Dir, ownedFallow))
+	if err != nil {
+		return false
+	}
+	return regionBytes(string(raw)) == presetRegion(preset.Resolve(p))
 }
 
 func (ownedFilesStep) Describe(project.Project) string {
@@ -125,13 +138,20 @@ func (ownedFilesStep) Apply(p project.Project, w *Writer) error {
 		return err
 	}
 
-	// The boundaries block is deliberately absent: zones encode intent, and no
-	// detection can read intent off a tree, so the model fills it in. It goes
-	// here and nowhere else, because fallow's `extends` replaces the key rather
-	// than merging it and the same block in the project's own config would
-	// silently discard this one.
-	architecture := "{\n  // dharness writes this file; the architecture below is decided by analysis,\n  // not by detection. Declare `boundaries` here rather than in the project's\n  // own fallow config: `extends` replaces this key, it does not merge it.\n  //\n  // See `dharness sync`.\n}\n"
-	if err := w.Write(filepath.Join(p.Root, project.Dir, ownedFallow), []byte(architecture)); err != nil {
+	// The boundaries block is deliberately absent from what dharness ever
+	// asserts here: zones encode intent, and no detection can read intent off
+	// a tree, so the model fills it in. It survives every later run because
+	// only the delimited region below is rewritten, never the whole file
+	// (design decision 8) — fallow.jsonc is the one owned file the agent also
+	// writes into, and rewriting it wholesale would destroy that block the
+	// moment a matched preset's contribution changed.
+	fallowPath := filepath.Join(p.Root, project.Dir, ownedFallow)
+	base := architectureSkeleton
+	if existing, err := os.ReadFile(fallowPath); err == nil {
+		base = string(existing)
+	}
+	content := replaceRegion(base, presetRegion(preset.Resolve(p)))
+	if err := w.Write(fallowPath, []byte(content)); err != nil {
 		return err
 	}
 
