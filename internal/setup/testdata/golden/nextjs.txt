@@ -192,6 +192,11 @@
 .dharness/fallow.jsonc
 ---
 {
+  // dharness:presets begin — rewritten by `dharness sync`; edits here are lost.
+  // generic: dharness sets a 3% duplication ceiling for every project, borrowed from the SonarQube gate this toolchain already answers to; the two measure different things by different algorithms, so they corroborate rather than repeat each other
+  "duplicates": {"threshold":3},
+  // dharness:presets end
+
   // dharness writes this file; the architecture below is decided by analysis,
   // not by detection. Declare `boundaries` here rather than in the project's
   // own fallow config: `extends` replaces this key, it does not merge it.

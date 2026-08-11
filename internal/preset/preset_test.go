@@ -176,12 +176,16 @@ func TestWailsRootWithNextjsSourceContributesFromBoth(t *testing.T) {
 		t.Fatalf("Resolve() = %v, want no expo match — nothing in the fixture declares it", matches)
 	}
 	// generic always matches too — a real signal short-circuits nothing
-	// (resolve's own documented rule) — but its empty manifest contributes
-	// no key and no seed, so it is inert here, not a third contributor.
+	// (resolve's own documented rule) — and it contributes dharness's
+	// cross-cutting duplication ceiling, so it is a third contributor here
+	// rather than an inert one.
 
 	keys := Keys(matches)
-	if len(keys) != 1 || keys[0] != "ignorePatterns" {
-		t.Errorf("Keys() = %v, want [\"ignorePatterns\"] — wails is the only fact-contributing match here", keys)
+	if !containsKey(keys, "ignorePatterns") {
+		t.Errorf("Keys() = %v, want wails' ignorePatterns in the union", keys)
+	}
+	if !containsKey(keys, "duplicates") {
+		t.Errorf("Keys() = %v, want generic's cross-cutting duplicates ceiling in the union", keys)
 	}
 	if seeds := Seeds(matches); len(seeds) == 0 {
 		t.Error("Seeds() is empty, want nextjs's documented structure to reach the union")
@@ -206,4 +210,13 @@ func TestRealRegistryFactsAndSeedsValidate(t *testing.T) {
 			t.Errorf("preset %q's manifest fails Validate(): %v", match.ID, err)
 		}
 	}
+}
+
+func containsKey(keys []string, want string) bool {
+	for _, key := range keys {
+		if key == want {
+			return true
+		}
+	}
+	return false
 }
