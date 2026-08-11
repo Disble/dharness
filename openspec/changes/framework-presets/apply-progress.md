@@ -276,3 +276,201 @@ re-check note.
   values rather than through a real preset, since none with a non-empty
   manifest exists yet — Slice 5 should add an end-to-end equivalent once
   `wails` exists, per its own task 19.3.
+
+## Slice 3 — Contributed-key collision step, generalising `boundariesOwnerStep` — DONE
+
+All of Phase 9, 10, 11 (tasks 9.1–9.8, 10.1–10.10, 11.1–11.3) are complete.
+Nothing from Slice 4 (`folder-ownership`/`DefaultSeverity`) or Slice 5 (real
+framework presets) was started, per the assigned scope.
+
+### What was built
+
+- `internal/setup/files.go`:
+  - `declaredKeys(path string, candidates []string) []string` replaces
+    `declaresBoundaries(path string) bool` — same quoted-key textual test,
+    generalised to N candidates, returned in candidate order. A file that
+    cannot be read declares nothing (nil slice).
+  - `fallowConfigCandidates` (`.fallowrc.json`, `.fallowrc.jsonc`) and
+    `fallowConfigPath(source string) string` — "which one responds", the
+    same pattern `hookManager` already uses, resolving Decision 5's
+    `.fallowrc.jsonc` widening. `fallow.toml` is deliberately absent from
+    this list (task 9.8).
+  - `declaredLine(path, key string) string` — a best-effort, single-line
+    textual extraction of what the project itself wrote for a key, used to
+    show "both values" in the collision report without a JSON/JSONC parser.
+- `internal/setup/steps.go`:
+  - `architectureStep.Satisfied` now calls `declaredKeys` with a one-element
+    candidate list instead of `declaresBoundaries`.
+  - `boundariesOwnerStep` widened from one key (`boundaries`) to
+    `{"boundaries"} ∪ preset.Keys(preset.Resolve(p))`:
+    - `collidingKeys(source string, matches []preset.Match) []string` — the
+      pure intersection rule, split out for the same reason `resolve` is
+      split out of `Resolve` (the real registry contributes nothing beyond
+      `generic`'s empty manifest until Slice 5, so this is tested against
+      stub matches).
+    - `boundaryCollision(p project.Project) (colliding []string, matches
+      []preset.Match, unreadable bool)` — the per-call guard: short-circuits
+      on `!p.HasSource()` (same unsafe-cwd-read guard
+      `TestBoundariesOwnerStepIsSatisfiedWithoutASource` already pinned for
+      `Satisfied`, now extended to `Describe`/`Delegated` too since they now
+      read a file where before they were fully static), and reports
+      `unreadable == true` when the project's only fallow config is
+      `fallow.toml` (see the Slice 3 judgment call below).
+    - `Satisfied`/`Describe`/`Delegated` all route through
+      `boundaryCollision`. `Describe`/`Delegated` fall back to the exact
+      pre-widening single-key text (`boundariesFallbackDescribe`/
+      `boundariesFallbackWhy`) when the collision set is empty — required
+      for the golden fixtures' byte-identity (see below), and otherwise
+      unreachable through `Pending`/the CLI since neither ever calls
+      `Describe`/`Delegated` on a satisfied step.
+    - `describeBoundaries`/`delegateBoundaries` — the dynamic, non-empty-
+      collision renderer: one line per colliding key naming both dharness's
+      value (`ownedValue`) and the project's declared value
+      (`declaredValue`).
+    - `ownedValue(key string, matches []preset.Match) string` — the
+      architecture-block sentence for `"boundaries"`, or the composed
+      preset value (via `composeFacts`, JSON-marshalled) for any other key.
+    - `declaredValue`/`quotedKeys` — small rendering helpers.
+    - `describeUnreadableFallowConfig`/`delegateUnreadableFallowConfig` —
+      the `fallow.toml`-only case (judgment call, below).
+- `internal/setup/files_test.go` — new file, Phase 9's RED/GREEN suite plus
+  two extra tests for `fallowConfigPath`'s "which one responds" order and
+  empty case, and two for `declaredLine`'s single-line honest limit.
+- `internal/setup/steps_test.go` — new file, Phase 10's RED/GREEN suite plus
+  a direct unit test for `quotedKeys` (needed to kill a mutation survivor —
+  see below) and a test extending the cwd-safety guard to
+  `Describe`/`Delegated`.
+
+### The Slice 3 judgment call — tasks 10.9/10.10 and `doctor.config.ts`
+
+Task 10.9's literal wording names `doctor.config.ts` as the fixture for
+`TestCollisionCheckDescribesAndContinuesOnACodeConfig`. This does not match
+the actual data flow: the collision check (`boundariesOwnerStep`) only ever
+reads `.fallowrc.json`/`.fallowrc.jsonc` (task 9.8, design.md's Data Flow
+diagram); `doctor.config.ts` belongs to `doctorConfigStep`, a step this
+slice does not touch, and `declaredKeys` never reads it. Separately, task
+9.8 states `fallow.toml` "stays excluded... an accepted false negative, not
+fixed", while design.md's Decision 5 prose says "Where the config is TOML,
+the step describes and continues, following the precedent already set for
+`doctor.config.ts`" — two statements in tension for the same file.
+
+Reconciled as follows, rather than guessed silently:
+
+1. `declaredKeys`/`fallowConfigCandidates` stay exactly as task 9.8 states —
+   no TOML branch inside `declaredKeys` itself, `fallow.toml` never joins
+   the candidate file list. This is the literal, narrow reading of "stays
+   excluded... not fixed".
+2. `boundariesOwnerStep` separately detects "the project's only fallow
+   config is a format I cannot check" via `p.HasFallowConfig()` (an
+   existing `internal/project` method, unrelated to `declaredKeys`) and
+   reports it — `Satisfied() == false`, `Delegated() == true`, `Describe`
+   names the limit — rather than silently returning "no collision", which
+   would be an unearned claim rather than the honest "cannot check" the
+   spec's requirement text asks for ("MUST describe that its keys could not
+   be checked and continue").
+3. This is implemented and tested against `fallow.toml`, the one real file
+   this reconciliation can ever encounter — not `doctor.config.ts`, which
+   the step never reads under any implementation.
+
+This was not raised as a blocking question because both readings of the
+task list are internally coherent and testable; the alternative (leaving
+10.9/10.10 undone) would under-deliver against spec.md's explicit MUST
+requirement for no clear gain, and the reconciliation does not touch
+`declaredKeys`'s own behaviour (task 9.8's stated scope) at all. Flagged
+here for review rather than silently absorbed.
+
+### RED/GREEN evidence
+
+- Phase 9: `go test ./internal/setup/... -run TestDeclaresBoundariesIsNowDeclaredKeys`
+  failed once (a stray prose mention of `declaresBoundaries` inside
+  `declaredKeys`'s own doc comment, not a real symbol) before the comment
+  was reworded to reference "its single-key predecessor" without naming it;
+  green after.
+- Phase 10: `TestCollisionNamesEveryContributedKeyTheProjectDeclares` was
+  first written with the project's declared value and the preset's
+  contributed value both literally `["wailsjs/**"]` — every assertion
+  passed, but mutation testing (see below) proved the fixture could not
+  distinguish `ownedValue`'s output from `declaredValue`'s, because both
+  happened to render the same bytes. Rewritten with three distinct values
+  (`dist/**` project-declared, `wailsjs/**` preset-contributed,
+  `src/main.ts` an unrelated stand-in key) — this is the RED that actually
+  proved the assertions test what they claim to.
+
+### Mutation evidence
+
+First `go run ./tools/mutationstaged` run: **0.91** (40/44 killed, 4
+survived) — all four in `ownedValue`, all traceable to the fixture-collision
+problem above (the "wailsjs/**" appearing on both the preset and project
+side let three `Comparison Invert` mutants and one `Range Break` mutant
+survive undetected, since the assertion was satisfied by the wrong source
+either way). Fixing the test fixture (see RED/GREEN evidence) reduced this
+to one remaining survivor.
+
+Second run: **0.98** (44/45) — one `Range Break` survivor in `quotedKeys`
+(the loop's first statement replaced with an unconditional `break`, leaving
+every backticked key an empty string; nothing asserted the exact rendered
+key list, only that the key name appeared somewhere in the message, which
+it still did via the per-key loop in `delegateBoundaries` that does not use
+`quotedKeys`). Added `TestQuotedKeysBackticksEachKey`, a direct unit test
+against the helper's exact output — matching the codebase's existing
+precedent of testing small pure helpers like `dedupe` directly rather than
+only through what calls them.
+
+Third run: **1.00** (45/45 killed, 0 survived) — floor (0.80) met with no
+remaining survivors to explain away.
+
+### Golden byte-identity (the acceptance test that outranks everything else)
+
+`go test ./internal/setup/... -run TestGenericGoldenIsUnchanged -v` passes
+byte-for-byte against the Slice 1 fixtures, unmodified — confirmed
+explicitly, not merely inferred from the full suite passing. This is the
+reason `Describe`/`Delegated` fall back to the exact pre-widening static
+text when the collision set is empty (see "What was built" above): both
+golden fixtures (`generic-conventional`, `generic-split`) declare no fallow
+config at all, so `boundariesOwnerStep`'s collision set is always empty for
+them, and the plan report's `why`/`describe` text for that step has to stay
+byte-identical to what the single-key implementation always produced —
+even though, in the real `Pending`/CLI flow, that text is never shown for a
+satisfied step. No fixture under `testdata/golden/` was regenerated,
+hand-edited, or deleted.
+
+### Verification (all clean)
+
+```
+go build ./...        # exit 0
+go vet ./...           # exit 0
+gofmt -l .              # no output
+go test ./...           # ok, all 9 packages
+bash scripts/verify-gate.sh   # "verify-gate: the hook refused a broken file, as it must."
+git add -A && go run ./tools/mutationstaged
+  # Total: 45, Killed: 45, Survived: 0, Score: 1.00 (minimum: 0.80) — PASS
+```
+
+### `dirIgnore` check
+
+No new committed file was introduced under `.dharness/` — this slice only
+changes `internal/setup/files.go`, `internal/setup/steps.go`, and adds two
+`_test.go` files, all ordinary Go source outside `.dharness/` entirely. No
+`dirIgnore` edit needed.
+
+### Notes for Slice 4 and Slice 5
+
+- Slice 4 (`folder-ownership`/`DefaultSeverity`) is untouched — `steps.go`'s
+  `doctorConfigStep.Apply` still calls the one-argument `DefaultSeverity(id
+  string)`; that call site is Slice 4's to widen to `DefaultSeverity(p,
+  id)`, not this slice's.
+- `preset.Keys(preset.Resolve(p))` (Slice 2) is what `collidingKeys` already
+  consumes; once Slice 5 registers `wails`/`nextjs`/`expo`, a real matched
+  project will exercise `collidingKeys`'s non-empty-candidate path end to
+  end for the first time — today only `TestBoundariesAloneStillCollidesUnchanged`-
+  style tests (real registry, `boundaries` alone) and the stub-match tests
+  in `steps_test.go` (simulated multi-key contributions) exercise it.
+- Task 19.4 (`TestIgnorePatternsCollidesInTheMotivatingShape`) is the
+  end-to-end proof this slice's collision mechanism was built for; nothing
+  about `boundariesOwnerStep`'s shape is expected to change once a real
+  preset exists — only `preset.Resolve`'s registry contents will.
+- The Slice 3 judgment call above (10.9/10.10, `fallow.toml` vs
+  `doctor.config.ts`) should be reviewed at Slice 3's PR review; if the
+  reconciliation is rejected, `boundaryCollision`'s `unreadable` branch and
+  `describeUnreadableFallowConfig`/`delegateUnreadableFallowConfig` are the
+  isolated surface to revert or replace.

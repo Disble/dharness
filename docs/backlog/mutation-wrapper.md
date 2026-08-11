@@ -107,3 +107,23 @@ nothing, because it answers the question it was asked.
 What would close it: run the test command once, unmutated, before releasing
 ooze, and refuse to score at all if it does not pass. A baseline that fails
 is not a low score — it is no measurement.
+
+## 6. A `!p.HasSource()` guard is where the working directory leaks in
+
+Not a wrapper defect — a pattern the wrapper has now caught twice, worth
+naming so the next author writes the test without being told.
+
+`project.Project.Source` is empty when a repository holds no JS project. Every
+path built from it — `filepath.Join(p.Source, name)` — then resolves against
+the **process working directory** rather than against nowhere. A guard clause
+that returns early on `!p.HasSource()` is therefore load-bearing, and its
+mutant survives any test whose temporary directory happens not to contain the
+file being looked for.
+
+Both survivors found this way were killed the same way: `t.Chdir` into a
+temporary directory that *does* contain the file, so dropping the guard makes
+dharness read an unrelated repository's config and the assertion fails.
+
+The general shape: **a guard against an empty path needs a test that puts a
+matching file where the unguarded code would look.** An empty temp directory
+proves nothing, because the unguarded code finds nothing there either.

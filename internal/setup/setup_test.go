@@ -587,7 +587,7 @@ func TestOwnedFilesCarryTheThresholdsTheRulesCannot(t *testing.T) {
 	}
 	// The quoted key, not the bare word: the file's comment says where to
 	// declare boundaries, and saying where is not declaring one. Same
-	// discriminator declaresBoundaries uses.
+	// discriminator declaredKeys uses.
 	if strings.Contains(string(architecture), `"boundaries"`) {
 		t.Errorf("dharness declared an architecture it cannot know:\n%s", architecture)
 	}
