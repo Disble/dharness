@@ -8,8 +8,6 @@
 * **preset:** add Next.js and Expo, and let a preset seed the prompt ([72339b3](https://github.com/Disble/dharness/commit/72339b391d88ccd1661f8f3bea279761934b180c))
 * **preset:** add the registry and the region dharness rewrites ([53330fa](https://github.com/Disble/dharness/commit/53330fa8b4f783cd9d572507709f4b7c1f66230b))
 * **preset:** add the Wails preset and let a match say what it could not read ([542dab1](https://github.com/Disble/dharness/commit/542dab1d9d36841ea863d789cb4dbdb8b7054911))
-* **preset:** framework presets — the whole chain ([8ac533f](https://github.com/Disble/dharness/commit/8ac533fa9f0a7d9c2aa4d70a8fefea347df39dfa))
-* **preset:** ship a cross-cutting duplication ceiling through generic ([42bfe9d](https://github.com/Disble/dharness/commit/42bfe9d2cd4153cd7108e9da3d5614c0f80c8d41))
 * **preset:** ship a cross-cutting duplication ceiling through generic ([116f542](https://github.com/Disble/dharness/commit/116f54272f896afa006a13923dc84eb7104678c5))
 * **project:** derive folder-ownership's default from the tree, not a constant ([2094e6b](https://github.com/Disble/dharness/commit/2094e6b607cda679ec35d37c2cb46bac41ea5fe8))
 * **setup:** report every contributed key the project also declares ([17b9295](https://github.com/Disble/dharness/commit/17b92955bea0475d7e12b560aaccbf0ffe2e9f0c))
