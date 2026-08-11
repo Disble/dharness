@@ -39,6 +39,18 @@ What would settle it: keep the ranges keyed by file and give the virus the file
 identity of the node it is inspecting, or confirm that ooze parses each file
 with a fresh `token.FileSet` and that the collision has some other cause.
 
+**Second occurrence, 2026-08-11, with sharper evidence.** A change that
+inserted a new method into `internal/project/git.go` — a pure insertion, the
+staged diff being one hunk at `@@ -108,0 +109,29 @@` — produced two survivors
+at line 91 of that same file, inside `StagedSourceFiles`, a function twenty
+lines *above* the insertion and untouched by the change. Five other files were
+staged in the same run.
+
+So this is not a one-off, and it has a cost beyond noise: a score reported for
+a slice is not a measure of that slice's coverage, and an author reading it is
+pushed toward writing tests for code their change never touched. The first
+occurrence could be read as a pure-deletion edge case; this one cannot.
+
 ## 2. The dry-run forecast and the real run disagree
 
 Same run, same staged set:
@@ -107,3 +119,23 @@ nothing, because it answers the question it was asked.
 What would close it: run the test command once, unmutated, before releasing
 ooze, and refuse to score at all if it does not pass. A baseline that fails
 is not a low score — it is no measurement.
+
+## 6. A `!p.HasSource()` guard is where the working directory leaks in
+
+Not a wrapper defect — a pattern the wrapper has now caught twice, worth
+naming so the next author writes the test without being told.
+
+`project.Project.Source` is empty when a repository holds no JS project. Every
+path built from it — `filepath.Join(p.Source, name)` — then resolves against
+the **process working directory** rather than against nowhere. A guard clause
+that returns early on `!p.HasSource()` is therefore load-bearing, and its
+mutant survives any test whose temporary directory happens not to contain the
+file being looked for.
+
+Both survivors found this way were killed the same way: `t.Chdir` into a
+temporary directory that *does* contain the file, so dropping the guard makes
+dharness read an unrelated repository's config and the assertion fails.
+
+The general shape: **a guard against an empty path needs a test that puts a
+matching file where the unguarded code would look.** An empty temp directory
+proves nothing, because the unguarded code finds nothing there either.

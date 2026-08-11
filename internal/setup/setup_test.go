@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Disble/dharness/internal/preset"
 	"github.com/Disble/dharness/internal/project"
 	"github.com/Disble/dharness/internal/runner"
 )
@@ -127,6 +128,34 @@ func TestInstallStepPlansOnlyMissingIntegrationPackages(t *testing.T) {
 		if !strings.Contains(description, integration) {
 			t.Errorf("install description omits integration %q:\n%s", integration, description)
 		}
+	}
+}
+
+// TestRenderSeedsEmptyForNoSeeds pins the byte-identity path: a project no
+// preset seeds gets nothing added to ArchitecturePrompt.
+func TestRenderSeedsEmptyForNoSeeds(t *testing.T) {
+	if got := renderSeeds(nil); got != "" {
+		t.Errorf("renderSeeds(nil) = %q, want empty", got)
+	}
+}
+
+// TestRenderSeedsRendersExactlyOneSeed is deliberately exercised with one
+// seed, not two — every real preset today (nextjs) happens to contribute
+// two, which would leave the `len(seeds) > 0` guard indistinguishable from
+// `> 1` if this test only ever went through a real preset.
+func TestRenderSeedsRendersExactlyOneSeed(t *testing.T) {
+	got := renderSeeds([]preset.Seed{{Text: "a structural fact", Because: "a documented observable"}})
+	if !strings.Contains(got, "a structural fact") || !strings.Contains(got, "a documented observable") {
+		t.Errorf("renderSeeds() = %q, want the seed's text and evidence", got)
+	}
+}
+
+// TestRenderSeedsFramesConfirmNotDecide pins §21's wording: a seed is
+// offered as something to confirm against the tree, never as a zone.
+func TestRenderSeedsFramesConfirmNotDecide(t *testing.T) {
+	got := renderSeeds([]preset.Seed{{Text: "a structural fact", Because: "a documented observable"}})
+	if !strings.Contains(got, "Confirm or correct this against the tree") {
+		t.Errorf("renderSeeds() = %q, want the confirm-not-decide framing", got)
 	}
 }
 
@@ -587,7 +616,7 @@ func TestOwnedFilesCarryTheThresholdsTheRulesCannot(t *testing.T) {
 	}
 	// The quoted key, not the bare word: the file's comment says where to
 	// declare boundaries, and saying where is not declaring one. Same
-	// discriminator declaresBoundaries uses.
+	// discriminator declaredKeys uses.
 	if strings.Contains(string(architecture), `"boundaries"`) {
 		t.Errorf("dharness declared an architecture it cannot know:\n%s", architecture)
 	}

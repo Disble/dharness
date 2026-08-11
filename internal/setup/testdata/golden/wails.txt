@@ -22,7 +22,7 @@
      fallow composes with `extends`, so the architecture arrives by reference.
      Add this line to .fallowrc.json:
      
-         "extends": [".dharness/fallow.jsonc"]
+         "extends": ["../.dharness/fallow.jsonc"]
 4  resolve the two architectures this project declares
    satisfied=true delegated=true
    why |
@@ -155,7 +155,7 @@
      So `folder-ownership` ships **off**. The other five rules are guardrails on
      generated code and stay on; this one is the only one that takes a side.
      
-     If this project does publish through barrels, turn it on in doctor.config.json:
+     If this project does publish through barrels, turn it on in frontend/doctor.config.json:
      
          "rules": {
            "dharness/folder-ownership": "error"
@@ -182,6 +182,8 @@
 ---
 {
   // dharness:presets begin — rewritten by `dharness sync`; edits here are lost.
+  // wails: wails.json declares no "wailsjsdir", so the default Wails itself falls back to (frontend/) applies
+  "ignorePatterns": ["wailsjs/**"],
   // generic: dharness sets a 3% duplication ceiling for every project, borrowed from the SonarQube gate this toolchain already answers to; the two measure different things by different algorithms, so they corroborate rather than repeat each other
   "duplicates": {"threshold":3},
   // dharness:presets end
@@ -199,6 +201,7 @@ pre-commit:
   commands:
     dharness:
       run: dharness check
+      root: frontend/
 ---
 .dharness/rules.json
 ---
@@ -211,12 +214,6 @@ pre-commit:
     ".helpers.ts",
     ".schema.ts"
   ]
-}
----
-.fallowrc.json
----
-{
-  "extends": [".dharness/fallow.jsonc"]
 }
 ---
 .mcp.json
@@ -234,7 +231,13 @@ pre-commit:
   }
 }
 ---
-doctor.config.json
+frontend/.fallowrc.json
+---
+{
+  "extends": ["../.dharness/fallow.jsonc"]
+}
+---
+frontend/doctor.config.json
 ---
 {
   "plugins": [
@@ -250,15 +253,19 @@ doctor.config.json
   }
 }
 ---
-package-lock.json
+frontend/package-lock.json
 ---
 {
   "lockfileVersion": 3
 }
 ---
-package.json
+frontend/package.json
 ---
 {
-  "name": "conventional"
+  "name": "wails-frontend"
 }
+---
+wails.json
+---
+{}
 ---

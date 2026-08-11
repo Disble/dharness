@@ -51,6 +51,17 @@ func RunSync(args []string, stdout io.Writer) error {
 	}
 	fmt.Fprintf(stdout, "Package manager: %s. Test runner: %s.\n\n", orNotDetected(p.PackageManager), orNotDetected(p.TestRunner))
 
+	// Read before applying, because it is a property of the repository as
+	// found. Adoption writes a .fallowrc.json of its own, which would make the
+	// blind spot look like it had been resolved by the very run that could not
+	// see past it.
+	uncheckable := setup.UncheckableConfigNote(p)
+
+	// Same reasoning, for a matched preset that could not read its own
+	// configuration: it still contributed a default (see Match.Uncertain), so
+	// this is what it guessed from, not a step nothing can clear.
+	uncertain := setup.UncertainPresetNote(p)
+
 	if pending := setup.Pending(p); hasApplicable(pending, p) {
 		fmt.Fprintln(stdout, "Applying:")
 		if err := setup.Apply(p, stdout); err != nil {
@@ -78,6 +89,23 @@ func RunSync(args []string, stdout io.Writer) error {
 		left++
 		fmt.Fprintf(stdout, "## Left to you: %s\n\n", step.ID())
 		fmt.Fprintf(stdout, "dharness cannot run this: %s\n\n%s\n\n", why, step.Describe(p))
+	}
+
+	// Printed beside the plan rather than in it. A config dharness cannot read
+	// textually is a blind spot with no resolution the project can reach, so
+	// it is not pending work — but staying quiet about it would report a check
+	// that never ran as a check that passed.
+	if uncheckable != "" {
+		fmt.Fprintf(stdout, "## Not checked\n\n%s\n\n", uncheckable)
+	}
+
+	// A separate heading, not a second "Not checked", because it answers a
+	// different question. The block above says a check did not run; this one
+	// says a check did run and used a documented default because the project's
+	// own answer could not be read. Two sections sharing one title read as one
+	// section repeated.
+	if uncertain != "" {
+		fmt.Fprintf(stdout, "## Assumed\n\n%s\n\n", uncertain)
 	}
 
 	if left == 0 {

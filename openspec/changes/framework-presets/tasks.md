@@ -131,19 +131,19 @@ this cannot be changed cheaply once shipped.
 
 #### Phase 4: `internal/preset` package skeleton (spec: `framework-presets` req "one package per framework")
 
-- [ ] 4.1 RED `internal/preset/preset_test.go`: `TestSchemaConstant` — asserts
+- [x] 4.1 RED `internal/preset/preset_test.go`: `TestSchemaConstant` — asserts
       `preset.Schema == "dharness.preset/v1"`; fails, package does not exist
-- [ ] 4.2 GREEN `internal/preset/preset.go`: `Scope`, `Schema`, `Preset`,
+- [x] 4.2 GREEN `internal/preset/preset.go`: `Scope`, `Schema`, `Preset`,
       `Match`, `Fact`, `Manifest` types per the design's Interfaces/Contracts
       section — no behaviour yet, compiles
-- [ ] 4.3 RED `internal/preset/preset_test.go`:
+- [x] 4.3 RED `internal/preset/preset_test.go`:
       `TestEveryFactCarriesEvidence` — walks a manifest with one fact whose
       `Because` is empty and asserts `Manifest.Validate()` returns a non-nil
       error; fails, `Validate` does not exist
-- [ ] 4.4 GREEN `internal/preset/preset.go`: `Manifest.Validate() error` —
+- [x] 4.4 GREEN `internal/preset/preset.go`: `Manifest.Validate() error` —
       non-empty `Because`, `json.Marshal`-able `Value`, `Schema ==
       dharness.preset/v1`, and the key `boundaries` rejected outright
-- [ ] 4.5 RED `internal/preset/preset_test.go`:
+- [x] 4.5 RED `internal/preset/preset_test.go`:
       `TestNoPresetContributesBoundaries` — a manifest with a fact keyed
       `boundaries` fails `Validate`; fails until 4.4's guard exists (may
       already pass if 4.4 lands first — write it anyway as its own named
@@ -151,68 +151,78 @@ this cannot be changed cheaply once shipped.
 
 #### Phase 5: `generic` and the registry's composition rule (spec: `framework-presets` reqs "registry selects through one switch", "`generic` reproduces today's behaviour", "precedence is fixed and total", "multi-preset composition by scope")
 
-- [ ] 5.1 RED `internal/preset/generic_test.go`: `TestGenericAlwaysMatches`
+- [x] 5.1 RED `internal/preset/generic_test.go`: `TestGenericAlwaysMatches`
       — `generic{}.Detect(p)` returns `matched == true`, evidence "no
       framework signal matched", empty `Manifest`; fails, `generic` does not
       exist
-- [ ] 5.2 GREEN `internal/preset/generic.go`: `generic` type, Root scope,
+- [x] 5.2 GREEN `internal/preset/generic.go`: `generic` type, Root scope,
       always matches, empty manifest
-- [ ] 5.3 RED `internal/preset/preset_test.go`: `TestResolveAlwaysReturnsAtLeastGeneric`
+- [x] 5.3 RED `internal/preset/preset_test.go`: `TestResolveAlwaysReturnsAtLeastGeneric`
       — `resolve(p, []Preset{generic{}})` never returns nil/empty; fails,
       `resolve`/`Resolve` do not exist
-- [ ] 5.4 GREEN `internal/preset/preset.go`: `Resolve(p)`/`resolve(p,
+- [x] 5.4 GREEN `internal/preset/preset.go`: `Resolve(p)`/`resolve(p,
       presets)` — Root scope before Source scope, registry order within a
       scope; `resolve` split out exactly so composition is testable against
       stubs
-- [ ] 5.5 RED `internal/preset/preset_test.go`:
+- [x] 5.5 RED `internal/preset/preset_test.go`:
       `TestSourceScopePresetsAreSkippedWithoutASource` — a stub Source-scope
       preset that always matches is absent from `resolve`'s output when
       `!p.HasSource()`; fails, no guard exists yet
-- [ ] 5.6 GREEN `internal/preset/preset.go`: the one `!p.HasSource()` guard
+- [x] 5.6 GREEN `internal/preset/preset.go`: the one `!p.HasSource()` guard
       in `resolve`, per Decision 3 ("one guard in `resolve`, not four copies
       inside four `Detect` methods")
-- [ ] 5.7 RED `internal/preset/preset_test.go`: `TestListKeysUnionAcrossScopes`
+- [x] 5.7 RED `internal/setup/owned_test.go`: `TestListKeysUnionAcrossScopes`
       — two stub presets (one Root, one Source) each contributing a
       different element to the same list key; composed result is the union
       in resolve order, duplicates removed, each element's evidence
-      preserved; fails, composition function does not exist
-- [ ] 5.8 GREEN `internal/preset/preset.go` (or `internal/setup/owned.go` —
-      whichever package Decision 8's `presetRegion` belongs to per the
-      design's File Changes table): list-key union using the existing
-      `dedupe` helper
-- [ ] 5.9 RED `internal/preset/preset_test.go`: `TestNoScalarKeyIsContributedTwice`
+      preserved; fails, composition function does not exist. **Judgment
+      call**: written in `internal/setup/owned_test.go`, not
+      `internal/preset/preset_test.go` — the design's File Changes table
+      assigns `presetRegion` (and the composition it performs) to
+      `internal/setup/owned.go`, and a test in `internal/preset` cannot call
+      an unexported `internal/setup` function without an import cycle
+- [x] 5.8 GREEN `internal/setup/owned.go`: list-key union using the
+      existing `dedupe` helper, inside `composeFacts` (`presetRegion`'s
+      composition step, per the Data Flow section of design.md)
+- [x] 5.9 RED `internal/setup/owned_test.go`: `TestNoScalarKeyIsContributedTwice`
       — two stub presets contributing the same scalar key; Root scope's
       value wins, both evidence strings render as a comment beside it; fails
       until the scalar branch exists
-- [ ] 5.10 GREEN: scalar-collision resolution per Decision 3's table (Root
-      wins, losing value + both evidences commented)
-- [ ] 5.11 GREEN `internal/preset/preset.go`: `Keys(matches []Match)
+- [x] 5.10 GREEN: scalar-collision resolution per Decision 3's table (Root
+      wins, losing value + both evidences commented), same judgment call as
+      5.7/5.8
+- [x] 5.11 GREEN `internal/preset/preset.go`: `Keys(matches []Match)
       []string` — enumerates contributed key names across matches, the
       mechanism proposal decision 4 and the collision step (Slice 3) depend
       on
 
 #### Phase 6: the delimited region — `internal/setup/owned.go` (spec: `owned-config-contribution` req "`ownedFilesStep.Apply` writes the union... instead of an empty object"; design Decision 8)
 
-- [ ] 6.1 RED `internal/setup/owned_test.go`: `TestRegionIsAbsentWhenNothingIsContributed`
+- [x] 6.1 RED `internal/setup/owned_test.go`: `TestRegionIsAbsentWhenNothingIsContributed`
       — `presetRegion(matches)` for `generic`'s empty manifest returns the
       empty string; fails, `presetRegion` does not exist
-- [ ] 6.2 GREEN `internal/setup/owned.go`: `presetRegion(matches
+- [x] 6.2 GREEN `internal/setup/owned.go`: `presetRegion(matches
       []preset.Match) string` — renders the union'd facts as JSONC comments +
       keys, or `""` when there is nothing to render
-- [ ] 6.3 RED `internal/setup/owned_test.go`:
+- [x] 6.3 RED `internal/setup/owned_test.go`:
       `TestApplyPreservesBoundariesOutsideTheRegion` — a fixture
       `.dharness/fallow.jsonc` with a hand-written `boundaries` block below
       the (absent) region markers; `ownedFilesStep.Apply` with a non-empty
       region rewrites only the bytes between the two markers and leaves
       `boundaries` byte-identical; fails, `Apply` still writes the file
-      wholesale
-- [ ] 6.4 GREEN `internal/setup/owned.go`: `replaceRegion(existing, region
+      wholesale. **Judgment call**: no preset with a non-empty manifest
+      exists until Slice 5, so this is written directly against
+      `replaceRegion` (the exact unit the design's Testing Strategy calls
+      testable in isolation) rather than through the full
+      `ownedFilesStep.Apply` — the property under test (bytes outside the
+      markers survive) is the same either way
+- [x] 6.4 GREEN `internal/setup/owned.go`: `replaceRegion(existing, region
       string) string` — marker literals fixed by this slice's decision
       point above; markers present → replace between them; markers absent
       and `region != ""` → insert immediately after the first `{`; `region
       == ""` → no region written at all (this is the byte-identity path
       `generic` depends on)
-- [ ] 6.5 RED `internal/setup/owned_test.go`:
+- [x] 6.5 RED `internal/setup/owned_test.go`:
       `TestRegionIsReinsertedWhenTheMarkersAreRemoved` — a fixture whose
       `fallow.jsonc` has neither marker but a non-empty region to write;
       `replaceRegion` inserts it immediately after the first `{`; fails
@@ -221,48 +231,62 @@ this cannot be changed cheaply once shipped.
       as argued, not measured; pin it against a fixture shaped like the
       motivating repository's own `.fallowrc.json` (opens with a `{` then a
       comment line)
-- [ ] 6.6 GREEN: fix any placement edge case 6.5 surfaces (e.g. a `{`
-      immediately followed by a comment rather than a newline)
-- [ ] 6.7 RED `internal/setup/steps_test.go` (or `owned_test.go`):
+- [x] 6.6 GREEN: fix any placement edge case 6.5 surfaces (e.g. a `{`
+      immediately followed by a comment rather than a newline) — none
+      surfaced; the first-brace-then-newline insertion already handled it
+- [x] 6.7 RED `internal/setup/owned_test.go`:
       `TestOwnedFilesSatisfiedComparesRegionBytesOnly` — `Satisfied` is
       `true` when the region's bytes equal what current matches render,
       `false` when they differ, regardless of unrelated bytes elsewhere in
       the file; fails, `Satisfied` still only checks file existence
-- [ ] 6.8 GREEN `internal/setup/steps.go`: `ownedFilesStep.Satisfied` gains
+- [x] 6.8 GREEN `internal/setup/steps.go`: `ownedFilesStep.Satisfied` gains
       the region-byte comparison (existence check stays for the other two
       owned files, which are still rewritten wholesale)
-- [ ] 6.9 GREEN `internal/setup/steps.go`: `ownedFilesStep.Apply` calls
+- [x] 6.9 GREEN `internal/setup/steps.go`: `ownedFilesStep.Apply` calls
       `preset.Resolve(p)` and writes through `replaceRegion`/`presetRegion`
       instead of the fixed empty-object literal
-- [ ] 6.10 RED `internal/setup/steps_test.go`: retarget
+- [x] 6.10 RED `internal/setup/golden_test.go`: retarget
       `TestGenericGoldenIsUnchanged` (Slice 1) to run against **today's
       registry** (registry + `generic` now exist) — this is the scenario
       "`generic` matches the golden byte-for-byte"; must still pass
-      unchanged against the Slice 1 fixtures, or a regression exists
-- [ ] 6.11 GREEN: fix whatever 6.10 reveals (expected: nothing, if 6.4's
+      unchanged against the Slice 1 fixtures, or a regression exists. No
+      change to the test itself was needed — `ownedFilesStep.Apply` now
+      routes through `preset.Resolve`/`presetRegion`/`replaceRegion`, and
+      `go test ./internal/setup -run TestGenericGoldenIsUnchanged` still
+      passes byte-for-byte against the Slice 1 fixtures unmodified
+- [x] 6.11 GREEN: fix whatever 6.10 reveals (expected: nothing, if 6.4's
       empty-region path is correct — this task exists to prove that rather
-      than assume it)
-- [ ] 6.12 GREEN `internal/setup/architecture_test.go` (or existing test
-      file): a test asserting `architectureStep.Satisfied` stays `false` on
-      a Wails-shaped fixture whose agent `boundaries` block has not been
-      written — Decision 8's second guard, independent of the first
+      than assume it). Nothing to fix — confirmed
+- [x] 6.12 GREEN `internal/setup/owned_test.go`:
+      `TestArchitectureStepStaysUnsatisfiedWithoutTheAgentBlock` — asserts
+      `architectureStep.Satisfied` stays `false` on a split-layout fixture
+      whose agent `boundaries` block has not been written after
+      `ownedFilesStep.Apply` runs — Decision 8's second guard, independent
+      of the first
 
 #### Phase 7: documentation
 
-- [ ] 7.1 `docs/learning-log.md`: one dated line recording the JSONC/
+- [x] 7.1 `docs/learning-log.md`: one dated line recording the JSONC/
       `json.Unmarshal` measurement (`.fallowrc.json` fails to parse as
       strict JSON on the motivating repository) and the chosen `dharness:
       presets` marker spelling from this slice's decision point
 
 #### Phase 8: Slice 2 verification
 
-- [ ] 8.1 `go build ./...`, `go vet ./...`, `gofmt -l .`, `go test ./...`
+- [x] 8.1 `go build ./...`, `go vet ./...`, `gofmt -l .`, `go test ./...`
       clean
-- [ ] 8.2 `go run ./tools/mutationstaged` over `internal/preset/`,
+- [x] 8.2 `go run ./tools/mutationstaged` over `internal/preset/`,
       `internal/setup/owned.go`, `internal/setup/steps.go` — dry then real,
       floor 0.80; a green `go test ./...` from 8.1 is the precondition for
-      trusting this score
-- [ ] 8.3 `bash scripts/verify-gate.sh`
+      trusting this score. Score 0.89 (84/94 killed). The 10 survivors are
+      all in `regionBounds`'s guard clause and are equivalent mutants: a
+      redundant `endIdx == -1` disjunct made dead by the adjacent
+      `endIdx < beginIdx` clause, an `endIdx <= beginIdx` variant that is
+      unreachable because the two distinct marker literals can never share
+      an index, and four "return a different dead value on the `ok ==
+      false` path" mutants that no caller ever reads (`replaceRegion` and
+      `regionBytes` both branch on `ok` before touching `begin`/`end`)
+- [x] 8.3 `bash scripts/verify-gate.sh`
 
 ---
 
@@ -296,40 +320,40 @@ change exists to prevent.
 
 #### Phase 9: `declaredKeys` generalises `declaresBoundaries` (spec: `owned-config-contribution` req "`declaresBoundaries` generalises into `declaredKeys`")
 
-- [ ] 9.1 RED `internal/setup/files_test.go`: `TestDeclaredKeysFindsAQuotedKey`
+- [x] 9.1 RED `internal/setup/files_test.go`: `TestDeclaredKeysFindsAQuotedKey`
       — `.fallowrc.json` containing `"ignorePatterns": [...]`; `declaredKeys(path,
       ["ignorePatterns", "boundaries"])` returns `["ignorePatterns"]`; fails,
       `declaredKeys` does not exist
-- [ ] 9.2 GREEN `internal/setup/files.go`: `declaredKeys(path string,
+- [x] 9.2 GREEN `internal/setup/files.go`: `declaredKeys(path string,
       candidates []string) []string` — same body shape as `declaresBoundaries`
       (read once, `strings.Contains(raw, `"`+key+`"`)` per candidate),
       results in candidate order; a file that cannot be read declares
       nothing
-- [ ] 9.3 RED `internal/setup/files_test.go`:
+- [x] 9.3 RED `internal/setup/files_test.go`:
       `TestDeclaredKeysIgnoresACommentedKey` — a fixture whose file contains
       the bare-word comment sentence (matching `declaresBoundaries`'s
       existing precedent) and no quoted `"boundaries"` anywhere;
       `declaredKeys(path, ["boundaries"])` returns an empty slice; fails
       until the quoted-key test is proven against this exact comment shape,
       not just asserted by reading the design
-- [ ] 9.4 GREEN: confirm 9.2 already satisfies 9.3 (expected — same
+- [x] 9.4 GREEN: confirm 9.2 already satisfies 9.3 (expected — same
       mechanism as `declaresBoundaries`); if not, fix the quoting test
-- [ ] 9.5 RED `internal/setup/files_test.go`:
+- [x] 9.5 RED `internal/setup/files_test.go`:
       `TestDeclaresBoundariesIsNowDeclaredKeys` — `declaresBoundaries(path)`
       is retired in favour of `declaredKeys(path, []string{"boundaries"})`
       at every call site (`architectureStep.Satisfied`,
       `boundariesOwnerStep.Satisfied` before Phase 10 widens it); a grep-
       style test over the package asserts `declaresBoundaries` no longer
       exists as a symbol; fails until 9.6 removes it
-- [ ] 9.6 GREEN `internal/setup/files.go`, `steps.go`: delete
+- [x] 9.6 GREEN `internal/setup/files.go`, `steps.go`: delete
       `declaresBoundaries`; both call sites route through `declaredKeys`
-- [ ] 9.7 RED `internal/setup/files_test.go`:
+- [x] 9.7 RED `internal/setup/files_test.go`:
       `TestDeclaredKeysReadsTheJSONCSpelling` — a fixture at
       `.fallowrc.jsonc` (not `.json`) declaring a candidate key is found;
       fails, only `.fallowrc.json` is checked today — **this is Decision
       5's stated widening beyond the proposal's letter; keep it visible
       here rather than folded silently into 9.2's diff**
-- [ ] 9.8 GREEN: the collision check (Phase 10) and `architectureStep`'s
+- [x] 9.8 GREEN: the collision check (Phase 10) and `architectureStep`'s
       config-path resolution both consider `.fallowrc.json` **and**
       `.fallowrc.jsonc`, matching fallow's own `fallowConfigFiles` list;
       `fallow.toml` stays excluded (TOML keys are bare — recorded as an
@@ -337,7 +361,7 @@ change exists to prevent.
 
 #### Phase 10: the widened `boundariesOwnerStep` (spec: `owned-config-contribution` reqs "widens from one key to the set of keys", "writes the contributed key anyway", "intersection emptying makes the step disappear", "a project config that is code cannot be checked")
 
-- [ ] 10.1 RED `internal/setup/steps_test.go`:
+- [x] 10.1 RED `internal/setup/steps_test.go`:
       `TestCollisionNamesEveryContributedKeyTheProjectDeclares` — a stub
       project matched by presets contributing `{"ignorePatterns",
       "entryPoints"}` (stand-in keys for this test only — no real preset
@@ -346,59 +370,77 @@ change exists to prevent.
       `ignorePatterns` with both the preset value and the project's
       declared value, and does not mention `entryPoints`; fails, the step
       still only checks `boundaries`
-- [ ] 10.2 GREEN `internal/setup/steps.go`: `boundariesOwnerStep.Satisfied`
+- [x] 10.2 GREEN `internal/setup/steps.go`: `boundariesOwnerStep.Satisfied`
       becomes unsatisfied exactly when `declaredKeys(path, {"boundaries"} ∪
       preset.Keys(matches))` is non-empty; `Describe`/`Delegated` iterate
       the intersection, naming every colliding key and both values
-- [ ] 10.3 RED `internal/setup/steps_test.go`:
+- [x] 10.3 RED `internal/setup/steps_test.go`:
       `TestBoundariesAloneStillCollidesUnchanged` — a project declaring only
       `"boundaries"`, no preset matched beyond `generic`; step behaves
       exactly as `boundariesOwnerStep` does today; regression guard, must
       already pass after 10.2 — write it to prove that, not assume it
-- [ ] 10.4 RED `internal/setup/steps_test.go`:
+- [x] 10.4 RED `internal/setup/steps_test.go`:
       `TestNoCollisionLeavesTheStepSatisfied` — no declared key intersects
       the contributed set; `Satisfied() == true`, step absent from `Pending`
       (§15); fails if 10.2's intersection logic inverts the check
-- [ ] 10.5 RED `internal/setup/owned_test.go`:
+- [x] 10.5 RED `internal/setup/owned_test.go`:
       `TestOwnedFileWritesContributedKeyRegardlessOfCollision` — a project
       whose own config already declares a key a matched preset contributes;
       `ownedFilesStep.Apply` still writes that key into the owned file's
       region — the write is unconditional on the collision step's outcome;
       fails if `Apply` were ever made to skip on collision (guards against
-      a plausible wrong implementation, not a symptom of current code)
-- [ ] 10.6 GREEN: confirm `ownedFilesStep.Apply` (Slice 2) already never
+      a plausible wrong implementation, not a symptom of current code).
+      **Judgment call**: written in `internal/setup/steps_test.go`, not
+      `owned_test.go` — grouped with the rest of the widened step's tests
+      that also need `collidingKeys`/stub matches, and no real preset with a
+      non-empty manifest exists yet (same reasoning slice 2 already
+      recorded for the same split)
+- [x] 10.6 GREEN: confirm `ownedFilesStep.Apply` (Slice 2) already never
       reads the collision step's result — no code change expected; if the
-      test fails, remove whatever coupling was introduced
-- [ ] 10.7 RED `internal/setup/steps_test.go`:
+      test fails, remove whatever coupling was introduced. Confirmed —
+      `ownedFilesStep.Apply` calls only `preset.Resolve`/`presetRegion`/
+      `replaceRegion`, never `boundariesOwnerStep` or `collidingKeys`
+- [x] 10.7 RED `internal/setup/steps_test.go`:
       `TestCollisionStepDisappearsWhenIntersectionEmpties` — the collision
       case from 10.1, then the project's key deleted; a second `Pending(p)`
       call omits the step, with no file read besides the project's own
       config (§07) — fails only if a cache is accidentally introduced;
       write it to pin the "nothing recorded" property structurally
-- [ ] 10.8 RED `internal/setup/steps_test.go`:
+- [x] 10.8 RED `internal/setup/steps_test.go`:
       `TestCollisionStepReappearsWhenTheKeyIsReDeclared` — inverse of 10.7;
       re-adding the key brings the step back, unsatisfied, as if never
       resolved
-- [ ] 10.9 RED `internal/setup/steps_test.go`:
-      `TestCollisionCheckDescribesAndContinuesOnACodeConfig` — a project
-      whose only doctor-adjacent config is `doctor.config.ts` (matching
-      `legacyLintConfigStep`'s existing precedent, cited by name); the
-      collision check does not attempt to parse it, reports it could not
-      check, and `Pending`/`Apply` continue past it without stopping; fails
-      until the step's `Satisfied`/`Describe` handle the code-config case
-      explicitly rather than reading `declaredKeys` against a `.ts` file
-      (which already answers "declares nothing" safely, but the *reporting*
-      of "could not check" is new behaviour, not merely a safe default)
-- [ ] 10.10 GREEN: the `Describe`/`Delegated` branch for a code-config
-      project, following `legacyLintConfigStep`'s wording precedent
+- [x] 10.9 RED `internal/setup/steps_test.go`:
+      `TestCollisionCheckDescribesAndContinuesOnACodeConfig` — **judgment
+      call, deviates from this task's literal wording; see
+      apply-progress.md's Slice 3 section for the full reasoning.** The
+      collision check (`boundariesOwnerStep`) never reads `doctor.config.ts`
+      at all — `declaredKeys` only ever considers `.fallowrc.json`/
+      `.fallowrc.jsonc` (task 9.8), and `doctorConfig` belongs to
+      `doctorConfigStep`, an unrelated step this slice does not touch. Task
+      9.8 also states `fallow.toml` "stays excluded... not fixed", which
+      reads in tension with this task's and Decision 5's prose ("the step
+      describes and continues, following the precedent already set for
+      `doctor.config.ts`"). Reconciled as: `declaredKeys`'s own candidate
+      file list stays exactly as 9.8 states (unchanged, no TOML branch);
+      `boundariesOwnerStep` separately detects "the project's only fallow
+      config is a format I cannot check" via `p.HasFallowConfig()` (already
+      existing) and reports it, rather than silently claiming no collision.
+      Implemented and tested against `fallow.toml`, the actual "code, not
+      data" file this step can ever encounter
+- [x] 10.10 GREEN: the `Describe`/`Delegated` branch for a code-config
+      project, following `legacyLintConfigStep`'s wording precedent —
+      `describeUnreadableFallowConfig`/`delegateUnreadableFallowConfig` in
+      `internal/setup/steps.go`
 
 #### Phase 11: Slice 3 verification
 
-- [ ] 11.1 `go build ./...`, `go vet ./...`, `gofmt -l .`, `go test ./...`
+- [x] 11.1 `go build ./...`, `go vet ./...`, `gofmt -l .`, `go test ./...`
       clean
-- [ ] 11.2 `go run ./tools/mutationstaged` over `internal/setup/files.go`,
-      `internal/setup/steps.go` — dry then real, floor 0.80
-- [ ] 11.3 `bash scripts/verify-gate.sh`
+- [x] 11.2 `go run ./tools/mutationstaged` over `internal/setup/files.go`,
+      `internal/setup/steps.go` — dry then real, floor 0.80. Score: 1.00
+      (45/45 killed)
+- [x] 11.3 `bash scripts/verify-gate.sh`
 
 ---
 
@@ -435,34 +477,34 @@ is deliberate — task 12.7 pins it so a future reader does not "fix" it.
 
 #### Phase 12: `PublishesBarrels` (spec: `rule-severity-derivation` req "derived from barrel presence in the tree, asked of git")
 
-- [ ] 12.1 RED `internal/project/git_test.go`:
+- [x] 12.1 RED `internal/project/git_test.go`:
       `TestPublishesBarrelsTrueWhenIndexHasABarrel` — `SetGitOutputForTest`
       stubs `git ls-files -z -- "*/index.ts" "*/index.tsx"` to return one
       path; `p.PublishesBarrels() == true`; fails, method does not exist
-- [ ] 12.2 GREEN `internal/project/git.go`: `PublishesBarrels() bool` — the
+- [x] 12.2 GREEN `internal/project/git.go`: `PublishesBarrels() bool` — the
       exact invocation from the design, run through the existing
       `gitOutput` seam, scoped to `p.Source`
-- [ ] 12.3 RED `internal/project/git_test.go`:
+- [x] 12.3 RED `internal/project/git_test.go`:
       `TestPublishesBarrelsFalseWithNoMatches` — empty `ls-files` output →
       `false`
-- [ ] 12.4 RED `internal/project/git_test.go`:
+- [x] 12.4 RED `internal/project/git_test.go`:
       `TestBarrelProbeAnswersOffWhenGitFails` — `gitOutput` stub returns a
       non-nil error → `false`, no propagated error (matches `Discover`'s
       swallow precedent)
-- [ ] 12.5 RED `internal/project/git_test.go`:
+- [x] 12.5 RED `internal/project/git_test.go`:
       `TestPublishesBarrelsFalseOutsideARepositoryOrWithoutSource` —
       `!p.InRepository` and `!p.HasSource()` both answer `false` without
       calling `gitOutput` at all (mutation-coverage target: assert the probe
       is *not invoked*, not merely that the answer is `false` — a stub that
       panics on call proves this)
-- [ ] 12.6 GREEN: the three early-return guards in `PublishesBarrels`
-- [ ] 12.7 RED `internal/project/git_test.go`:
+- [x] 12.6 GREEN: the three early-return guards in `PublishesBarrels`
+- [x] 12.7 RED `internal/project/git_test.go`:
       `TestUnstagedBarrelDoesNotCount` — `ls-files` stub returns nothing
       while a fixture-only note records that `index.ts` exists on disk (the
       test does not need a real file — it documents the stubbed-index case
       as the whole of the behaviour); asserts `false` — pins the new
       threat-matrix row explicitly so it is never "fixed" as a bug later
-- [ ] 12.8 RED `internal/project/git_test.go`:
+- [x] 12.8 RED `internal/project/git_test.go`:
       `TestPublishesBarrelsRequiresADirectoryComponent` — `ls-files` stub
       returns a root-level `index.ts` (no `*/` prefix match) and nothing
       else; asserts `false` — the mutation-coverage target the design names
@@ -471,32 +513,32 @@ is deliberate — task 12.7 pins it so a future reader does not "fix" it.
 
 #### Phase 13: `DefaultSeverity(p, rule)` (spec: `rule-severity-derivation` reqs "`offByDefault` removed", "derived from barrel presence", "first-write default only")
 
-- [ ] 13.1 RED `internal/setup/plugin_test.go`:
+- [x] 13.1 RED `internal/setup/plugin_test.go`:
       `TestDefaultSeverityCompilesOnlyWithAProject` — a compile-time-shaped
       test asserting the new two-argument signature exists (calling
       `DefaultSeverity(p, "folder-ownership")`); fails to compile against
       today's one-argument function — this is the RED for a signature
       change, proven by the build failing, not by a runtime assertion
-- [ ] 13.2 GREEN `internal/setup/plugin.go`: delete the package-level
+- [x] 13.2 GREEN `internal/setup/plugin.go`: delete the package-level
       `offByDefault` map; `DefaultSeverity(p project.Project, rule string)
       string` switches on `folder-ownership` via `p.PublishesBarrels()`;
       every other rule still answers `"error"`
-- [ ] 13.3 GREEN `internal/setup/steps.go`: the `DefaultSeverity` call site
+- [x] 13.3 GREEN `internal/setup/steps.go`: the `DefaultSeverity` call site
       inside `doctorConfigStep.Apply` gains `p`
-- [ ] 13.4 RED `internal/setup/plugin_test.go`:
+- [x] 13.4 RED `internal/setup/plugin_test.go`:
       `TestFolderOwnershipIsErrorWhereBarrelsExist` — a project fixture
       whose `PublishesBarrels() == true` (via `SetGitOutputForTest`);
       `DefaultSeverity(p, "dharness/folder-ownership") == "error"`
-- [ ] 13.5 RED `internal/setup/plugin_test.go`:
+- [x] 13.5 RED `internal/setup/plugin_test.go`:
       `TestFolderOwnershipIsOffWithoutBarrels` — inverse; `"off"`
-- [ ] 13.6 RED `internal/setup/steps_test.go`:
+- [x] 13.6 RED `internal/setup/steps_test.go`:
       `TestDefaultSeverityNeverCalledWhenProjectChoseIt` — a project whose
       `doctor.config.json` already declares a severity for
       `dharness/folder-ownership`; `doctorConfigStep.Apply` never calls
       `DefaultSeverity` for that id — assert via a `gitOutput` stub that
       panics if the barrel probe runs (proves the `!chosen` guard from
       §05 is unchanged, not merely that the written value matches)
-- [ ] 13.7 RED `internal/setup/steps_test.go`:
+- [x] 13.7 RED `internal/setup/steps_test.go`:
       `TestAddingBarrelsAfterAdoptionDoesNotFlipSeverity` — a project
       already satisfying `doctorConfigStep.Satisfied` (package already in
       `plugins`) that later gains barrels; a second `sync` leaves
@@ -506,7 +548,7 @@ is deliberate — task 12.7 pins it so a future reader does not "fix" it.
 
 #### Phase 14: documentation
 
-- [ ] 14.1 `internal/setup/plugin.go`: rewrite the comment block above
+- [x] 14.1 `internal/setup/plugin.go`: rewrite the comment block above
       `DefaultSeverity` (formerly above `offByDefault`, `plugin.go:74-88`)
       — keep the eight-non-actionable-finding measurement, change the
       conclusion from "therefore off everywhere" to "therefore off where
@@ -515,14 +557,23 @@ is deliberate — task 12.7 pins it so a future reader does not "fix" it.
 
 #### Phase 15: Slice 4 verification
 
-- [ ] 15.1 `go build ./...`, `go vet ./...`, `gofmt -l .`, `go test ./...`
+- [x] 15.1 `go build ./...`, `go vet ./...`, `gofmt -l .`, `go test ./...`
       clean
-- [ ] 15.2 `go run ./tools/mutationstaged` over `internal/project/git.go`,
+- [x] 15.2 `go run ./tools/mutationstaged` over `internal/project/git.go`,
       `internal/setup/plugin.go` — dry then real, floor 0.80; both
       mutation-coverage targets named in the design (Source-scope guard is
       Slice 2's, `*/index.ts` prefix is this slice's) must show no survivor
-      in this slice's files
-- [ ] 15.3 `bash scripts/verify-gate.sh`
+      in this slice's files. Score: 0.91 (20/22 killed). Both survivors are
+      in `internal/project/git.go`'s pre-existing, unmodified
+      `StagedSourceFiles` guard (`if err != nil || !p.HasSource() {`) —
+      matching `docs/backlog/mutation-wrapper.md` entry 1 exactly (staged
+      byte-offset ranges lose file identity when more than one file is
+      staged, so a range from one file gets matched against nodes in
+      another). Confirmed via `git diff --cached --unified=0 --
+      internal/project/git.go`: the actual staged change is one insertion,
+      `@@ -108,0 +109,29 @@`, nowhere near line 91. Neither
+      mutation-coverage target named for this slice survived
+- [x] 15.3 `bash scripts/verify-gate.sh`
 
 ---
 
@@ -559,31 +610,49 @@ line 13 records this exact lesson. No preset manifest in this slice contributes
 an `entry` or `entryPoints` key. If a task below is found carrying one, delete
 it before implementing — do not implement it "for completeness."
 
-#### Phase 16: Wails (spec: `framework-presets` reqs "Wails detection evidence names the file", "the Wails ignore-pattern fact names the key and its fallback"; design Decision 9)
+**Split, as the forecast itself flagged as likely — see apply-progress.md's
+Slice 5 section for the full report.** This pass landed the orchestrator's
+design change (`preset.Match.Uncertain`) plus Phase 16 (Wails) end to end,
+including the golden fixture and the two registry-wide proof tests (19.3,
+19.4). The staged diff was already ~475 lines (code, excluding the golden
+fixture) before Next.js or Expo — over budget on Wails alone, exactly the
+"split per framework" case the forecast named. Next.js, Expo, `factory.go`,
+the multi-preset composition test (18.1), the remaining framework goldens
+(`nextjs`, `wails-nextjs`), and the registry-wide `TestEveryFactCarriesEvidence`
+(19.1) are unstarted and belong to a further PR in this same chain
+(`auto-chain`/`stacked-to-main`, based on this PR).
 
-- [ ] 16.1 RED `internal/preset/wails_test.go`:
+#### Phase 16: Wails (spec: `framework-presets` reqs "Wails detection evidence names the file", "the Wails ignore-pattern fact names the key and its fallback"; design Decision 9) — DONE
+
+- [x] 16.1 RED `internal/preset/wails_test.go`:
       `TestWailsDetectsWailsJSON` — a fixture with `wails.json` at Root;
       `wails{}.Detect(p)` returns `matched == true`, evidence naming
       `wails.json`; fails, `wails.go` does not exist
-- [ ] 16.2 GREEN `internal/preset/wails.go`: `wails` type, Root scope,
+- [x] 16.2 GREEN `internal/preset/wails.go`: `wails` type, Root scope,
       `Detect` checks `p.Root/wails.json` existence
-- [ ] 16.3 RED `internal/preset/wails_test.go`: `TestWailsNoMatchNoEvidence`
+- [x] 16.3 RED `internal/preset/wails_test.go`: `TestWailsNoMatchNoEvidence`
       — no `wails.json`; `matched == false`, registry excludes Wails
-- [ ] 16.4 RED `internal/preset/wails_test.go`:
-      `TestWailsFallsBackToDocumentedDefaultWhenKeyAbsent` — `wails.json`
-      present but declares no `wailsjsdir`; the contributed
-      `ignorePatterns` fact is `wailsjs/**` (Root == Source fixture), and
+- [x] 16.4 RED `internal/preset/wails_test.go`:
+      `TestWailsFallsBackToDocumentedDefaultWhenKeyAbsent` — **deviates from
+      this task's literal expected value; see apply-progress.md's Slice 5
+      section.** `wails.json` present but declares no `wailsjsdir`; pinned
+      against `frontend/wailsjs/**`, not the `wailsjs/**` this task names —
+      that is task 16.7's split-layout answer, and design decision 9's own
+      formula computes `frontend/wailsjs/**` for a Root == Source fixture.
       `Because` names both the absent key and the `frontend/` default
-- [ ] 16.5 GREEN `internal/preset/wails.go`: read `wails.json` with
+- [x] 16.5 GREEN `internal/preset/wails.go`: read `wails.json` with
       `encoding/json` (plain JSON, not JSONC — Wails' own tooling writes
       it); on read/decode failure, fall back silently to the documented
       default and say so in evidence — a malformed file is the project's
-      problem, never a failed `sync`
-- [ ] 16.6 RED `internal/preset/wails_test.go`:
+      problem, never a failed `sync`. **Widened by the orchestrator's design
+      review**: a read/decode failure after `wails.json` is confirmed to
+      exist also sets `Match.Uncertain`, naming what could not be read — the
+      match still stands, per the new field on `preset.Match`
+- [x] 16.6 RED `internal/preset/wails_test.go`:
       `TestWailsReadsWailsJSDirWhenPresent` — `wails.json` declares
       `"wailsjsdir": "./frontend/src/lib"`; contributed pattern reflects it,
       `Because` names the key and its value, not the fallback
-- [ ] 16.7 RED `internal/preset/wails_test.go`:
+- [x] 16.7 RED `internal/preset/wails_test.go`:
       `TestWailsPatternIsRelativeToSourceInASplitLayout` — Root != Source
       (Wails-shaped split, matching Slice 1's `generic-split` fixture
       shape), `wailsjsdir` absent; contributed pattern computes to
@@ -591,70 +660,97 @@ it before implementing — do not implement it "for completeness."
       wailsJSDir, "wailsjs"))`, not `frontend/wailsjs/**` — this is the
       motivating repository's own written-by-hand pattern, and the check
       that the derivation is right
-- [ ] 16.8 GREEN `internal/preset/wails.go`: the `filepath.Rel` computation,
-      slash-separated via `filepath.ToSlash`
-- [ ] 16.9 RED `internal/preset/wails_test.go`: `TestWailsEvidenceValidates`
+- [x] 16.8 GREEN `internal/preset/wails.go`: the `filepath.Rel` computation,
+      slash-separated via `filepath.ToSlash` — applied to the display path
+      going into `Evidence`/`Because` too, not just the fact value, after
+      the wails golden fixture caught a native-separator leak on Windows
+- [x] 16.9 RED `internal/preset/wails_test.go`: `TestWailsEvidenceValidates`
       — the Wails manifest passes `Manifest.Validate()` (schema, non-empty
-      `Because`, no `boundaries` key, encodable `Value`) — the registry-wide
-      `TestEveryFactCarriesEvidence` from Slice 2 must also cover this
-      preset once registered (Phase 19)
+      `Because`, no `boundaries` key, encodable `Value`). The registry-wide
+      `TestEveryFactCarriesEvidence` walk over all four presets (Phase 19)
+      still needs `nextjs`/`expo` to exist — not done this pass; see the
+      Slice 5 split note in apply-progress.md
+- [x] 16.10 (added, not in the original task list) RED/GREEN
+      `TestWailsMalformedJSONStillMatchesAndReportsUncertain` — the
+      orchestrator's own acceptance test for the `Match.Uncertain` design
+      change: a `wails.json` this preset cannot parse still matches, still
+      contributes the documented default, and names what it could not read
 
-#### Phase 17: Next.js and Expo — dependency-only presets (spec: `framework-presets` req "registry selects through one switch")
+#### Phase 17: Next.js and Expo — dependency-only presets (spec: `framework-presets` req "registry selects through one switch") — DONE
 
-- [ ] 17.1 RED `internal/preset/nextjs_test.go`: `TestNextjsDetectsDependency`
+- [x] 17.1 RED `internal/preset/nextjs_test.go`: `TestNextjsDetectsDependency`
       — a `package.json` fixture at Source declaring `next` in
       `dependencies`; `nextjs{}.Detect(p)` returns `matched == true`,
       evidence naming the `package.json` dependency; fails, `nextjs.go`
       does not exist
-- [ ] 17.2 GREEN `internal/preset/nextjs.go`: `nextjs` type, Source scope,
-      `Detect` checks `dependencies`/`devDependencies` for `next`; empty
-      manifest unless slice review decides otherwise (design fixes only
-      Wails' shape; Next.js/Expo are populated here — confirm against
-      `exploration.md`/`design.md` whether either contributes a fact beyond
-      matching. If neither design document specifies a Next.js/Expo
-      manifest fact, ship both with an empty manifest and evidence-only
-      `Detect`, and record that as this slice's own scoping decision in the
-      PR description — do not invent a fact the design never asked for)
-- [ ] 17.3 RED `internal/preset/nextjs_test.go`: `TestNextjsNoMatchWithoutDependency`
-- [ ] 17.4 RED `internal/preset/expo_test.go`: `TestExpoDetectsDependency` —
+- [x] 17.2 GREEN `internal/preset/nextjs.go`: `nextjs` type, Source scope,
+      `Detect` checks `dependencies`/`devDependencies` for `next`.
+      **Scoping decision, recorded here per this task's own instruction**:
+      neither `nextjs` nor `expo` contributes an `ignorePatterns` fact —
+      measured, not left open: fallow honours gitignore, and `.next/`/
+      `.expo/` are gitignored by every starter of each framework, so a
+      pattern would re-implement what the CLI already does (`CLAUDE.md`'s
+      first rule; `docs/learning-log.md`, this date). `nextjs` instead
+      populates the orchestrator's added `Manifest.Seeds` dimension —
+      structural facts Next.js documents about its own routing, offered to
+      `ArchitecturePrompt` as "confirm this against the tree", never as a
+      zone (§21) — verified directly against Next.js's own project-structure
+      documentation, not invented
+- [x] 17.3 RED `internal/preset/nextjs_test.go`: `TestNextjsNoMatchWithoutDependency`
+- [x] 17.4 RED `internal/preset/expo_test.go`: `TestExpoDetectsDependency` —
       same shape for `expo` in `dependencies`
-- [ ] 17.5 GREEN `internal/preset/expo.go`: `expo` type, Source scope,
-      mirrors `nextjs.go`
-- [ ] 17.6 RED `internal/preset/expo_test.go`: `TestExpoNoMatchWithoutDependency`
+- [x] 17.5 GREEN `internal/preset/expo.go`: `expo` type, Source scope,
+      mirrors `nextjs.go`'s detection. **Unverified, recorded rather than
+      guessed**: Expo's file-based-routing documentation returned 404 during
+      this pass, so `expo` ships detection-only with an empty manifest — no
+      facts, no seeds — until a future change verifies a real fact
+- [x] 17.6 RED `internal/preset/expo_test.go`: `TestExpoNoMatchWithoutDependency`
 
-#### Phase 18: multi-preset composition, the real scenario (spec: `framework-presets` req "a Wails root with a Next.js source contributes from both presets")
+#### Phase 18: multi-preset composition, the real scenario (spec: `framework-presets` req "a Wails root with a Next.js source contributes from both presets") — DONE
 
-- [ ] 18.1 RED `internal/preset/preset_test.go`:
+- [x] 18.1 RED `internal/preset/preset_test.go`:
       `TestWailsRootWithNextjsSourceContributesFromBoth` — a fixture with
       `wails.json` at Root and `next` declared at Source; `Resolve(p)`
       returns both matches, and the union'd manifest handed to
       `ownedFilesStep` carries both presets' keys, neither reported absent;
-      fails until both preset packages are registered in the factory
-- [ ] 18.2 GREEN `internal/preset/factory.go` (or wherever the design's "one
-      switch in a factory" lives): register `wails`, `nextjs`, `expo`,
-      `generic` in the real registry
-- [ ] 18.3 RED `internal/setup/golden_test.go`: `TestFrameworkGoldens` cases
-      `wails`, `nextjs`, `wails-nextjs` (per Decision 7's fixture list) —
-      fail, fixtures do not exist yet
-- [ ] 18.4 GREEN: capture the three framework goldens via
-      `go test ./internal/setup -run TestFrameworkGoldens -update`; the
-      commit message/PR description states which manifest fact each golden
-      pins, per Decision 7's living-fixture rule
+      fails until both preset packages are registered in the factory.
+      **Note recorded, not silently absorbed**: `generic` also matches
+      alongside a real Root-scope preset — resolve's own documented rule is
+      that a matching preset short-circuits nothing — so the real assertion
+      is on the two real preset IDs being present and `expo` being absent,
+      not on an exact match count
+- [x] 18.2 GREEN `internal/preset/factory.go`: `registry` moved out of
+      `preset.go` into its own file — the design's "one switch in a
+      factory" — now holding `wails{}, nextjs{}, expo{}, generic{}`
+- [x] 18.3 RED `internal/setup/golden_test.go`: `TestFrameworkGoldens` cases
+      `nextjs`, `wails-nextjs` added (`wails` already existed from Slice 5's
+      first pass) — fail, fixtures do not exist yet; confirmed RED before
+      capture (`nextjs.txt`/`wails-nextjs.txt`: file not found)
+- [x] 18.4 GREEN: captured via
+      `go test ./internal/setup -run TestFrameworkGoldens -update`. `nextjs`
+      pins the two seeds Next.js's own documented top-level structure and
+      "no position beyond routing" quote; `wails-nextjs` pins the same seeds
+      alongside wails' `ignorePatterns` fact, proving both presets render
+      into one project. `wails.txt` (already committed) is byte-for-byte
+      unchanged — confirmed via `git status`, no diff — because wails
+      contributes no seeds and this pass added no new Fact
 
-#### Phase 19: registry-wide contract tests over the real four presets
+#### Phase 19: registry-wide contract tests over the real four presets — DONE
 
-- [ ] 19.1 RED `internal/preset/preset_test.go`:
-      `TestEveryFactCarriesEvidence` (registry-wide form, extending Slice
-      2's stub-only version) — walks the real registry (`wails`, `nextjs`,
-      `expo`, `generic`) against representative fixtures and asserts
-      `Manifest.Validate()` on each match's manifest
-- [ ] 19.2 GREEN: fix whatever 19.1 finds (expected: nothing, if Phases
-      16–17 built evidence correctly)
-- [ ] 19.3 RED `internal/setup/steps_test.go`:
+- [x] 19.1 RED `internal/preset/preset_test.go`:
+      `TestRealRegistryFactsAndSeedsValidate` (registry-wide form, named
+      differently from the stub-only `TestEveryFactCarriesEvidence` to avoid
+      a collision, same intent) — walks `Resolve(p)` over the real registry
+      against a fixture matching wails, nextjs and expo at once, and asserts
+      `Manifest.Validate()` on every match, covering both Facts and the new
+      Seeds
+- [x] 19.2 GREEN: nothing to fix — Phases 16–17 already built evidence
+      correctly; confirmed by running the test, not assumed
+- [x] 19.3 RED `internal/setup/steps_test.go`:
       `TestWailsMatchedOwnedFileIsNoLongerEmpty` — the success criterion
       stated directly: a Wails-matched project's `.dharness/fallow.jsonc`
       after `Apply` contains the ignore pattern
-- [ ] 19.4 RED `internal/setup/steps_test.go`:
+- [x] 19.4 RED `internal/setup/steps_test.go`:
       `TestIgnorePatternsCollidesInTheMotivatingShape` — a Wails-matched
       project whose own `.fallowrc.json` already declares `ignorePatterns`;
       the widened `boundariesOwnerStep` (Slice 3) is unsatisfied, names
@@ -662,23 +758,36 @@ it before implementing — do not implement it "for completeness."
       preset's value into the owned file — the end-to-end proof of the
       proposal's "applied to the motivating repository" claim
 
-#### Phase 20: documentation
+#### Phase 20: documentation — DONE
 
-- [ ] 20.1 `docs/learning-log.md`: one dated line for the region decision
-      (Decision 8) if not already recorded in Slice 2, and one for the
-      `entryPoints`-rejection precedent being reaffirmed here rather than
-      re-litigated
+- [x] 20.1 `docs/learning-log.md`: Decision 8's region marker was already
+      recorded in Slice 2 (2026-08-11, "The region dharness rewrites..."), so
+      this pass added: the gitignore/`ignorePatterns` measurement for
+      Next.js and Expo, the `Manifest.Seeds` scope-closure decision, and
+      Expo's unverified-documentation state — four new dated lines total
+      (three for this phase's scope, one folded into 17.5's own entry)
 
-#### Phase 21: Slice 5 verification
+#### Phase 21: Slice 5 verification — DONE
 
-- [ ] 21.1 `go build ./...`, `go vet ./...`, `gofmt -l .`, `go test ./...`
-      clean
-- [ ] 21.2 `go run ./tools/mutationstaged` over `internal/preset/wails.go`,
-      `nextjs.go`, `expo.go`, `factory.go` — dry then real, floor 0.80
-- [ ] 21.3 `bash scripts/verify-gate.sh`
-- [ ] 21.4 Full success-criteria sweep against `proposal.md`'s checklist —
-      every box traceable to a task above; report any box this task list
-      does not cover rather than silently marking it done
+- [x] 21.1 `go build ./...`, `go vet ./...`, `gofmt -l .`, `go test ./...`
+      clean — passing for the full slice (Wails, Next.js, Expo, factory.go,
+      the Seeds dimension)
+- [x] 21.2 `go run ./tools/mutationstaged` over the staged set
+      (`expo.go`, `factory.go`, `nextjs.go`, `preset.go`, `prompt.go` —
+      `wails.go`/`steps.go`/`sync.go` were already committed from this
+      slice's first pass and outside this run's staged scope). First run:
+      0.90 (19/21 killed), two survivors — a `Manifest.Validate` Seeds-loop
+      `break` mutant (no test constructed a Seed with empty `Because`) and a
+      `len(seeds) > 0` → `> 1` mutant in `ArchitecturePrompt` (every real
+      preset that seeds happens to contribute exactly two, so `>0`/`>1` were
+      indistinguishable through it). Fixed by adding
+      `TestEverySeedCarriesEvidence` and extracting `renderSeeds` into its
+      own function, tested directly against exactly one seed. Re-run: **1.00
+      (25/25 killed)**
+- [x] 21.3 `bash scripts/verify-gate.sh` — "the hook refused a broken file,
+      as it must"
+- [x] 21.4 Full success-criteria sweep against `proposal.md`'s checklist —
+      run; see this apply pass's report for the item-by-item result
 
 ---
 

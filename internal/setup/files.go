@@ -68,20 +68,75 @@ func hookManager(p project.Project) manager {
 	return managerNone
 }
 
-// declaresBoundaries reports whether a fallow config declares an architecture.
+// declaredKeys reports which of candidates the config at path declares.
 //
-// It looks for the quoted key rather than the bare word, and that is not a
-// detail: these files are JSONC, and a config that points at dharness carries
-// a sentence like "Architecture boundaries live in the file dharness owns" in
-// a comment. A bare substring answers yes to that sentence, which would make
-// every correctly wired project report a conflict it does not have.
+// It tests the quoted key rather than the bare word, for the same reason its
+// single-key predecessor already established: these files are JSONC, and a
+// config that points at dharness carries a sentence like
+// "Architecture boundaries live in the file dharness owns" in a comment. A
+// bare substring answers yes to that sentence, which would make every
+// correctly wired project report a conflict it does not have.
 //
 // A parser would be exact, and it is still not worth one: the product is
 // stdlib-only, and a comment that quotes the key is a file written to defeat
-// this check rather than an accident.
-func declaresBoundaries(path string) bool {
+// this check rather than an accident. A file that cannot be read declares
+// nothing. Results come back in candidate order, so a prompt built from them
+// reads the same way twice.
+func declaredKeys(path string, candidates []string) []string {
 	raw, err := os.ReadFile(path)
-	return err == nil && strings.Contains(string(raw), `"boundaries"`)
+	if err != nil {
+		return nil
+	}
+
+	var found []string
+	for _, candidate := range candidates {
+		if strings.Contains(string(raw), `"`+candidate+`"`) {
+			found = append(found, candidate)
+		}
+	}
+	return found
+}
+
+// fallowConfigCandidates are the fallow-recognised config names declaredKeys
+// can read textually — fallow's own fallowConfigFiles list minus fallow.toml:
+// TOML keys are bare, so the quoted-key test cannot answer for it. That is an
+// accepted false negative (design decision 5 of framework-presets), not
+// fixed by adding a TOML branch here.
+var fallowConfigCandidates = []string{fallowConfig, ".fallowrc.jsonc"}
+
+// fallowConfigPath names whichever of the project's own fallow configs
+// exists, the same "which one responds" question hookManager answers for the
+// hook manager. Empty when neither exists — declaredKeys already treats an
+// unreadable path as "declares nothing", so an empty path is a safe input.
+func fallowConfigPath(source string) string {
+	for _, name := range fallowConfigCandidates {
+		path := filepath.Join(source, name)
+		if _, err := os.Stat(path); err == nil {
+			return path
+		}
+	}
+	return ""
+}
+
+// declaredLine is a best-effort display of what the project itself wrote for
+// key: the first line that declares it in quoted form, trimmed. A value
+// spanning more than one line only shows its opening line — an honest limit
+// of a textual technique that reads a line, not a parser that reads a value.
+// The step this feeds is delegated either way, and the agent can open the
+// file for the rest.
+func declaredLine(path, key string) string {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+
+	needle := `"` + key + `"`
+	for _, line := range strings.Split(string(raw), "\n") {
+		if strings.Contains(line, needle) {
+			return strings.TrimSpace(line)
+		}
+	}
+	return ""
 }
 
 // gateInstalled reports whether git will actually run the gate, which is a

@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Disble/dharness/internal/preset"
 	"github.com/Disble/dharness/internal/project"
 	"github.com/Disble/dharness/internal/tool"
 )
@@ -22,12 +23,23 @@ import (
 // It names the commands the analysis needs, because they exist, and it names
 // the one file to write, because pointing the work at a single file is what
 // keeps the project's own configuration untouched.
+//
+// The fourth call site for preset.Resolve (design decision 4's other three
+// are ownedFilesStep and boundariesOwnerStep): a matched preset may seed this
+// prompt with structural facts its own framework documents — Next.js's
+// router folders, for instance. A seed is offered as "confirm or correct
+// this against the tree", never as a zone; §21 keeps zones with the agent,
+// and an empty Seeds list (every non-framework project, and Wails and Expo
+// today) renders nothing here at all, so this call site changes no output
+// for a project no preset seeds.
 func ArchitecturePrompt(p project.Project) string {
 	owned := filepath.ToSlash(filepath.Join(project.Dir, ownedFallow))
 	remote := tool.RemoteExec(p.PackageManager)
 	fallow := tool.LatestSpec(tool.Fallow)
 
 	var b strings.Builder
+	b.WriteString(renderSeeds(preset.Seeds(preset.Resolve(p))))
+
 	b.WriteString("### What to find out\n\n")
 	b.WriteString("1. Read the source layout. What are the real seams: features, layers, a\n")
 	b.WriteString("   delivery shell around a domain, a monorepo of packages that repeat the same\n")
@@ -79,6 +91,28 @@ func ArchitecturePrompt(p project.Project) string {
 	b.WriteString("A severity written there survives every later run: dharness fills in only the\n")
 	b.WriteString("rules a project has not answered for itself.\n")
 
+	return b.String()
+}
+
+// renderSeeds renders the seed section, or "" when there is nothing to
+// render — the byte-identity path a project no preset seeds depends on
+// (every non-framework project, and Wails and Expo today, both of which
+// contribute no seeds). Split out of ArchitecturePrompt so the empty/
+// non-empty branch is testable against an exact seed count, not only
+// against however many seeds a real preset happens to contribute.
+func renderSeeds(seeds []preset.Seed) string {
+	if len(seeds) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString("### What the framework already documents\n\n")
+	for _, seed := range seeds {
+		fmt.Fprintf(&b, "- %s\n  (%s)\n", seed.Text, seed.Because)
+	}
+	b.WriteString("\nConfirm or correct this against the tree. It names structure, not\n")
+	b.WriteString("zones — those are still read from the code and the person who wrote it,\n")
+	b.WriteString("never from this list.\n\n")
 	return b.String()
 }
 

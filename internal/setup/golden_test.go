@@ -62,7 +62,11 @@ func TestFrameworkGoldens(t *testing.T) {
 	cases := []struct {
 		name    string
 		project func(t *testing.T) project.Project
-	}{}
+	}{
+		{"wails", wailsProject},
+		{"nextjs", nextjsProject},
+		{"wails-nextjs", wailsNextjsProject},
+	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -245,6 +249,68 @@ func genericSplitProject(t *testing.T) project.Project {
 	}
 	writeGoldenFixtureFile(t, source, "package.json", "{\n  \"name\": \"split\"\n}\n")
 	writeGoldenFixtureFile(t, source, "package-lock.json", "{\n  \"lockfileVersion\": 3\n}\n")
+
+	p := project.At(root, source)
+	p.InRepository = true
+	return p
+}
+
+// wailsProject is the motivating repository's own layout: a repository root
+// carrying wails.json with no wailsjsdir override, and the JS project one
+// level down at frontend/ — the split shape design decision 9's
+// "wailsjs/**" derivation was verified against. This is the "wails"
+// framework golden; regenerated with -update, never hand-edited.
+func wailsProject(t *testing.T) project.Project {
+	t.Helper()
+	root := t.TempDir()
+	source := filepath.Join(root, "frontend")
+	if err := os.MkdirAll(source, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeGoldenFixtureFile(t, root, "wails.json", "{}\n")
+	writeGoldenFixtureFile(t, source, "package.json", "{\n  \"name\": \"wails-frontend\"\n}\n")
+	writeGoldenFixtureFile(t, source, "package-lock.json", "{\n  \"lockfileVersion\": 3\n}\n")
+
+	p := project.At(root, source)
+	p.InRepository = true
+	return p
+}
+
+// nextjsProject is a conventional layout (Root == Source) whose package.json
+// declares the "next" dependency and whose source tree has an app/
+// directory — Next.js's App Router. This is the "nextjs" framework golden.
+func nextjsProject(t *testing.T) project.Project {
+	t.Helper()
+	root := t.TempDir()
+	writeGoldenFixtureFile(t, root, "package.json", "{\n  \"name\": \"nextjs-app\",\n  \"dependencies\": {\n    \"next\": \"^14.0.0\"\n  }\n}\n")
+	writeGoldenFixtureFile(t, root, "package-lock.json", "{\n  \"lockfileVersion\": 3\n}\n")
+	if err := os.MkdirAll(filepath.Join(root, "app"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	p := project.At(root, root)
+	p.InRepository = true
+	return p
+}
+
+// wailsNextjsProject is the multi-preset composition scenario the design's
+// Data Flow section names: a Wails root (wails.json) whose split-layout JS
+// project depends on Next.js — one Root match and one Source match
+// contributing into the same repository. This is the "wails-nextjs"
+// framework golden.
+func wailsNextjsProject(t *testing.T) project.Project {
+	t.Helper()
+	root := t.TempDir()
+	source := filepath.Join(root, "frontend")
+	if err := os.MkdirAll(source, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeGoldenFixtureFile(t, root, "wails.json", "{}\n")
+	writeGoldenFixtureFile(t, source, "package.json", "{\n  \"name\": \"wails-nextjs-frontend\",\n  \"dependencies\": {\n    \"next\": \"^14.0.0\"\n  }\n}\n")
+	writeGoldenFixtureFile(t, source, "package-lock.json", "{\n  \"lockfileVersion\": 3\n}\n")
+	if err := os.MkdirAll(filepath.Join(source, "app"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	p := project.At(root, source)
 	p.InRepository = true

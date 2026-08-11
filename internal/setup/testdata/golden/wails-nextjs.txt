@@ -22,7 +22,7 @@
      fallow composes with `extends`, so the architecture arrives by reference.
      Add this line to .fallowrc.json:
      
-         "extends": [".dharness/fallow.jsonc"]
+         "extends": ["../.dharness/fallow.jsonc"]
 4  resolve the two architectures this project declares
    satisfied=true delegated=true
    why |
@@ -100,6 +100,17 @@
      read intent off a tree. Do the analysis and write the result — nothing else
      needs to change.
    describe |
+     ### What the framework already documents
+     
+     - Next.js documents four top-level folders: app/ (App Router) or pages/ (Pages Router) for routing, public/ for static assets served as-is, and an optional src/ that wraps the rest. Routes are a delivery shell around the domain, not domain modules themselves.
+       (https://nextjs.org/docs/app/getting-started/project-structure — Next.js's own documented top-level project structure)
+     - Beyond routing, Next.js takes no position on how the rest of the source is organized — read the real seams off this tree rather than assuming a components/ or lib/ convention.
+       (https://nextjs.org/docs/app/getting-started/project-structure: "Next.js is unopinionated about how you organize and colocate your project files," and its own components/lib example folders "have no special framework significance.")
+     
+     Confirm or correct this against the tree. It names structure, not
+     zones — those are still read from the code and the person who wrote it,
+     never from this list.
+     
      ### What to find out
      
      1. Read the source layout. What are the real seams: features, layers, a
@@ -155,7 +166,7 @@
      So `folder-ownership` ships **off**. The other five rules are guardrails on
      generated code and stay on; this one is the only one that takes a side.
      
-     If this project does publish through barrels, turn it on in doctor.config.json:
+     If this project does publish through barrels, turn it on in frontend/doctor.config.json:
      
          "rules": {
            "dharness/folder-ownership": "error"
@@ -182,6 +193,8 @@
 ---
 {
   // dharness:presets begin — rewritten by `dharness sync`; edits here are lost.
+  // wails: wails.json declares no "wailsjsdir", so the default Wails itself falls back to (frontend/) applies
+  "ignorePatterns": ["wailsjs/**"],
   // generic: dharness sets a 3% duplication ceiling for every project, borrowed from the SonarQube gate this toolchain already answers to; the two measure different things by different algorithms, so they corroborate rather than repeat each other
   "duplicates": {"threshold":3},
   // dharness:presets end
@@ -199,6 +212,7 @@ pre-commit:
   commands:
     dharness:
       run: dharness check
+      root: frontend/
 ---
 .dharness/rules.json
 ---
@@ -211,12 +225,6 @@ pre-commit:
     ".helpers.ts",
     ".schema.ts"
   ]
-}
----
-.fallowrc.json
----
-{
-  "extends": [".dharness/fallow.jsonc"]
 }
 ---
 .mcp.json
@@ -234,7 +242,13 @@ pre-commit:
   }
 }
 ---
-doctor.config.json
+frontend/.fallowrc.json
+---
+{
+  "extends": ["../.dharness/fallow.jsonc"]
+}
+---
+frontend/doctor.config.json
 ---
 {
   "plugins": [
@@ -250,15 +264,22 @@ doctor.config.json
   }
 }
 ---
-package-lock.json
+frontend/package-lock.json
 ---
 {
   "lockfileVersion": 3
 }
 ---
-package.json
+frontend/package.json
 ---
 {
-  "name": "conventional"
+  "name": "wails-nextjs-frontend",
+  "dependencies": {
+    "next": "^14.0.0"
+  }
 }
+---
+wails.json
+---
+{}
 ---
