@@ -1,0 +1,63 @@
+# openspec/config.yaml
+schema: spec-driven
+
+context: |
+  Go binary (module github.com/Disble/dharness, go 1.26) wrapping exactly
+  three CLI tools: react-doctor, fallow, StrykerJS. Product is stdlib-only;
+  the sole dependency (github.com/gtramontina/ooze v0.2.0) is dev-only, used
+  by tools/mutationstaged. Windows and Linux are both first-class CI targets.
+  Canonical docs, in authority order: AGENTS.md, CLAUDE.md,
+  docs/design-principles.md (21 numbered principles, cite by number),
+  docs/learning-log.md (append-only why-log), docs/flujo-implementado.md.
+
+strict_tdd: true
+
+testing:
+  test_command: "go test ./..."
+  test_command_ci: "go test ./... -race"
+  build_command: "go build ./..."
+  vet_command: "go vet ./..."
+  format_check_command: "gofmt -l ."
+  format_fix_command: "gofmt -w ."
+  mutation_dry_command: "go run ./tools/mutationstaged -dry"
+  mutation_command: "go run ./tools/mutationstaged"
+  gate_verify_command: "bash scripts/verify-gate.sh"
+  coverage_command: "go test ./... -cover"
+  coverage_threshold: 0  # no threshold configured in repo; P09 requires mutation proof, not a coverage number
+  linter: none  # deviates: profile:go — not landed (AGENTS.md); no golangci-lint in this repo
+  type_checker: n/a  # Go is statically compiled; go vet is the static check
+  local_gate: ".githooks/pre-commit (enable per clone: git config core.hooksPath .githooks)"
+  ci_workflow: ".github/workflows/ci.yml"
+
+rules:
+  proposal:
+    - Include rollback plan for risky changes
+    - Cite docs/design-principles.md principles by number (01-21) to accept or reject scope
+    - If the CLI already does it, dharness does not do it (P01/P02) — check tool --help/JSON before designing
+  specs:
+    - Use Given/When/Then for scenarios
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY)
+    - The verdict comes from exit codes and JSON, never from prose or a model (P11/P17)
+  design:
+    - Document architecture decisions with rationale
+    - State the boundary a guard does not cover (P10)
+  tasks:
+    - Group by phase, use hierarchical numbering
+    - Keep tasks completable in one session
+    - Respect the 400-changed-line review budget; propose chained PRs when a slice would exceed it
+  apply:
+    guidelines:
+      - Follow existing code patterns; every product invocation lives in internal/tool
+      - RED -> GREEN -> MUTATE -> REFACTOR (P09); load the mutation-tdd skill after a test goes green
+      - Seam what cannot be controlled (process exec, git, cwd, build info) via package-level vars with SetXForTest
+    tdd: true
+    test_command: "go test ./..."
+  verify:
+    test_command: "go test ./..."
+    build_command: "go build ./..."
+    coverage_threshold: 0
+    mutation_command: "go run ./tools/mutationstaged"
+    gate_verify_command: "bash scripts/verify-gate.sh"
+  archive:
+    - Warn before merging destructive deltas
+    - Append non-obvious lessons to docs/learning-log.md (P12), never rewrite existing lines

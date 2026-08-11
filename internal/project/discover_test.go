@@ -65,6 +65,51 @@ func TestDiscoverSeparatesTheRepositoryFromTheJSProject(t *testing.T) {
 	}
 }
 
+// InRepository is what Decision 6bis's stop reads. It must be true on both
+// success branches — one lockfile, and none — and false only on the swallow
+// branch, which is what a directory that is not a repository at all reaches.
+func TestDiscoverRecordsInRepositoryOnEverySuccessBranch(t *testing.T) {
+	t.Run("one JS project", func(t *testing.T) {
+		root := repo(t, "pnpm-lock.yaml")
+		p, err := Discover(root)
+		if err != nil {
+			t.Fatalf("Discover() = %v", err)
+		}
+		if !p.InRepository {
+			t.Error("InRepository = false, want true for a repository with a JS project")
+		}
+	})
+
+	t.Run("no JS project", func(t *testing.T) {
+		root := repo(t)
+		p, err := Discover(root)
+		if err != nil {
+			t.Fatalf("Discover() = %v", err)
+		}
+		if !p.InRepository {
+			t.Error("InRepository = false, want true for a repository with no JS project")
+		}
+	})
+}
+
+// Outside a repository at all, Discover still swallows the git error (its own
+// commands raise it), but it must not claim InRepository — that is the fact
+// Decision 6bis's stop in RunSync depends on.
+func TestDiscoverLeavesInRepositoryFalseOutsideAGitRepository(t *testing.T) {
+	root := t.TempDir()
+	t.Cleanup(SetGitOutputForTest(func(string, ...string) ([]byte, error) {
+		return nil, errors.New("not a git repository")
+	}))
+
+	p, err := Discover(root)
+	if err != nil {
+		t.Fatalf("Discover() = %v", err)
+	}
+	if p.InRepository {
+		t.Error("InRepository = true, want false outside a git repository")
+	}
+}
+
 // A conventional repository is the same repository with the two roots on top of
 // each other, and it must not grow a `root:` key that points at itself.
 func TestDiscoverLeavesOneRootAloneWhenThereIsOnlyOne(t *testing.T) {

@@ -35,6 +35,24 @@ func TestRunArgsUnknownCommandNamesTheRealOnes(t *testing.T) {
 			t.Errorf("error does not mention %q: %s", command, err)
 		}
 	}
+	// init merged into sync (Decision 1): a user typing the old command must
+	// not be pointed back at it.
+	if strings.Contains(err.Error(), "init") {
+		t.Errorf("error still names the removed init command: %s", err)
+	}
+}
+
+// dharness init used to dispatch into a RunInit-shaped function; it is now an
+// unknown command like any other typo.
+func TestRunArgsInitIsUnknown(t *testing.T) {
+	var out bytes.Buffer
+
+	err := RunArgs([]string{"init"}, &out)
+
+	var unknown *UnknownCommandError
+	if !errors.As(err, &unknown) {
+		t.Fatalf("RunArgs() = %v, want UnknownCommandError for the removed init command", err)
+	}
 }
 
 func TestRunArgsVersionPrintsResolvedVersion(t *testing.T) {

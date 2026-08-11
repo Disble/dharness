@@ -126,30 +126,23 @@ func ownedFrom(p project.Project, dir, name string) string {
 	return filepath.ToSlash(rel)
 }
 
-// wireFallowExtends adds the reference, creating the config when the project
-// has none. fallow's config belongs to the JS project, so it is written there.
+// wireFallowExtends writes the reference. It runs only when
+// fallowExtendsStep.Delegated(p) returned ok == false, which is only true
+// when the project has no config of its own yet — the case where the project
+// already owns .fallowrc.json is answered before Apply, not here.
+// fallow's config belongs to the JS project, so it is written there.
 func wireFallowExtends(p project.Project, w *Writer) error {
 	target := ownedFrom(p, p.Source, ownedFallow)
 	path := filepath.Join(p.Source, fallowConfig)
-
-	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
-		return w.Write(path, fmt.Appendf(nil, "{\n  \"extends\": [%q]\n}\n", target))
-	}
-	return fmt.Errorf(
-		"%s already exists, and adding an extends entry to it is a merge rather than a write.\nAdd this line yourself:\n\n    \"extends\": [%q]",
-		fallowConfig, target)
+	return w.Write(path, fmt.Appendf(nil, "{\n  \"extends\": [%q]\n}\n", target))
 }
 
 // wireLefthookExtends does the same for the gate, which belongs to the
-// repository because that is where git looks for it.
+// repository because that is where git looks for it. Same precondition as
+// wireFallowExtends: reached only when lefthookExtendsStep.Delegated(p)
+// returned ok == false.
 func wireLefthookExtends(p project.Project, w *Writer) error {
 	target := ownedFrom(p, p.Root, ownedLefthook)
 	path := filepath.Join(p.Root, lefthookConfig)
-
-	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
-		return w.Write(path, fmt.Appendf(nil, "extends:\n  - %s\n", target))
-	}
-	return fmt.Errorf(
-		"%s already exists, and adding an extends entry to it is a merge rather than a write.\nAdd this line yourself:\n\n    extends:\n      - %s",
-		lefthookConfig, target)
+	return w.Write(path, fmt.Appendf(nil, "extends:\n  - %s\n", target))
 }

@@ -12,12 +12,11 @@ USAGE
   dharness <command> [flags]
 
 COMMANDS
-  init                      Set this project up: install what is missing, write
-                            the files dharness owns, wire the gate, and end by
-                            handing the architecture analysis to the agent.
-  sync                      Report what init would do, without doing any of it.
-                            Derived from the repository as it is right now, so
-                            re-running it reports drift. Writes nothing.
+  sync                      Set this project up: install what is missing, write
+                            the files dharness owns, wire the gate, and hand the
+                            rest to the agent. Derived from the repository as it
+                            is right now, so re-running it is safe and reports
+                            drift.
   check                     Run the commit gate: react-doctor on the staged
                             change, then fallow. Stops at the first failure.
   mutate <path...>          Run mutation testing over the given files, to find

@@ -4,7 +4,7 @@ dharness is a Go binary that wraps exactly three command-line tools —
 react-doctor, fallow and StrykerJS — and owns their invocation. It does not
 reimplement what they do, does not proxy their own commands, and does not decide
 what a finding means. Read `docs/design-principles.md` before proposing anything
-structural: it holds nineteen numbered principles, each traced to the concrete
+structural: it holds twenty-one numbered principles, each traced to the concrete
 decision that produced it, and a change is accepted or rejected by citing them.
 
 ## Commands

@@ -9,8 +9,8 @@ import (
 	"github.com/Disble/dharness/internal/tool"
 )
 
-// ArchitecturePrompt is the last thing init prints, and the only part of
-// adoption that is not a command.
+// ArchitecturePrompt is architectureStep's Describe(p), the instruction body
+// of the plan's one entry that is not a command.
 //
 // It is a prompt about how to do an analysis, not a question with options.
 // Asking "which preset?" would already presuppose the answer: zones encode
@@ -28,11 +28,6 @@ func ArchitecturePrompt(p project.Project) string {
 	fallow := tool.LatestSpec(tool.Fallow)
 
 	var b strings.Builder
-	b.WriteString("## Left to you: decide this project's architecture\n\n")
-	b.WriteString("Everything above was a command. This is not: architecture boundaries say what\n")
-	b.WriteString("the code is meant to be, and no tool can read intent off a tree. Do the\n")
-	b.WriteString("analysis below and write the result — nothing else needs to change.\n\n")
-
 	b.WriteString("### What to find out\n\n")
 	b.WriteString("1. Read the source layout. What are the real seams: features, layers, a\n")
 	b.WriteString("   delivery shell around a domain, a monorepo of packages that repeat the same\n")

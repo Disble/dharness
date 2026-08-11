@@ -265,6 +265,11 @@ gana.
 trasladaba la topología a un manifiesto. Si hay que hacerlo a mano, es más rápido
 hacer todo a mano.
 
+*Enmendado el 10 de agosto de 2026.* «El usuario» de este principio es el lector
+del reporte, nunca un actor del flujo: dharness no le dirige pasos a nadie que no
+pueda ver. Un conflicto real se le entrega al agente, que decide si preguntarlo.
+Ver 21.
+
 ---
 
 ## Método — cómo se resuelve un desacuerdo
@@ -282,12 +287,44 @@ demás.
 
 ---
 
+## Adopción — qué pasa cuando un paso no se puede ejecutar
+
+### 20. Un bloqueo es solo lo irrecuperable
+
+Un paso que dharness no puede ejecutar baja un escalón y la corrida sigue.
+Detenerse se justifica en dos casos y en ninguno más: cuando no hay plan posible,
+y cuando ya se escribieron bytes que hay que devolver. Todo lo demás termina en
+el plan. Abortar tampoco conserva nada, porque el estado se vuelve a derivar del
+repositorio en cada corrida (07, 15): un paso pendiente reaparece solo.
+
+*Salió de:* un `init` que abortó y desinstaló todo porque el proyecto ya tenía su
+propio `.fallowrc.json`. Ese archivo no le hace falta al gate, y el que dharness
+escribe para referenciarlo nace vacío hasta que el agente declare la
+arquitectura, así que la corrida entera se deshizo para proteger una referencia a
+un archivo sin contenido. Peor: el bloqueo disparaba justo cuando el repositorio
+estaba mejor configurado.
+
+### 21. El cliente es el agente, y la escalera termina ahí
+
+dharness le habla al agente que lo corre, no a la persona. El agente programa;
+dharness le entrega instrucciones ejecutables y se detiene. Si un paso necesita
+algo que solo una persona sabe, es el agente quien decide preguntarlo, y esa
+conversación no pertenece a este flujo. Un paso delegado entrega su prompt al
+agente, nunca una instrucción dirigida a alguien que dharness no puede ver.
+
+*Salió de:* haber dibujado un escalón para el usuario en el flujo de `init`, y
+descubrir que no existe. Agregarle una clave a un JSON ajeno es leerlo y decidir,
+que es exactamente el trabajo del agente. La rama de más tapaba esa
+simplificación, y venía de leer el 18 como si nombrara un actor del flujo.
+
+---
+
 ## Lo que tienen en común
 
 Casi todos dicen que no hagamos algo. Ninguno se dedujo de una teoría: cada uno
 apareció cuando una decisión concreta salió mal, o cuando alguien preguntó de
 dónde salía algo que se había dado por bueno.
 
-Y ninguno se queda por respeto. Cualquiera de estos diecinueve se discute
+Y ninguno se queda por respeto. Cualquiera de estos veintiuno se discute
 señalando el caso que lo produjo; si el caso está mal leído, el principio se va
 con él, como ya se fueron los tres que resultaron ser aprendizajes.

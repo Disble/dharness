@@ -31,18 +31,14 @@ type Step interface {
 	// Satisfied reports whether the repository already meets this step.
 	Satisfied(p project.Project) bool
 
-	// Apply performs the step, recording what it touched so it can be undone.
-	Apply(p project.Project, w *Writer) error
-}
+	// Delegated reports whether this repository leaves the step to the agent,
+	// and why. Pure, like Satisfied: it is answered during Prepare, which
+	// writes nothing and therefore cannot fail.
+	Delegated(p project.Project) (why string, ok bool)
 
-// Delegated is a step dharness cannot perform, with the reason it cannot.
-//
-// The distinction is not a shrug: a step is delegated only when no command
-// exists that does exactly it, and the reason names what the available command
-// would do instead.
-type Delegated interface {
-	Step
-	Why() string
+	// Apply performs the step, recording what it touched so it can be undone.
+	// It runs only when Delegated(p) returned ok == false.
+	Apply(p project.Project, w *Writer) error
 }
 
 // Plan is everything dharness knows how to check, in the order it must happen.
@@ -53,11 +49,13 @@ func Plan() []Step {
 	return []Step{
 		installStep{},
 		ownedFilesStep{},
-		extendsStep{},
+		fallowExtendsStep{},
+		lefthookExtendsStep{},
 		doctorConfigStep{},
 		mcpStep{},
 		hookInstallStep{},
 		agentSkillStep{},
+		architectureStep{},
 	}
 }
 
@@ -79,10 +77,18 @@ func Pending(p project.Project) []Step {
 // repository as it found it, and saying "four of six worked" would describe a
 // state that no longer exists.
 func Apply(p project.Project, stdout io.Writer) error {
+	return applySteps(Pending(p), p, stdout)
+}
+
+// applySteps runs Apply on every step in steps whose Delegated(p) answers
+// ok == false, in order. Split out from Apply so the loop's own contract —
+// a delegated step is never touched — can be tested against a stub step
+// without depending on setup.Plan().
+func applySteps(steps []Step, p project.Project, stdout io.Writer) error {
 	writer := &Writer{}
 
-	for _, step := range Pending(p) {
-		if _, delegated := step.(Delegated); delegated {
+	for _, step := range steps {
+		if _, ok := step.Delegated(p); ok {
 			continue
 		}
 
@@ -94,7 +100,14 @@ func Apply(p project.Project, stdout io.Writer) error {
 					undoErr,
 				)
 			}
-			return fmt.Errorf("%s failed; every earlier step was undone: %w", step.ID(), err)
+			// The hedge is deliberate: Writer.Undo restores files it snapshotted
+			// and does not remove directories created by os.MkdirAll, nor the
+			// .gitignore written outside the Writer by
+			// project.Project.EnsureDir. Tighten this sentence to "everything
+			// this run wrote was undone" in `writer-undo-completeness`.
+			return fmt.Errorf(
+				"%s failed. Every file this run wrote was put back as it was found; directories it created are not removed. No earlier step is reported as having succeeded: %w",
+				step.ID(), err)
 		}
 	}
 	return nil
