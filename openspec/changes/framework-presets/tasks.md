@@ -320,40 +320,40 @@ change exists to prevent.
 
 #### Phase 9: `declaredKeys` generalises `declaresBoundaries` (spec: `owned-config-contribution` req "`declaresBoundaries` generalises into `declaredKeys`")
 
-- [ ] 9.1 RED `internal/setup/files_test.go`: `TestDeclaredKeysFindsAQuotedKey`
+- [x] 9.1 RED `internal/setup/files_test.go`: `TestDeclaredKeysFindsAQuotedKey`
       — `.fallowrc.json` containing `"ignorePatterns": [...]`; `declaredKeys(path,
       ["ignorePatterns", "boundaries"])` returns `["ignorePatterns"]`; fails,
       `declaredKeys` does not exist
-- [ ] 9.2 GREEN `internal/setup/files.go`: `declaredKeys(path string,
+- [x] 9.2 GREEN `internal/setup/files.go`: `declaredKeys(path string,
       candidates []string) []string` — same body shape as `declaresBoundaries`
       (read once, `strings.Contains(raw, `"`+key+`"`)` per candidate),
       results in candidate order; a file that cannot be read declares
       nothing
-- [ ] 9.3 RED `internal/setup/files_test.go`:
+- [x] 9.3 RED `internal/setup/files_test.go`:
       `TestDeclaredKeysIgnoresACommentedKey` — a fixture whose file contains
       the bare-word comment sentence (matching `declaresBoundaries`'s
       existing precedent) and no quoted `"boundaries"` anywhere;
       `declaredKeys(path, ["boundaries"])` returns an empty slice; fails
       until the quoted-key test is proven against this exact comment shape,
       not just asserted by reading the design
-- [ ] 9.4 GREEN: confirm 9.2 already satisfies 9.3 (expected — same
+- [x] 9.4 GREEN: confirm 9.2 already satisfies 9.3 (expected — same
       mechanism as `declaresBoundaries`); if not, fix the quoting test
-- [ ] 9.5 RED `internal/setup/files_test.go`:
+- [x] 9.5 RED `internal/setup/files_test.go`:
       `TestDeclaresBoundariesIsNowDeclaredKeys` — `declaresBoundaries(path)`
       is retired in favour of `declaredKeys(path, []string{"boundaries"})`
       at every call site (`architectureStep.Satisfied`,
       `boundariesOwnerStep.Satisfied` before Phase 10 widens it); a grep-
       style test over the package asserts `declaresBoundaries` no longer
       exists as a symbol; fails until 9.6 removes it
-- [ ] 9.6 GREEN `internal/setup/files.go`, `steps.go`: delete
+- [x] 9.6 GREEN `internal/setup/files.go`, `steps.go`: delete
       `declaresBoundaries`; both call sites route through `declaredKeys`
-- [ ] 9.7 RED `internal/setup/files_test.go`:
+- [x] 9.7 RED `internal/setup/files_test.go`:
       `TestDeclaredKeysReadsTheJSONCSpelling` — a fixture at
       `.fallowrc.jsonc` (not `.json`) declaring a candidate key is found;
       fails, only `.fallowrc.json` is checked today — **this is Decision
       5's stated widening beyond the proposal's letter; keep it visible
       here rather than folded silently into 9.2's diff**
-- [ ] 9.8 GREEN: the collision check (Phase 10) and `architectureStep`'s
+- [x] 9.8 GREEN: the collision check (Phase 10) and `architectureStep`'s
       config-path resolution both consider `.fallowrc.json` **and**
       `.fallowrc.jsonc`, matching fallow's own `fallowConfigFiles` list;
       `fallow.toml` stays excluded (TOML keys are bare — recorded as an
@@ -361,7 +361,7 @@ change exists to prevent.
 
 #### Phase 10: the widened `boundariesOwnerStep` (spec: `owned-config-contribution` reqs "widens from one key to the set of keys", "writes the contributed key anyway", "intersection emptying makes the step disappear", "a project config that is code cannot be checked")
 
-- [ ] 10.1 RED `internal/setup/steps_test.go`:
+- [x] 10.1 RED `internal/setup/steps_test.go`:
       `TestCollisionNamesEveryContributedKeyTheProjectDeclares` — a stub
       project matched by presets contributing `{"ignorePatterns",
       "entryPoints"}` (stand-in keys for this test only — no real preset
@@ -370,59 +370,77 @@ change exists to prevent.
       `ignorePatterns` with both the preset value and the project's
       declared value, and does not mention `entryPoints`; fails, the step
       still only checks `boundaries`
-- [ ] 10.2 GREEN `internal/setup/steps.go`: `boundariesOwnerStep.Satisfied`
+- [x] 10.2 GREEN `internal/setup/steps.go`: `boundariesOwnerStep.Satisfied`
       becomes unsatisfied exactly when `declaredKeys(path, {"boundaries"} ∪
       preset.Keys(matches))` is non-empty; `Describe`/`Delegated` iterate
       the intersection, naming every colliding key and both values
-- [ ] 10.3 RED `internal/setup/steps_test.go`:
+- [x] 10.3 RED `internal/setup/steps_test.go`:
       `TestBoundariesAloneStillCollidesUnchanged` — a project declaring only
       `"boundaries"`, no preset matched beyond `generic`; step behaves
       exactly as `boundariesOwnerStep` does today; regression guard, must
       already pass after 10.2 — write it to prove that, not assume it
-- [ ] 10.4 RED `internal/setup/steps_test.go`:
+- [x] 10.4 RED `internal/setup/steps_test.go`:
       `TestNoCollisionLeavesTheStepSatisfied` — no declared key intersects
       the contributed set; `Satisfied() == true`, step absent from `Pending`
       (§15); fails if 10.2's intersection logic inverts the check
-- [ ] 10.5 RED `internal/setup/owned_test.go`:
+- [x] 10.5 RED `internal/setup/owned_test.go`:
       `TestOwnedFileWritesContributedKeyRegardlessOfCollision` — a project
       whose own config already declares a key a matched preset contributes;
       `ownedFilesStep.Apply` still writes that key into the owned file's
       region — the write is unconditional on the collision step's outcome;
       fails if `Apply` were ever made to skip on collision (guards against
-      a plausible wrong implementation, not a symptom of current code)
-- [ ] 10.6 GREEN: confirm `ownedFilesStep.Apply` (Slice 2) already never
+      a plausible wrong implementation, not a symptom of current code).
+      **Judgment call**: written in `internal/setup/steps_test.go`, not
+      `owned_test.go` — grouped with the rest of the widened step's tests
+      that also need `collidingKeys`/stub matches, and no real preset with a
+      non-empty manifest exists yet (same reasoning slice 2 already
+      recorded for the same split)
+- [x] 10.6 GREEN: confirm `ownedFilesStep.Apply` (Slice 2) already never
       reads the collision step's result — no code change expected; if the
-      test fails, remove whatever coupling was introduced
-- [ ] 10.7 RED `internal/setup/steps_test.go`:
+      test fails, remove whatever coupling was introduced. Confirmed —
+      `ownedFilesStep.Apply` calls only `preset.Resolve`/`presetRegion`/
+      `replaceRegion`, never `boundariesOwnerStep` or `collidingKeys`
+- [x] 10.7 RED `internal/setup/steps_test.go`:
       `TestCollisionStepDisappearsWhenIntersectionEmpties` — the collision
       case from 10.1, then the project's key deleted; a second `Pending(p)`
       call omits the step, with no file read besides the project's own
       config (§07) — fails only if a cache is accidentally introduced;
       write it to pin the "nothing recorded" property structurally
-- [ ] 10.8 RED `internal/setup/steps_test.go`:
+- [x] 10.8 RED `internal/setup/steps_test.go`:
       `TestCollisionStepReappearsWhenTheKeyIsReDeclared` — inverse of 10.7;
       re-adding the key brings the step back, unsatisfied, as if never
       resolved
-- [ ] 10.9 RED `internal/setup/steps_test.go`:
-      `TestCollisionCheckDescribesAndContinuesOnACodeConfig` — a project
-      whose only doctor-adjacent config is `doctor.config.ts` (matching
-      `legacyLintConfigStep`'s existing precedent, cited by name); the
-      collision check does not attempt to parse it, reports it could not
-      check, and `Pending`/`Apply` continue past it without stopping; fails
-      until the step's `Satisfied`/`Describe` handle the code-config case
-      explicitly rather than reading `declaredKeys` against a `.ts` file
-      (which already answers "declares nothing" safely, but the *reporting*
-      of "could not check" is new behaviour, not merely a safe default)
-- [ ] 10.10 GREEN: the `Describe`/`Delegated` branch for a code-config
-      project, following `legacyLintConfigStep`'s wording precedent
+- [x] 10.9 RED `internal/setup/steps_test.go`:
+      `TestCollisionCheckDescribesAndContinuesOnACodeConfig` — **judgment
+      call, deviates from this task's literal wording; see
+      apply-progress.md's Slice 3 section for the full reasoning.** The
+      collision check (`boundariesOwnerStep`) never reads `doctor.config.ts`
+      at all — `declaredKeys` only ever considers `.fallowrc.json`/
+      `.fallowrc.jsonc` (task 9.8), and `doctorConfig` belongs to
+      `doctorConfigStep`, an unrelated step this slice does not touch. Task
+      9.8 also states `fallow.toml` "stays excluded... not fixed", which
+      reads in tension with this task's and Decision 5's prose ("the step
+      describes and continues, following the precedent already set for
+      `doctor.config.ts`"). Reconciled as: `declaredKeys`'s own candidate
+      file list stays exactly as 9.8 states (unchanged, no TOML branch);
+      `boundariesOwnerStep` separately detects "the project's only fallow
+      config is a format I cannot check" via `p.HasFallowConfig()` (already
+      existing) and reports it, rather than silently claiming no collision.
+      Implemented and tested against `fallow.toml`, the actual "code, not
+      data" file this step can ever encounter
+- [x] 10.10 GREEN: the `Describe`/`Delegated` branch for a code-config
+      project, following `legacyLintConfigStep`'s wording precedent —
+      `describeUnreadableFallowConfig`/`delegateUnreadableFallowConfig` in
+      `internal/setup/steps.go`
 
 #### Phase 11: Slice 3 verification
 
-- [ ] 11.1 `go build ./...`, `go vet ./...`, `gofmt -l .`, `go test ./...`
+- [x] 11.1 `go build ./...`, `go vet ./...`, `gofmt -l .`, `go test ./...`
       clean
-- [ ] 11.2 `go run ./tools/mutationstaged` over `internal/setup/files.go`,
-      `internal/setup/steps.go` — dry then real, floor 0.80
-- [ ] 11.3 `bash scripts/verify-gate.sh`
+- [x] 11.2 `go run ./tools/mutationstaged` over `internal/setup/files.go`,
+      `internal/setup/steps.go` — dry then real, floor 0.80. Score: 1.00
+      (45/45 killed)
+- [x] 11.3 `bash scripts/verify-gate.sh`
 
 ---
 

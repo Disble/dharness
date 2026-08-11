@@ -398,3 +398,37 @@ func runSyncIn(t *testing.T, root string) string {
 	}
 	return out.String()
 }
+
+// A check that never ran must not be reported as a check that passed. A
+// project whose only fallow config is fallow.toml cannot be read by the
+// textual test dharness uses, so sync says so — beside the plan, not inside
+// it, because there is no state the project can reach that clears it.
+func TestSyncReportsTheConfigItCouldNotCheck(t *testing.T) {
+	stubRunner(t)
+
+	out := syncOutput(t, func(root string) {
+		writeFile(t, filepath.Join(root, "package.json"), `{"devDependencies":{"vitest":"^4.0.0"}}`)
+		writeFile(t, filepath.Join(root, "fallow.toml"), "ignorePatterns = [\"wailsjs/**\"]\n")
+	})
+
+	if !strings.Contains(out, "Not checked") {
+		t.Errorf("sync stayed silent about a config it could not read:\n%s", out)
+	}
+	if !strings.Contains(out, "unknown, not clear") {
+		t.Errorf("sync did not refuse to claim the check passed:\n%s", out)
+	}
+}
+
+// And it stays quiet for a config it can read, or the note becomes noise on
+// every run of every project.
+func TestSyncSaysNothingAboutAConfigItCanCheck(t *testing.T) {
+	stubRunner(t)
+
+	out := syncOutput(t, func(root string) {
+		writeFile(t, filepath.Join(root, "package.json"), `{"devDependencies":{"vitest":"^4.0.0"}}`)
+	})
+
+	if strings.Contains(out, "Not checked") {
+		t.Errorf("sync reported a blind spot it does not have:\n%s", out)
+	}
+}

@@ -240,13 +240,19 @@ func (lefthookExtendsStep) Apply(p project.Project, w *Writer) error {
 // --------------------------------------------------- boundaries owner
 //
 // fallow's `extends` replaces a key rather than merging it. Measured against
-// fallow 3.14.0: a parent declaring `boundaries` is honoured until the child
-// declares its own, and from then on the parent's block is discarded whole —
+// fallow 3.14.0: a parent declaring a key is honoured until the child
+// declares its own, and from then on the parent's value is discarded whole —
 // no error, no warning, and the `extends` line still reads as correct.
 //
-// That makes it the one way dharness's architecture can stop being enforced
-// while everything else still looks wired, which is why it gets a step rather
-// than a line in another step's Describe.
+// That makes it the one way any key dharness (directly, for `boundaries`, or
+// through a matched preset, for whatever it contributes) writes can stop
+// taking effect while everything else still looks wired, which is why it
+// gets a step rather than a line in another step's Describe. `boundaries` is
+// a fixed member of the set checked regardless of which preset matched —
+// ownedFilesStep writes the architecture block for every project, not only
+// preset-matched ones — and every key a matched preset contributes joins it
+// (framework-presets design decision 8's second guard, generalised by
+// decision 5).
 
 type boundariesOwnerStep struct{}
 
@@ -254,23 +260,161 @@ func (boundariesOwnerStep) ID() string {
 	return "resolve the two architectures this project declares"
 }
 
-func (boundariesOwnerStep) Satisfied(p project.Project) bool {
-	return !p.HasSource() || !declaresBoundaries(filepath.Join(p.Source, fallowConfig))
+// collidingKeys is this step's whole rule: matches' contributed keys plus
+// the fixed "boundaries" member, intersected with what the project's own
+// fallow config declares. Split out from the step's methods for the same
+// reason resolve is split out of Resolve (framework-presets design decision
+// 3): the real registry contributes nothing beyond "boundaries" until slice
+// 5 registers a framework preset, so the intersection rule is tested against
+// stub matches instead.
+func collidingKeys(source string, matches []preset.Match) []string {
+	candidates := append([]string{"boundaries"}, preset.Keys(matches)...)
+	return declaredKeys(fallowConfigPath(source), candidates)
 }
 
+// boundaryCollision computes the collision set for p, guarded the same way
+// Satisfied always was: with no JS project there is no config to read, and
+// p.Source empty would resolve fallowConfigPath relative to the working
+// directory instead of nowhere — the unsafe read
+// TestBoundariesOwnerStepIsSatisfiedWithoutASource already guards against.
+//
+// A config declaredKeys cannot read — fallow.toml, whose keys are bare — is
+// not this step's business. It is a blind spot, and UncheckableConfigNote
+// reports it beside the plan rather than inside it: see that function for
+// why a blind spot is not a step.
+func boundaryCollision(p project.Project) (colliding []string, matches []preset.Match) {
+	matches = preset.Resolve(p)
+	if !p.HasSource() {
+		return nil, matches
+	}
+	return collidingKeys(p.Source, matches), matches
+}
+
+func (boundariesOwnerStep) Satisfied(p project.Project) bool {
+	colliding, _ := boundaryCollision(p)
+	return len(colliding) == 0
+}
+
+// boundariesFallbackDescribe/Why are the single-key text this step always
+// produced before this slice widened it. They are the fallback the empty
+// intersection reaches, not a stale duplicate: the golden fixtures render
+// every step's report unconditionally (framework-presets design decision 7)
+// for a generic project, where the intersection is always empty, and that
+// report has always read this way. Changing it here would fail a
+// byte-identity requirement no real collision ever reaches in practice,
+// since Pending only calls Describe/Delegated for a step Satisfied has
+// already reported false for.
+const boundariesFallbackDescribe = "Move the zones and rules from %s into %s, or delete the block dharness\nowns and keep the project's. Either is a valid answer; having both is not,\nbecause only one of them runs and the file gives no sign of which."
+const boundariesFallbackWhy = "%s declares its own `boundaries`, and fallow's `extends` replaces that key\nrather than merging it — the project's block replaces the one dharness owns\nentirely, without an error. Only one architecture is being enforced, and the\nconfiguration does not say which."
+
 func (boundariesOwnerStep) Describe(p project.Project) string {
-	return fmt.Sprintf(
-		"Move the zones and rules from %s into %s, or delete the block dharness\nowns and keep the project's. Either is a valid answer; having both is not,\nbecause only one of them runs and the file gives no sign of which.",
-		fallowConfig, filepath.ToSlash(filepath.Join(project.Dir, ownedFallow)))
+	colliding, matches := boundaryCollision(p)
+	return describeBoundaries(p, colliding, matches)
+}
+
+// describeBoundaries and delegateBoundaries build the step's report from an
+// already-computed collision set and match list, split out for the same
+// reason collidingKeys is: the real registry contributes nothing beyond
+// "boundaries" until slice 5, so the multi-key rendering rule is tested
+// against stub matches instead of the real one.
+func describeBoundaries(p project.Project, colliding []string, matches []preset.Match) string {
+	if len(colliding) == 0 {
+		return fmt.Sprintf(boundariesFallbackDescribe, fallowConfig, filepath.ToSlash(filepath.Join(project.Dir, ownedFallow)))
+	}
+
+	var b strings.Builder
+	b.WriteString("Move each of these into the file dharness owns, or delete the project's own\nand keep dharness's. Either is a valid answer per key; having both is not,\nbecause fallow's `extends` replaces a key rather than merging it and the\nfile gives no sign of which value runs.\n")
+	for _, key := range colliding {
+		fmt.Fprintf(&b, "\n`%s` — dharness: %s\n%s declares: %s\n",
+			key, ownedValue(key, matches), fallowConfig, declaredValue(fallowConfigPath(p.Source), key))
+	}
+	return b.String()
 }
 
 // Delegated always returns ok == true where the step is unsatisfied: two
-// architectures cannot be merged by a rule. Which zones survive is a decision
-// about intent, and dharness does not hold it.
-func (boundariesOwnerStep) Delegated(project.Project) (string, bool) {
+// values for the same key cannot be merged by a rule. Which one survives is
+// a decision about intent, and dharness does not hold it. It names both
+// values per colliding key, not only the key, so the agent does not have to
+// open two files before deciding.
+func (boundariesOwnerStep) Delegated(p project.Project) (string, bool) {
+	colliding, matches := boundaryCollision(p)
+	return delegateBoundaries(p, colliding, matches), true
+}
+
+func delegateBoundaries(p project.Project, colliding []string, matches []preset.Match) string {
+	if len(colliding) == 0 {
+		return fmt.Sprintf(boundariesFallbackWhy, fallowConfig)
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s declares its own value for %s, and fallow's `extends` replaces each of\nthose keys rather than merging it — the project's value replaces dharness's\nentirely, without an error. Only one value per key is being enforced, and\nthe configuration does not say which:\n", fallowConfig, quotedKeys(colliding))
+	for _, key := range colliding {
+		fmt.Fprintf(&b, "\n`%s` — dharness: %s; %s: %s",
+			key, ownedValue(key, matches), fallowConfig, declaredValue(fallowConfigPath(p.Source), key))
+	}
+	return b.String()
+}
+
+// UncheckableConfigNote reports a fallow config dharness cannot read
+// textually, and returns "" when there is nothing to say.
+//
+// It is a note rather than a step on purpose. fallow.toml's keys are bare, so
+// the quoted-key test declaredKeys uses cannot answer for it, and parsing
+// TOML exactly is not something this product does. An unsatisfied step would
+// put an entry in the plan the project can never clear: the agent can read
+// the file by hand, but no state it reaches makes dharness stop asking, and
+// §15 says a step disappears once satisfied. A step with no completion state
+// is not pending work.
+//
+// The other direction was worse. Answering "nothing collides" for a file
+// dharness never read is the silent no-op this whole change exists to end, so
+// the report says the answer is unknown rather than clear.
+func UncheckableConfigNote(p project.Project) string {
+	if !p.HasSource() || fallowConfigPath(p.Source) != "" || !p.HasFallowConfig() {
+		return ""
+	}
 	return fmt.Sprintf(
-		"%s declares its own `boundaries`, and fallow's `extends` replaces that key\nrather than merging it — the project's block replaces the one dharness owns\nentirely, without an error. Only one architecture is being enforced, and the\nconfiguration does not say which.",
-		fallowConfig), true
+		"fallow.toml is this project's only fallow config, and dharness reads these\nfiles textually rather than parsing them — TOML's keys are bare, so the test\nit uses for .fallowrc.json and .fallowrc.jsonc cannot answer for it. Whether\nit declares a key %s also writes is unknown, not clear. Check it by hand.",
+		filepath.ToSlash(filepath.Join(project.Dir, ownedFallow)))
+}
+
+// ownedValue names what dharness itself would write for key: the
+// architecture block the agent writes for "boundaries" — no preset may ever
+// contribute that key (framework-presets design decision 2's guard) — or a
+// matched preset's composed value otherwise.
+func ownedValue(key string, matches []preset.Match) string {
+	if key == "boundaries" {
+		return "the architecture block the agent writes"
+	}
+	for _, fact := range composeFacts(matches) {
+		if fact.key == key {
+			if raw, err := json.Marshal(fact.value); err == nil {
+				return string(raw)
+			}
+		}
+	}
+	return "its preset default"
+}
+
+// declaredValue is a best-effort display of what the project itself wrote,
+// falling back to a generic phrase when declaredLine finds no single line to
+// show (a value declaredKeys still detected but that spans lines it does not
+// follow).
+func declaredValue(path, key string) string {
+	if line := declaredLine(path, key); line != "" {
+		return line
+	}
+	return "a value of its own"
+}
+
+// quotedKeys renders a list of keys the way this file already names fallow
+// keys elsewhere — backticked, not Go-quoted.
+func quotedKeys(keys []string) string {
+	backticked := make([]string, len(keys))
+	for i, key := range keys {
+		backticked[i] = "`" + key + "`"
+	}
+	return strings.Join(backticked, ", ")
 }
 
 // Apply is unreachable: Delegated always answers ok == true, so applySteps
@@ -555,7 +699,7 @@ func (architectureStep) ID() string { return "decide this project's architecture
 // literal text, not a JSONC parse. The product is stdlib-only, and "does the
 // file declare a boundaries block" does not need a parser to answer.
 func (architectureStep) Satisfied(p project.Project) bool {
-	return declaresBoundaries(filepath.Join(p.Root, project.Dir, ownedFallow))
+	return len(declaredKeys(filepath.Join(p.Root, project.Dir, ownedFallow), []string{"boundaries"})) > 0
 }
 
 func (architectureStep) Describe(p project.Project) string {
