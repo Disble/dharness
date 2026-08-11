@@ -325,17 +325,29 @@ func TestApplyReadsTheExistingFileRatherThanRewritingTheSkeleton(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for run := 1; run <= 3; run++ {
+	var after [3]string
+	for run := range after {
 		if err := (ownedFilesStep{}).Apply(p, &Writer{}); err != nil {
-			t.Fatalf("Apply() run %d = %v", run, err)
+			t.Fatalf("Apply() run %d = %v", run+1, err)
 		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		after[run] = string(raw)
 	}
 
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
+	// Two properties, and only the first one changed when generic started
+	// contributing a cross-cutting fact. The agent's block must survive every
+	// run — that is Decision 8's whole reason for existing — and the bytes
+	// must not drift after the first write, or every sync produces a diff.
+	if !strings.Contains(after[2], `"boundaries"`) || !strings.Contains(after[2], "written by the agent") {
+		t.Errorf("the agent's block did not survive three Apply runs:\n%s", after[2])
 	}
-	if string(raw) != authored {
-		t.Errorf("three Apply runs changed a file dharness does not author alone:\nwant %q\ngot  %q", authored, raw)
+	if after[1] != after[0] || after[2] != after[0] {
+		t.Errorf("the file drifted across runs:\nrun 1 %q\nrun 2 %q\nrun 3 %q", after[0], after[1], after[2])
+	}
+	if !strings.HasSuffix(after[2], "}\n") {
+		t.Errorf("the file no longer closes cleanly:\n%s", after[2])
 	}
 }
