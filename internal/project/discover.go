@@ -76,19 +76,27 @@ func Discover(dir string) (Project, error) {
 		// No lockfile anywhere. Source stays empty rather than defaulting to
 		// the root: reporting a JS project where there is none is what made a
 		// Go repository look like an npm one.
-		return At(root, ""), nil
+		return inRepository(At(root, "")), nil
 	case 1:
-		return At(root, candidates[0]), nil
+		return inRepository(At(root, candidates[0])), nil
 	default:
 		// A directory the caller is already standing in settles it without
 		// asking, because standing there is an answer.
 		for _, candidate := range candidates {
 			if contains(candidate, dir) {
-				return At(root, candidate), nil
+				return inRepository(At(root, candidate)), nil
 			}
 		}
 		return Project{}, &AmbiguousSourceError{Root: root, Candidates: candidates}
 	}
+}
+
+// inRepository marks a Project built from a resolved git root. It is not part
+// of At itself: At is also used by Describe and by Discover's own swallow
+// branch, neither of which found a repository.
+func inRepository(p Project) Project {
+	p.InRepository = true
+	return p
 }
 
 // repositoryRoot asks git where the repository begins.

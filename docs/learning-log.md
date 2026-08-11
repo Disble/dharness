@@ -78,3 +78,4 @@ this file only explains the _why_, it never replaces the _how_.
 - [2026-08-10]: A remote Stryker runner must share Core's transient install and be named with `--appendPlugins`; pnpm hides it from the default glob, while Yarn dlx cannot also supply the project's Vitest safely.
 - [2026-08-10]: Yarn dlx isolation does not justify blocking every Yarn project: `node_modules` layouts can use npx's joint package environment, while generated PnP loaders prove dependency resolution is incompatible.
 - [2026-08-10]: A zero-mutant ooze run needs a candidate preflight before `ooze.Release`, because its internal `t.Fatal` can make every later diagnostic unreachable.
+- [2026-08-10]: `Delegated` moved from a compile-time type assertion on a second interface to a per-project `Step` method, closing both the rollback bug that aborted the whole run on a pre-configured `.fallowrc.json` and the unenforced Figure 1 repository stop in one contract change.

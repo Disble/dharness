@@ -2,6 +2,7 @@ package setup
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -48,6 +49,10 @@ func (s installStep) Describe(p project.Project) string {
 	return fmt.Sprintf("This package provides dharness's project lint rules.\n\n    %s %s",
 		tool.InstallCommand(p.PackageManager), strings.Join(missing(p), " "))
 }
+
+// Delegated is always false: there is no repository state that hands
+// installing a package to the agent instead of dharness.
+func (installStep) Delegated(project.Project) (string, bool) { return "", false }
 
 func (installStep) Apply(p project.Project, w *Writer) error {
 	packages := missing(p)
@@ -100,6 +105,10 @@ func (ownedFilesStep) Describe(project.Project) string {
 		project.Dir)
 }
 
+// Delegated is always false: the files dharness owns are always dharness's to
+// write.
+func (ownedFilesStep) Delegated(project.Project) (string, bool) { return "", false }
+
 func (ownedFilesStep) Apply(p project.Project, w *Writer) error {
 	// EnsureDir also writes the ignore rules, so a transient file appearing
 	// later is never the first thing to create them.
@@ -122,32 +131,82 @@ func (ownedFilesStep) Apply(p project.Project, w *Writer) error {
 }
 
 // ------------------------------------------------------------- extends
+//
+// fallowExtendsStep and lefthookExtendsStep are split rather than one step
+// with two targets, because the two targets can have two different
+// recipients: the project owns .fallowrc.json but may have no lefthook.yml
+// at all, and a single Delegated answer cannot speak for both files at once.
 
-type extendsStep struct{}
+type fallowExtendsStep struct{}
 
-func (extendsStep) ID() string { return "point the project's config at the files dharness owns" }
+func (fallowExtendsStep) ID() string {
+	return fmt.Sprintf("point %s at the file dharness owns", fallowConfig)
+}
 
-func (extendsStep) Satisfied(p project.Project) bool {
-	fallowWired := !p.HasSource() || extendsWired(p.Source, fallowConfig, ownedFrom(p, p.Source, ownedFallow))
-	lefthookWired := hookManager(p) != managerLefthook ||
+func (fallowExtendsStep) Satisfied(p project.Project) bool {
+	return !p.HasSource() || extendsWired(p.Source, fallowConfig, ownedFrom(p, p.Source, ownedFallow))
+}
+
+func (fallowExtendsStep) Describe(p project.Project) string {
+	target := ownedFrom(p, p.Source, ownedFallow)
+	return fmt.Sprintf(
+		"fallow composes with `extends`, so the architecture arrives by reference.\nAdd this line to %s:\n\n    \"extends\": [%q]",
+		fallowConfig, target)
+}
+
+// Delegated returns ok == true only when the project's own config already
+// exists: adding a key to it is then a merge, not a write dharness gets to
+// make on its own. With no config present, dharness writes the whole file.
+func (fallowExtendsStep) Delegated(p project.Project) (string, bool) {
+	if !p.HasSource() {
+		return "", false
+	}
+	if _, err := os.Stat(filepath.Join(p.Source, fallowConfig)); errors.Is(err, os.ErrNotExist) {
+		return "", false
+	}
+	return fmt.Sprintf(
+		"%s already exists and belongs to the project; adding a key to it is a merge,\nnot a write.",
+		fallowConfig), true
+}
+
+func (fallowExtendsStep) Apply(p project.Project, w *Writer) error {
+	return wireFallowExtends(p, w)
+}
+
+type lefthookExtendsStep struct{}
+
+func (lefthookExtendsStep) ID() string {
+	return fmt.Sprintf("point %s at the file dharness owns", lefthookConfig)
+}
+
+func (lefthookExtendsStep) Satisfied(p project.Project) bool {
+	return hookManager(p) != managerLefthook ||
 		extendsWired(p.Root, lefthookConfig, ownedFrom(p, p.Root, ownedLefthook))
-	return fallowWired && lefthookWired
 }
 
-func (extendsStep) Describe(project.Project) string {
-	return "Both tools compose with `extends`, so the gate and the architecture arrive by\nreference. Nothing of the project's own configuration is rewritten."
+func (lefthookExtendsStep) Describe(p project.Project) string {
+	target := ownedFrom(p, p.Root, ownedLefthook)
+	return fmt.Sprintf(
+		"lefthook composes with `extends`, so the gate arrives by reference.\nAdd this line to %s:\n\n    extends:\n      - %s",
+		lefthookConfig, target)
 }
 
-func (extendsStep) Apply(p project.Project, w *Writer) error {
-	if p.HasSource() {
-		if err := wireFallowExtends(p, w); err != nil {
-			return err
-		}
+// Delegated follows the same rule as fallowExtendsStep, for the project's own
+// lefthook.yml instead of .fallowrc.json.
+func (lefthookExtendsStep) Delegated(p project.Project) (string, bool) {
+	if hookManager(p) != managerLefthook {
+		return "", false
 	}
-	if hookManager(p) == managerLefthook {
-		return wireLefthookExtends(p, w)
+	if _, err := os.Stat(filepath.Join(p.Root, lefthookConfig)); errors.Is(err, os.ErrNotExist) {
+		return "", false
 	}
-	return nil
+	return fmt.Sprintf(
+		"%s already exists and belongs to the project; adding a key to it is a merge,\nnot a write.",
+		lefthookConfig), true
+}
+
+func (lefthookExtendsStep) Apply(p project.Project, w *Writer) error {
+	return wireLefthookExtends(p, w)
 }
 
 // -------------------------------------------------------- doctor config
@@ -179,6 +238,10 @@ func (doctorConfigStep) Satisfied(p project.Project) bool {
 func (doctorConfigStep) Describe(project.Project) string {
 	return fmt.Sprintf("react-doctor does not compose, so this is a merge rather than a reference: the\npackage joins `plugins` and its %d rules join `rules`.", len(Rules))
 }
+
+// Delegated is always false: the merge doctorConfigStep performs has no case
+// where dharness cannot perform it itself.
+func (doctorConfigStep) Delegated(project.Project) (string, bool) { return "", false }
 
 func (doctorConfigStep) Apply(p project.Project, w *Writer) error {
 	path := filepath.Join(p.Source, doctorConfig)
@@ -230,6 +293,10 @@ func (mcpStep) Describe(project.Project) string {
 	return "fallow ships an MCP server with the analysis an agent would otherwise ask a\nwrapper to invent: boundaries, traces, impact, health."
 }
 
+// Delegated is always false: the MCP entry dharness writes has no case where
+// it belongs to the project instead.
+func (mcpStep) Delegated(project.Project) (string, bool) { return "", false }
+
 func (mcpStep) Apply(p project.Project, w *Writer) error {
 	path := filepath.Join(p.Root, mcpConfig)
 
@@ -275,17 +342,36 @@ func (hookInstallStep) Satisfied(p project.Project) bool {
 	case managerHusky:
 		return huskyWired(p)
 	default:
-		// Nothing answers, so there is nothing to satisfy or to do. Choosing a
-		// hook manager for a project is not a default dharness gets to pick.
-		return true
+		// Nothing answers, so there is nothing dharness can satisfy on its
+		// own. This is an open decision, not a default dharness gets to
+		// pick — see Delegated.
+		return false
 	}
 }
 
 func (hookInstallStep) Describe(p project.Project) string {
-	if hookManager(p) == managerHusky {
+	switch hookManager(p) {
+	case managerHusky:
 		return fmt.Sprintf("husky keeps a shell script, so the gate is one appended line in %s.", huskyHook)
+	case managerLefthook:
+		return "lefthook writes the git hook itself; without running it the configuration\nexists and nothing calls it."
+	default:
+		return fmt.Sprintf(
+			"Choose a hook manager and wire it to run the gate:\n\n    %s\n\nlefthook writes its own git hook once configured and installed; husky keeps\na shell script that needs one appended line. Either way, the step is\nsatisfied once %q runs on commit.",
+			gateCommand, gateCommand)
 	}
-	return "lefthook writes the git hook itself; without running it the configuration\nexists and nothing calls it."
+}
+
+// Delegated per manager: lefthook and husky both answer, so dharness installs
+// the gate itself. No manager answering is Decision 5's open decision — it is
+// not dharness's default to pick.
+func (hookInstallStep) Delegated(p project.Project) (string, bool) {
+	switch hookManager(p) {
+	case managerLefthook, managerHusky:
+		return "", false
+	default:
+		return "nothing answers: there is no lefthook config, no .husky/ and no lefthook\nbinary. Choosing a hook manager is a decision this project has not made, and\nnot a default dharness gets to pick.", true
+	}
 }
 
 func (hookInstallStep) Apply(p project.Project, w *Writer) error {
@@ -322,12 +408,46 @@ func (agentSkillStep) Describe(p project.Project) string {
 	return fmt.Sprintf("    %s %s install\n\nChoose the skill and decline the rest.", tool.RemoteExec(p.PackageManager), tool.LatestSpec(tool.ReactDoctor))
 }
 
-func (agentSkillStep) Why() string {
-	return "its only non-interactive form installs five things: skills for every agent it\ndetects, a package script, a git hook that competes with this gate, and a CI\nworkflow. There is no flag to ask for the skill alone."
+// Delegated always returns ok == true: no non-interactive install exists that
+// installs only the skill, so this step is always the agent's to run.
+func (agentSkillStep) Delegated(project.Project) (string, bool) {
+	return "its only non-interactive form installs five things: skills for every agent it\ndetects, a package script, a git hook that competes with this gate, and a CI\nworkflow. There is no flag to ask for the skill alone.", true
 }
 
+// Apply is unreachable: Delegated always answers ok == true, so applySteps
+// never calls it. Kept as a contract assertion — see TestAgentSkillApplyIsUnreachable.
 func (agentSkillStep) Apply(project.Project, *Writer) error {
 	return fmt.Errorf("%s is delegated and must not be applied", agentSkillStep{}.ID())
+}
+
+// -------------------------------------------------------- architecture
+
+type architectureStep struct{}
+
+func (architectureStep) ID() string { return "decide this project's architecture" }
+
+// Satisfied follows the extendsWired precedent: a substring check on the
+// literal text, not a JSONC parse. The product is stdlib-only, and "does the
+// file declare a boundaries block" does not need a parser to answer.
+func (architectureStep) Satisfied(p project.Project) bool {
+	raw, err := os.ReadFile(filepath.Join(p.Root, project.Dir, ownedFallow))
+	return err == nil && strings.Contains(string(raw), "boundaries")
+}
+
+func (architectureStep) Describe(p project.Project) string {
+	return ArchitecturePrompt(p)
+}
+
+// Delegated always returns ok == true: this is Intención, and no detection
+// tells dharness what a project's architecture is meant to be.
+func (architectureStep) Delegated(project.Project) (string, bool) {
+	return "architecture boundaries say what the code is meant to be, and no tool can\nread intent off a tree. Do the analysis and write the result — nothing else\nneeds to change.", true
+}
+
+// Apply is unreachable: Delegated always answers ok == true, so applySteps
+// never calls it. Kept as a contract assertion, matching agentSkillStep.
+func (architectureStep) Apply(project.Project, *Writer) error {
+	return fmt.Errorf("%s is delegated and must not be applied", architectureStep{}.ID())
 }
 
 func dedupe(values []string) []string {

@@ -35,8 +35,6 @@ func RunArgs(args []string, stdout io.Writer) error {
 	case "version", "--version", "-v":
 		fmt.Fprintf(stdout, "dharness %s\n", Version)
 		return nil
-	case "init":
-		return cli.RunInit(args[1:], stdout)
 	case "sync":
 		return cli.RunSync(args[1:], stdout)
 	case "check":
@@ -55,7 +53,7 @@ type UnknownCommandError struct {
 }
 
 func (e *UnknownCommandError) Error() string {
-	return fmt.Sprintf("unknown command %q; expected init, sync, check, mutate or version", e.Command)
+	return fmt.Sprintf("unknown command %q; expected sync, check, mutate or version", e.Command)
 }
 
 // ExitCode maps an error to a process status.

@@ -35,6 +35,11 @@ type Project struct {
 	PackageManager string
 	TestRunner     string
 	YarnPnP        bool
+
+	// InRepository reports whether Root came from git or is merely the
+	// directory dharness was run in. Detection records the answer; deciding
+	// what a missing repository means belongs to the command that needs one.
+	InRepository bool
 }
 
 // HasSource reports whether this repository holds a JS project to analyse.

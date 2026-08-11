@@ -8,18 +8,16 @@ import (
 	"github.com/Disble/dharness/internal/setup"
 )
 
-// RunSync reports what this project still needs, and writes nothing.
+// RunSync sets a project up: applies every step dharness can perform, then
+// hands the rest to the agent with the reason it could not be run here.
 //
-// It reads the same plan `init` applies, so the two can never disagree: a step
-// reported here is a step that would be performed there, and a step that stops
-// being reported has stopped being outstanding for both.
-//
-// Every check derives its answer from the repository rather than from a record
-// of what was done. That is what makes it safe to run at any time and useful
-// long after adoption: a hook rewritten, a package removed, a runner swapped —
-// each one makes its step reappear on its own.
+// It derives its plan from the repository on every invocation rather than
+// from a record of what a previous run did. That is what makes it safe to run
+// at any time and useful long after adoption: a hook rewritten, a package
+// removed, a runner swapped, a `boundaries` block written by hand — each one
+// makes its step reappear or disappear on its own.
 func RunSync(args []string, stdout io.Writer) error {
-	flags := newFlagSet("sync", stdout, "Report what this project still needs. Writes nothing; safe at any time.")
+	flags := newFlagSet("sync", stdout, "Set this project up: apply what dharness can, then hand the rest to the\nagent. Derived from the repository as it is right now, so re-running it is\nsafe and reports drift.")
 	if err := parseFlags(flags, args); err != nil {
 		return err
 	}
@@ -34,6 +32,13 @@ func RunSync(args []string, stdout io.Writer) error {
 	p, err := project.Discover(dir)
 	if err != nil {
 		return err
+	}
+	if !p.InRepository {
+		return fmt.Errorf(
+			"%s is not inside a git repository. dharness owns a commit gate, so there is\n"+
+				"nothing for adoption to attach to: no .git/hooks to install the hook into and\n"+
+				"nothing to commit .dharness/ to. Run it from inside a repository.",
+			dir)
 	}
 
 	fmt.Fprintf(stdout, "# dharness in %s\n\n", p.Root)
@@ -56,14 +61,38 @@ func RunSync(args []string, stdout io.Writer) error {
 		return nil
 	}
 
-	for index, step := range pending {
-		fmt.Fprintf(stdout, "## %d. %s\n\n", index+1, step.ID())
-		if delegated, ok := step.(setup.Delegated); ok {
-			fmt.Fprintf(stdout, "dharness cannot run this: %s\n\n", delegated.Why())
+	if hasApplicable(pending, p) {
+		fmt.Fprintln(stdout, "Applying:")
+		if err := setup.Apply(p, stdout); err != nil {
+			return err
 		}
-		fmt.Fprintf(stdout, "%s\n\n", step.Describe(p))
+		fmt.Fprintln(stdout)
 	}
 
-	fmt.Fprintln(stdout, "Run `dharness init` to apply everything above that has a command behind it.")
+	// What is left after applying is what no command performs here. It is
+	// listed with the reason, because "ask a person" without a reason is a
+	// shrug. Nothing is printed for a step that is now satisfied (§15): the
+	// loop reads setup.Pending(p) again, which excludes it on its own.
+	for _, step := range setup.Pending(p) {
+		why, ok := step.Delegated(p)
+		if !ok {
+			continue
+		}
+		fmt.Fprintf(stdout, "## Left to you: %s\n\n", step.ID())
+		fmt.Fprintf(stdout, "dharness cannot run this: %s\n\n%s\n\n", why, step.Describe(p))
+	}
+
 	return nil
+}
+
+// hasApplicable reports whether at least one pending step is dharness's to
+// run. Without this check the "Applying:" header would print ahead of a run
+// where every pending step is delegated, claiming work that never happens.
+func hasApplicable(pending []setup.Step, p project.Project) bool {
+	for _, step := range pending {
+		if _, ok := step.Delegated(p); !ok {
+			return true
+		}
+	}
+	return false
 }

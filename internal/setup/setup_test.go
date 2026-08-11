@@ -70,6 +70,46 @@ func TestWriterUndoKeepsTheOriginalAcrossRepeatedWrites(t *testing.T) {
 	}
 }
 
+// A stub is enough here: the contract under test is that Apply consults
+// Delegated before touching Apply at all, not any particular step's logic.
+type stubDelegatedStep struct {
+	applied *bool
+}
+
+func (stubDelegatedStep) ID() string                      { return "stub delegated step" }
+func (stubDelegatedStep) Describe(project.Project) string { return "" }
+func (stubDelegatedStep) Satisfied(project.Project) bool  { return false }
+
+func (stubDelegatedStep) Delegated(project.Project) (string, bool) {
+	return "handed to the agent", true
+}
+
+func (s stubDelegatedStep) Apply(project.Project, *Writer) error {
+	*s.applied = true
+	return nil
+}
+
+func TestApplySkipsEveryDelegatedStep(t *testing.T) {
+	applied := false
+	step := stubDelegatedStep{applied: &applied}
+
+	if err := applySteps([]Step{step}, project.Project{}, io.Discard); err != nil {
+		t.Fatalf("applySteps() = %v", err)
+	}
+	if applied {
+		t.Error("Apply was called on a step Delegated() reported as ok == true")
+	}
+}
+
+// agentSkillStep.Delegated always returns ok == true, so applySteps never
+// calls its Apply. The error Apply returns is a contract assertion for the
+// case that should be unreachable, not a code path any run takes.
+func TestAgentSkillApplyIsUnreachable(t *testing.T) {
+	if err := (agentSkillStep{}).Apply(project.Project{}, &Writer{}); err == nil {
+		t.Error("agentSkillStep.Apply() = nil, want the delegated-and-must-not-be-applied assertion")
+	}
+}
+
 func TestInstallStepPlansOnlyMissingIntegrationPackages(t *testing.T) {
 	p, _, _ := integrationProject(t)
 	want := []string{RulesPackage}
@@ -91,14 +131,57 @@ func TestInstallStepPlansOnlyMissingIntegrationPackages(t *testing.T) {
 }
 
 func TestArchitecturePromptPinsFallowToRemoteLatest(t *testing.T) {
-	prompt := ArchitecturePrompt(project.Project{PackageManager: "pnpm"})
+	prompt := (architectureStep{}).Describe(project.Project{PackageManager: "pnpm"})
 	for _, invocation := range []string{
 		"pnpm dlx fallow@latest list --boundaries",
 		"pnpm dlx fallow@latest dead-code --boundary-violations",
 	} {
 		if !strings.Contains(prompt, invocation) {
-			t.Errorf("architecture prompt omits %q:\n%s", invocation, prompt)
+			t.Errorf("architecture step description omits %q:\n%s", invocation, prompt)
 		}
+	}
+}
+
+// Undeclared boundaries are Intención: an open decision with no options,
+// present in the plan until the agent writes the block.
+func TestArchitectureStepDisappearsOnceBoundariesAreDeclared(t *testing.T) {
+	root := t.TempDir()
+	p := project.Project{Root: root}
+
+	writeFallow(t, root, "{\n}\n")
+	if (architectureStep{}).Satisfied(p) {
+		t.Error("Satisfied() = true, want false: fallow.jsonc declares no boundaries yet")
+	}
+	if pending := Pending(p); !containsStep(pending, architectureStep{}) {
+		t.Error("architectureStep is missing from Pending() while boundaries is undeclared")
+	}
+
+	writeFallow(t, root, "{\n  \"boundaries\": []\n}\n")
+	if !(architectureStep{}).Satisfied(p) {
+		t.Error("Satisfied() = false, want true: fallow.jsonc now declares boundaries")
+	}
+	if pending := Pending(p); containsStep(pending, architectureStep{}) {
+		t.Error("architectureStep is still in Pending() once boundaries is declared")
+	}
+}
+
+func containsStep(steps []Step, target Step) bool {
+	for _, step := range steps {
+		if step.ID() == target.ID() {
+			return true
+		}
+	}
+	return false
+}
+
+func writeFallow(t *testing.T, root, contents string) {
+	t.Helper()
+	dir := filepath.Join(root, project.Dir)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ownedFallow), []byte(contents), 0o600); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -215,6 +298,32 @@ func TestApplyCompensatesPartialInstallFailure(t *testing.T) {
 	assertPackageState(t, p.Source, packageJSON, lockfile)
 }
 
+// Writer.Undo restores files it snapshotted, but not directories created by
+// os.MkdirAll nor the .gitignore project.Project.EnsureDir writes outside the
+// Writer. The rollback report must not claim more than Undo actually did.
+func TestApplyRollbackNamesWhatWasUndoneNotEverything(t *testing.T) {
+	p, _, _ := integrationProject(t)
+	if err := os.WriteFile(filepath.Join(p.Root, project.Dir), []byte("blocks the next step"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(runner.SetForTest(func(cmd runner.Command, _, _ io.Writer) error {
+		return nil
+	}))
+
+	err := Apply(p, io.Discard)
+	if err == nil {
+		t.Fatal("Apply() = nil, want the write-the-files-dharness-owns failure")
+	}
+	for _, overclaim := range []string{"everything this run wrote was undone", "the repository was fully restored"} {
+		if strings.Contains(err.Error(), overclaim) {
+			t.Errorf("Apply() error claims more than Undo covers: %q contains %q", err, overclaim)
+		}
+	}
+	if !strings.Contains(err.Error(), "put back") {
+		t.Errorf("Apply() error does not say what was undone: %q", err)
+	}
+}
+
 func TestApplyReportsTheOriginalAndCompensationFailures(t *testing.T) {
 	p, _, _ := integrationProject(t)
 	installErr := errors.New("install failed")
@@ -271,6 +380,116 @@ func assertPackageState(t *testing.T, root string, packageJSON, lockfile []byte)
 	}
 }
 
+// A project that already wrote its own .fallowrc.json owns that file: adding
+// a key to it is a merge, not a write dharness gets to make on its own.
+func TestFallowExtendsIsDelegatedWhenTheProjectOwnsTheConfig(t *testing.T) {
+	root := t.TempDir()
+	original := []byte(`{"custom":true}`)
+	if err := os.WriteFile(filepath.Join(root, fallowConfig), original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p := project.Project{Root: root, Source: root}
+
+	why, ok := (fallowExtendsStep{}).Delegated(p)
+	if !ok {
+		t.Fatal("Delegated() ok = false, want true when the project's own config already exists")
+	}
+	if !strings.Contains(why, fallowConfig) {
+		t.Errorf("Delegated() why = %q, want it to name %s", why, fallowConfig)
+	}
+
+	if err := applySteps([]Step{fallowExtendsStep{}}, p, io.Discard); err != nil {
+		t.Fatalf("applySteps() = %v", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(root, fallowConfig))
+	if err != nil || !bytes.Equal(raw, original) {
+		t.Errorf("the project's own config was touched: %q, %v", raw, err)
+	}
+}
+
+// Same rule for lefthook.yml, which belongs to the repository rather than the
+// JS project.
+func TestLefthookExtendsIsDelegatedWhenTheProjectOwnsTheConfig(t *testing.T) {
+	root := t.TempDir()
+	original := []byte("custom: true\n")
+	if err := os.WriteFile(filepath.Join(root, lefthookConfig), original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p := project.Project{Root: root, Source: root}
+
+	why, ok := (lefthookExtendsStep{}).Delegated(p)
+	if !ok {
+		t.Fatal("Delegated() ok = false, want true when the project's own lefthook config already exists")
+	}
+	if !strings.Contains(why, lefthookConfig) {
+		t.Errorf("Delegated() why = %q, want it to name %s", why, lefthookConfig)
+	}
+
+	if err := applySteps([]Step{lefthookExtendsStep{}}, p, io.Discard); err != nil {
+		t.Fatalf("applySteps() = %v", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(root, lefthookConfig))
+	if err != nil || !bytes.Equal(raw, original) {
+		t.Errorf("the project's own config was touched: %q, %v", raw, err)
+	}
+}
+
+// With no JS project to adopt, there is no .fallowrc.json to point anywhere,
+// so the step is satisfied without asking — the mutation gate for this line
+// distinguishes "no source" from "source exists but not wired", which only a
+// project with an empty Source exercises.
+func TestFallowExtendsSatisfiedWhenTheProjectHasNoSource(t *testing.T) {
+	p := project.Project{Root: t.TempDir()}
+	if !(fallowExtendsStep{}).Satisfied(p) {
+		t.Error("Satisfied() = false, want true when there is no JS project to adopt")
+	}
+}
+
+// Same rule for lefthook: with no hook manager answering lefthook at all,
+// there is nothing to wire, so the step is satisfied without asking.
+func TestLefthookExtendsSatisfiedWhenLefthookIsNotTheHookManager(t *testing.T) {
+	p := project.Project{Root: t.TempDir()}
+	if !(lefthookExtendsStep{}).Satisfied(p) {
+		t.Error("Satisfied() = false, want true when lefthook does not answer for this project")
+	}
+}
+
+// installStep has nothing to install without a JS project, regardless of
+// what missing() would otherwise report.
+func TestInstallStepSatisfiedWhenTheProjectHasNoSource(t *testing.T) {
+	p := project.Project{Root: t.TempDir()}
+	if !(installStep{}).Satisfied(p) {
+		t.Error("Satisfied() = false, want true when there is no JS project to install into")
+	}
+}
+
+// With no project config at all, dharness writes the whole thing itself —
+// there is nothing to merge into.
+func TestExtendsStepsWriteTheirFileWhenTheProjectHasNone(t *testing.T) {
+	root := t.TempDir()
+	p := project.Project{Root: root, Source: root}
+
+	if why, ok := (fallowExtendsStep{}).Delegated(p); ok {
+		t.Fatalf("Delegated() = %q, true; want ok=false with no config present", why)
+	}
+	if why, ok := (lefthookExtendsStep{}).Delegated(p); ok {
+		t.Fatalf("Delegated() = %q, true; want ok=false with no config present", why)
+	}
+
+	if err := applySteps([]Step{fallowExtendsStep{}, lefthookExtendsStep{}}, p, io.Discard); err != nil {
+		t.Fatalf("applySteps() = %v", err)
+	}
+
+	fallowRaw, err := os.ReadFile(filepath.Join(root, fallowConfig))
+	if err != nil || !strings.Contains(string(fallowRaw), "extends") {
+		t.Errorf("%s was not written: %q, %v", fallowConfig, fallowRaw, err)
+	}
+	lefthookRaw, err := os.ReadFile(filepath.Join(root, lefthookConfig))
+	if err != nil || !strings.Contains(string(lefthookRaw), "extends") {
+		t.Errorf("%s was not written: %q, %v", lefthookConfig, lefthookRaw, err)
+	}
+}
+
 // What enables a project is a hook manager that answers, not membership in a
 // list: writing a lefthook file into a husky project creates configuration
 // nothing reads.
@@ -306,11 +525,23 @@ func TestHookManagerAnswersRatherThanBeingAssumed(t *testing.T) {
 	}
 }
 
-// With no manager answering there is nothing to satisfy: choosing one for a
-// project is a decision, and it must not block everything else in the plan.
-func TestGateStepIsSatisfiedWhenNoManagerAnswers(t *testing.T) {
-	if !(hookInstallStep{}).Satisfied(project.Project{Root: t.TempDir()}) {
-		t.Error("the plan stalled on a project that has no hook manager at all")
+// With no manager answering, choosing one for this project is a decision
+// dharness does not get to make, so the step is not satisfied — a delegated
+// step blocks nothing else in the plan, so satisfying it artificially is no
+// longer needed to keep the run moving.
+func TestGateStepIsAnOpenDecisionWhenNoManagerAnswers(t *testing.T) {
+	p := project.Project{Root: t.TempDir()}
+
+	if (hookInstallStep{}).Satisfied(p) {
+		t.Error("Satisfied() = true, want false: no hook manager answers here")
+	}
+
+	why, ok := (hookInstallStep{}).Delegated(p)
+	if !ok {
+		t.Fatal("Delegated() ok = false, want true: no manager means an open decision")
+	}
+	if why == "" {
+		t.Error("Delegated() why is empty; an open decision handed to the agent needs a reason")
 	}
 }
 
