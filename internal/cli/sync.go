@@ -57,6 +57,11 @@ func RunSync(args []string, stdout io.Writer) error {
 	// see past it.
 	uncheckable := setup.UncheckableConfigNote(p)
 
+	// Same reasoning, for a matched preset that could not read its own
+	// configuration: it still contributed a default (see Match.Uncertain), so
+	// this is what it guessed from, not a step nothing can clear.
+	uncertain := setup.UncertainPresetNote(p)
+
 	if pending := setup.Pending(p); hasApplicable(pending, p) {
 		fmt.Fprintln(stdout, "Applying:")
 		if err := setup.Apply(p, stdout); err != nil {
@@ -92,6 +97,15 @@ func RunSync(args []string, stdout io.Writer) error {
 	// that never ran as a check that passed.
 	if uncheckable != "" {
 		fmt.Fprintf(stdout, "## Not checked\n\n%s\n\n", uncheckable)
+	}
+
+	// A separate heading, not a second "Not checked", because it answers a
+	// different question. The block above says a check did not run; this one
+	// says a check did run and used a documented default because the project's
+	// own answer could not be read. Two sections sharing one title read as one
+	// section repeated.
+	if uncertain != "" {
+		fmt.Fprintf(stdout, "## Assumed\n\n%s\n\n", uncertain)
 	}
 
 	if left == 0 {

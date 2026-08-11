@@ -378,6 +378,32 @@ func UncheckableConfigNote(p project.Project) string {
 		filepath.ToSlash(filepath.Join(project.Dir, ownedFallow)))
 }
 
+// UncertainPresetNote reports what a matched preset could not read about
+// this project, or "" when every match read everything it needed. Beside
+// the plan, not inside it — the same reason UncheckableConfigNote is: a
+// blind spot with no resolution the project can reach is a note, never an
+// unsatisfiable step (§15). A preset that could not read its own
+// configuration still matched and still contributed its documented default
+// (Match.Uncertain is set beside a real Manifest, not instead of one), so
+// this note says what it guessed from, not that something is broken.
+func UncertainPresetNote(p project.Project) string {
+	return uncertainNotes(preset.Resolve(p))
+}
+
+// uncertainNotes is UncertainPresetNote over an explicit match list, split
+// out for the same reason collidingKeys is: no real preset carried a
+// non-empty Uncertain until wails registered, so the rendering rule is
+// tested against stub matches too.
+func uncertainNotes(matches []preset.Match) string {
+	var notes []string
+	for _, match := range matches {
+		if match.Uncertain != "" {
+			notes = append(notes, fmt.Sprintf("%s: %s", match.ID, match.Uncertain))
+		}
+	}
+	return strings.Join(notes, "\n\n")
+}
+
 // ownedValue names what dharness itself would write for key: the
 // architecture block the agent writes for "boundaries" — no preset may ever
 // contribute that key (framework-presets design decision 2's guard) — or a

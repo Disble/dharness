@@ -2,6 +2,7 @@ package setup
 
 import (
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/Disble/dharness/internal/preset"
 	"github.com/Disble/dharness/internal/project"
+	"github.com/Disble/dharness/internal/runner"
 )
 
 // stubMatch builds a preset.Match with one fact, for tests that need to
@@ -163,6 +165,76 @@ func TestOwnedFileWritesContributedKeyRegardlessOfCollision(t *testing.T) {
 	}
 }
 
+// TestWailsMatchedOwnedFileIsNoLongerEmpty is the success criterion stated
+// directly (task 19.3): a Wails-matched project's .dharness/fallow.jsonc
+// carries the ignore pattern after Apply(), through the real registry —
+// wails{} — for the first time in this change, not a stub.
+func TestWailsMatchedOwnedFileIsNoLongerEmpty(t *testing.T) {
+	t.Cleanup(runner.SetForTest(func(runner.Command, io.Writer, io.Writer) error { return nil }))
+	t.Cleanup(project.SetGitOutputForTest(func(string, ...string) ([]byte, error) { return nil, nil }))
+
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "wails.json"), []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte("{\n  \"name\": \"wails-app\"\n}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	p := project.At(root, root)
+	p.InRepository = true
+
+	if err := Apply(p, io.Discard); err != nil {
+		t.Fatalf("Apply() = %v", err)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(root, project.Dir, ownedFallow))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"ignorePatterns": ["frontend/wailsjs/**"]`) {
+		t.Errorf("%s does not carry the Wails ignore pattern after Apply():\n%s", ownedFallow, raw)
+	}
+}
+
+// TestIgnorePatternsCollidesInTheMotivatingShape is task 19.4, the end-to-end
+// proof of the proposal's "applied to the motivating repository" claim: a
+// Wails-matched project whose own .fallowrc.json already declares
+// ignorePatterns collides, names both values, and still gets the preset's
+// value written into the file dharness owns.
+func TestIgnorePatternsCollidesInTheMotivatingShape(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "wails.json"), []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	writeProjectFallow(t, root, `{"ignorePatterns": ["dist/**"]}`)
+
+	p := project.Project{Root: root, Source: root}
+
+	if (boundariesOwnerStep{}).Satisfied(p) {
+		t.Fatal("Satisfied() = true while the project's own ignorePatterns collides with wails'")
+	}
+
+	why, ok := (boundariesOwnerStep{}).Delegated(p)
+	if !ok {
+		t.Fatal("Delegated() = false; dharness cannot merge two values for one key")
+	}
+	if !strings.Contains(why, "ignorePatterns") {
+		t.Errorf("Delegated() why does not name ignorePatterns:\n%s", why)
+	}
+	if !strings.Contains(why, `["frontend/wailsjs/**"]`) {
+		t.Errorf("Delegated() why does not show wails' contributed value:\n%s", why)
+	}
+	if !strings.Contains(why, `"dist/**"`) {
+		t.Errorf("Delegated() why does not show the project's own declared value:\n%s", why)
+	}
+
+	region := presetRegion(preset.Resolve(p))
+	if !strings.Contains(region, `"ignorePatterns": ["frontend/wailsjs/**"]`) {
+		t.Errorf("presetRegion() withheld wails' contribution because the project's own config collides with it:\n%s", region)
+	}
+}
+
 // TestCollisionStepDisappearsWhenIntersectionEmpties pins §07/§15: resolving
 // a collision by removing the project's own key makes the step disappear on
 // the next Pending() call, with nothing recorded to remember it existed.
@@ -238,6 +310,24 @@ func TestBoundariesOwnerDescribeAndDelegatedDoNotReadCwdWithoutASource(t *testin
 // The alternative was worse in the other direction: answering "nothing
 // collides" for a file dharness never read is the silent no-op this whole
 // change exists to end. So the check stays honest and moves out of the plan.
+// uncertainNotes is tested against stub matches for the same reason
+// collidingKeys is: the real registry carried nothing with a non-empty
+// Uncertain until wails registered.
+func TestUncertainNotesNamesTheMatchAndWhatItCouldNotRead(t *testing.T) {
+	matches := []preset.Match{{ID: "wails", Uncertain: "wails.json exists but does not parse"}}
+	got := uncertainNotes(matches)
+	if !strings.Contains(got, "wails") || !strings.Contains(got, "does not parse") {
+		t.Errorf("uncertainNotes() = %q, want it to name the match and what it could not read", got)
+	}
+}
+
+func TestUncertainNotesEmptyWhenNothingIsUncertain(t *testing.T) {
+	matches := []preset.Match{{ID: "generic"}}
+	if got := uncertainNotes(matches); got != "" {
+		t.Errorf("uncertainNotes() = %q, want empty — no match left anything unread", got)
+	}
+}
+
 func TestAnUncheckableConfigIsANoteRatherThanAnUnclearableStep(t *testing.T) {
 	root := t.TempDir()
 	p := project.Project{Root: root, Source: root}
