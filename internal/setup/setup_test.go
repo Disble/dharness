@@ -114,8 +114,8 @@ func TestInstallStepPlansOnlyMissingIntegrationPackages(t *testing.T) {
 	p, _, _ := integrationProject(t)
 	want := []string{RulesPackage}
 
-	if got := missing(p); !slices.Equal(got, want) {
-		t.Fatalf("missing() = %v, want %v", got, want)
+	if got := integrationPackages(); !slices.Equal(got, want) {
+		t.Fatalf("integrationPackages() = %v, want %v", got, want)
 	}
 	description := (installStep{}).Describe(p)
 	for _, wrapped := range []string{"react-doctor", "fallow", "@stryker-mutator/core", "@stryker-mutator/vitest-runner", "@stryker-mutator/jest-runner"} {
@@ -454,12 +454,29 @@ func TestLefthookExtendsSatisfiedWhenLefthookIsNotTheHookManager(t *testing.T) {
 	}
 }
 
-// installStep has nothing to install without a JS project, regardless of
-// what missing() would otherwise report.
+// installStep has nothing to install without a JS project: there is no
+// package manager to ask.
 func TestInstallStepSatisfiedWhenTheProjectHasNoSource(t *testing.T) {
 	p := project.Project{Root: t.TempDir()}
 	if !(installStep{}).Satisfied(p) {
 		t.Error("Satisfied() = false, want true when there is no JS project to install into")
+	}
+}
+
+// A directory under node_modules is an install artifact, not a declaration.
+// It survives a rollback that restored package.json, it is absent under Yarn
+// PnP and pnpm's store, and on its own it never meant the package was
+// declared. dharness does not read it: the install command is the one that
+// decides, so with a JS project present the step always runs.
+func TestInstallStepRunsEvenWithThePackageSittingInNodeModules(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "node_modules", RulesPackage), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p := project.Project{Root: root, Source: root, PackageManager: "bun"}
+
+	if (installStep{}).Satisfied(p) {
+		t.Error("Satisfied() = true from a node_modules directory alone; the install command is what decides")
 	}
 }
 
@@ -570,5 +587,115 @@ func TestOwnedFilesCarryTheThresholdsTheRulesCannot(t *testing.T) {
 	}
 	if strings.Contains(string(architecture), "boundaries") {
 		t.Errorf("dharness declared an architecture it cannot know:\n%s", architecture)
+	}
+}
+
+// gateInstalled and huskyWired both answer "will git actually run the gate",
+// which is a different question from whether some file mentions it. Each one
+// reads a file that may not exist, and a missing file is a "no", never a
+// "yes" reached by skipping the read.
+func TestHookDetectionReadsTheFileAndSaysNoWhenItIsAbsent(t *testing.T) {
+	for _, hook := range []struct {
+		name    string
+		path    string
+		wired   string
+		unwired string
+		answer  func(project.Project) bool
+	}{
+		{
+			name:    "lefthook writes the git hook",
+			path:    filepath.Join(".git", "hooks", "pre-commit"),
+			wired:   "#!/bin/sh\nlefthook run pre-commit\n",
+			unwired: "#!/bin/sh\necho something else\n",
+			answer:  gateInstalled,
+		},
+		{
+			name:    "husky keeps a shell script",
+			path:    filepath.FromSlash(huskyHook),
+			wired:   gateCommand + "\n",
+			unwired: "npm test\n",
+			answer:  huskyWired,
+		},
+	} {
+		t.Run(hook.name, func(t *testing.T) {
+			root := t.TempDir()
+			p := project.Project{Root: root, Source: root}
+
+			if hook.answer(p) {
+				t.Error("answered true with no hook file at all")
+			}
+
+			full := filepath.Join(root, hook.path)
+			if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(full, []byte(hook.unwired), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if hook.answer(p) {
+				t.Error("answered true for a hook that does not invoke the gate")
+			}
+
+			if err := os.WriteFile(full, []byte(hook.wired), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if !hook.answer(p) {
+				t.Error("answered false for a hook that does invoke the gate")
+			}
+		})
+	}
+}
+
+// husky's hook belongs to the project, so the gate is appended rather than
+// written over. The separator is the whole subtlety: a script that already
+// ends in a newline must not gain a blank line, and one that does not must
+// not have the gate welded onto its last command.
+func TestAppendHuskyGateKeepsTheScriptAndSeparatesTheGate(t *testing.T) {
+	for _, script := range []struct {
+		name     string
+		existing string
+		want     string
+	}{
+		{name: "no script yet", existing: "", want: gateCommand + "\n"},
+		{name: "ends in a newline", existing: "npm test\n", want: "npm test\n" + gateCommand + "\n"},
+		{name: "ends without one", existing: "npm test", want: "npm test\n" + gateCommand + "\n"},
+	} {
+		t.Run(script.name, func(t *testing.T) {
+			root := t.TempDir()
+			path := filepath.Join(root, filepath.FromSlash(huskyHook))
+			if script.existing != "" {
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte(script.existing), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			if err := appendHuskyGate(project.Project{Root: root}, &Writer{}); err != nil {
+				t.Fatalf("appendHuskyGate() = %v", err)
+			}
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(raw) != script.want {
+				t.Errorf("husky hook = %q, want %q", raw, script.want)
+			}
+		})
+	}
+}
+
+// A hook path that cannot be read is not the same as one that is absent, and
+// only the second is a "nothing here yet". Reading a directory as a file is
+// the portable way to produce the first.
+func TestAppendHuskyGateFailsOnAHookItCannotRead(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, filepath.FromSlash(huskyHook)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := appendHuskyGate(project.Project{Root: root}, &Writer{}); err == nil {
+		t.Error("appendHuskyGate() = nil for a hook path that is not a readable file")
 	}
 }

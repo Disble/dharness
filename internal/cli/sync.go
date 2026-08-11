@@ -51,17 +51,7 @@ func RunSync(args []string, stdout io.Writer) error {
 	}
 	fmt.Fprintf(stdout, "Package manager: %s. Test runner: %s.\n\n", orNotDetected(p.PackageManager), orNotDetected(p.TestRunner))
 
-	pending := setup.Pending(p)
-	if len(pending) == 0 {
-		fmt.Fprintln(stdout, "Nothing to do: everything this project needs is in place.")
-		if measured := p.ReadEvidence().ScopedMutation; measured != nil {
-			fmt.Fprintf(stdout, "Scoped mutation ran %d test(s) for %s when it was measured.\n",
-				measured.RelatedTests, measured.MeasuredPath)
-		}
-		return nil
-	}
-
-	if hasApplicable(pending, p) {
+	if pending := setup.Pending(p); hasApplicable(pending, p) {
 		fmt.Fprintln(stdout, "Applying:")
 		if err := setup.Apply(p, stdout); err != nil {
 			return err
@@ -73,13 +63,29 @@ func RunSync(args []string, stdout io.Writer) error {
 	// listed with the reason, because "ask a person" without a reason is a
 	// shrug. Nothing is printed for a step that is now satisfied (§15): the
 	// loop reads setup.Pending(p) again, which excludes it on its own.
+	//
+	// The terminal answer is decided here rather than before applying, because
+	// what a re-run wants to know is what is still outstanding, not what was
+	// outstanding a moment ago. installStep is never satisfied in a JS project
+	// — it defers to the package manager instead of guessing — so a check made
+	// before applying would never find a project with nothing pending.
+	left := 0
 	for _, step := range setup.Pending(p) {
 		why, ok := step.Delegated(p)
 		if !ok {
 			continue
 		}
+		left++
 		fmt.Fprintf(stdout, "## Left to you: %s\n\n", step.ID())
 		fmt.Fprintf(stdout, "dharness cannot run this: %s\n\n%s\n\n", why, step.Describe(p))
+	}
+
+	if left == 0 {
+		fmt.Fprintln(stdout, "Nothing to do: everything this project needs is in place.")
+		if measured := p.ReadEvidence().ScopedMutation; measured != nil {
+			fmt.Fprintf(stdout, "Scoped mutation ran %d test(s) for %s when it was measured.\n",
+				measured.RelatedTests, measured.MeasuredPath)
+		}
 	}
 
 	return nil

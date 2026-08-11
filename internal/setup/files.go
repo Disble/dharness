@@ -63,14 +63,6 @@ func hookManager(p project.Project) manager {
 	return managerNone
 }
 
-func installed(p project.Project, pkg string) bool {
-	if !p.HasSource() {
-		return false
-	}
-	_, err := os.Stat(filepath.Join(p.Source, "node_modules", filepath.FromSlash(pkg)))
-	return err == nil
-}
-
 // gateInstalled reports whether git will actually run the gate, which is a
 // different question from whether the configuration mentions it.
 func gateInstalled(p project.Project) bool {

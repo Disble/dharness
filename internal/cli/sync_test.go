@@ -361,3 +361,40 @@ func tree(t *testing.T, root string) string {
 	}
 	return strings.Join(paths, "\n")
 }
+
+// A split layout is the case the report has to name: git looks for the hook at
+// the repository root, but the tools run where the package manager installed
+// them. A conventional repository, where the two are the same directory, says
+// nothing — a line reading "JS project: ./" is noise in a report people read.
+func TestSyncNamesTheJSDirectoryOnlyWhenItIsNotTheRoot(t *testing.T) {
+	stubRunner(t)
+
+	root := t.TempDir()
+	gitProject(t, root, "frontend/bun.lock")
+	writeFile(t, filepath.Join(root, "frontend", "package.json"), `{"devDependencies":{"vitest":"^4.0.0"}}`)
+	split := runSyncIn(t, root)
+	if !strings.Contains(split, "JS project: frontend/") {
+		t.Errorf("a split layout did not name the directory the tools run in:\n%s", split)
+	}
+
+	flat := syncOutput(t, func(root string) {
+		writeFile(t, filepath.Join(root, "package.json"), `{"devDependencies":{"vitest":"^4.0.0"}}`)
+	})
+	if strings.Contains(flat, "JS project:") {
+		t.Errorf("a conventional repository was told its JS project is the root:\n%s", flat)
+	}
+}
+
+func runSyncIn(t *testing.T, root string) string {
+	t.Helper()
+
+	previous := workingDirectory
+	workingDirectory = func() (string, error) { return root, nil }
+	t.Cleanup(func() { workingDirectory = previous })
+
+	var out bytes.Buffer
+	if err := RunSync(nil, &out); err != nil {
+		t.Fatalf("RunSync() = %v", err)
+	}
+	return out.String()
+}

@@ -41,13 +41,24 @@ type installStep struct{}
 
 func (installStep) ID() string { return "install what this project is missing" }
 
+// Satisfied answers the only question dharness can answer on its own: is there
+// a JS project here at all. Whether the package is already there is the
+// package manager's question, and every way of asking it from outside is
+// wrong. A directory under node_modules is an install artifact — it survives a
+// rollback that restored package.json, and Yarn PnP and pnpm's store often
+// leave none at all. A name in package.json is a declaration nobody has
+// necessarily acted on. Reading a lockfile means parsing four formats to
+// re-derive an answer the install command returns for free.
+//
+// So dharness does not ask. It runs the install, which is idempotent in all
+// four managers, and the exit code is the verdict.
 func (installStep) Satisfied(p project.Project) bool {
-	return !p.HasSource() || len(missing(p)) == 0
+	return !p.HasSource()
 }
 
 func (s installStep) Describe(p project.Project) string {
 	return fmt.Sprintf("This package provides dharness's project lint rules.\n\n    %s %s",
-		tool.InstallCommand(p.PackageManager), strings.Join(missing(p), " "))
+		tool.InstallCommand(p.PackageManager), strings.Join(integrationPackages(), " "))
 }
 
 // Delegated is always false: there is no repository state that hands
@@ -55,10 +66,7 @@ func (s installStep) Describe(p project.Project) string {
 func (installStep) Delegated(project.Project) (string, bool) { return "", false }
 
 func (installStep) Apply(p project.Project, w *Writer) error {
-	packages := missing(p)
-	if len(packages) == 0 {
-		return nil
-	}
+	packages := integrationPackages()
 
 	for _, path := range p.PackageStateFiles() {
 		if err := w.remember(path); err != nil {
@@ -76,13 +84,10 @@ func (installStep) Apply(p project.Project, w *Writer) error {
 	return installErr
 }
 
-// missing lists the packages this project needs and does not have.
-func missing(p project.Project) []string {
-	var packages []string
-	if !installed(p, RulesPackage) {
-		packages = append(packages, RulesPackage)
-	}
-	return dedupe(packages)
+// integrationPackages lists the packages dharness adds to a project, as
+// opposed to the CLIs it invokes without installing.
+func integrationPackages() []string {
+	return dedupe([]string{RulesPackage})
 }
 
 // ---------------------------------------------------------- owned files
