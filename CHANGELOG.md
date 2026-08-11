@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.1](https://github.com/Disble/dharness/compare/v1.0.0...v1.0.1) (2026-08-11)
+
+
+### Bug Fixes
+
+* **setup:** install through the package manager instead of reading node_modules ([a30fc61](https://github.com/Disble/dharness/commit/a30fc61f22c7eb48637b611d11152e065ac015b2))
+* **setup:** install through the package manager instead of reading node_modules ([3afbe65](https://github.com/Disble/dharness/commit/3afbe65c6cfa60a5aa5d1cbe8b4c84f151cc0a72))
+
 ## [1.0.0](https://github.com/Disble/dharness/compare/v0.2.0...v1.0.0) (2026-08-11)
 
 
