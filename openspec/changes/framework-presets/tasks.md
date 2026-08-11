@@ -49,34 +49,34 @@ changes, so reverting removes only test infrastructure.
 
 #### Phase 1: the golden renderer (spec: `framework-presets` req "`generic` reproduces today's behaviour exactly")
 
-- [ ] 1.1 RED `internal/setup/golden_test.go`: `TestGenericGoldenIsUnchanged` —
+- [x] 1.1 RED `internal/setup/golden_test.go`: `TestGenericGoldenIsUnchanged` —
       renders `Plan()` (ID/`Satisfied`/`Delegated`'s `ok`+`why`/`Describe`
       verbatim) and the written tree (sorted paths, `filepath.ToSlash`, LF,
       `<root>`/`<source>` substituted) for a `generic-conventional` fixture
       (Root == Source, no framework) against `testdata/golden/generic-
       conventional.txt`; fails because neither the renderer nor the fixture
       file exists yet
-- [ ] 1.2 GREEN `internal/setup/golden_test.go`: implement `renderGolden(t,
+- [x] 1.2 GREEN `internal/setup/golden_test.go`: implement `renderGolden(t,
       p)` — stub `runner.Run` (no install shells out) and `gitOutput`
       (`Discover` and the not-yet-written barrel probe answer from the
       fixture); write LF explicitly, never the platform's
-- [ ] 1.3 GREEN: capture `testdata/golden/generic-conventional.txt` by running
+- [x] 1.3 GREEN: capture `testdata/golden/generic-conventional.txt` by running
       the renderer against **today's code**, before the registry exists —
       this is the behaviour the spec requires the fixture to predate, not a
       hand-authored expectation
-- [ ] 1.4 RED `internal/setup/golden_test.go`: `TestGenericGoldenIsUnchanged`
+- [x] 1.4 RED `internal/setup/golden_test.go`: `TestGenericGoldenIsUnchanged`
       (second case) for `generic-split` — Root != Source, the Wails-shaped
       split layout with no `wails.json` present; fails, no fixture yet
-- [ ] 1.5 GREEN: capture `testdata/golden/generic-split.txt` the same way
+- [x] 1.5 GREEN: capture `testdata/golden/generic-split.txt` the same way
 
 #### Phase 2: the two-test mechanism that tells a legitimate change from a regression
 
-- [ ] 2.1 RED `internal/setup/golden_test.go`: assert
+- [x] 2.1 RED `internal/setup/golden_test.go`: assert
       `TestGenericGoldenIsUnchanged` takes no `-update` flag path — a
       constructed test-of-the-test that greps the test source for the
       absence of `flag.Bool("update"` wired to the generic cases; fails
       until 2.2 separates the two mechanisms
-- [ ] 2.2 GREEN: split the generic comparison (`TestGenericGoldenIsUnchanged`
+- [x] 2.2 GREEN: split the generic comparison (`TestGenericGoldenIsUnchanged`
       — plain `bytes.Equal`, no update path, ever) from the framework
       mechanism reserved for Slice 5 (`TestFrameworkGoldens`, gated behind
       `go test ./internal/setup -run TestFrameworkGoldens -update`) so the
@@ -85,13 +85,13 @@ changes, so reverting removes only test infrastructure.
 
 #### Phase 3: Slice 1 verification
 
-- [ ] 3.1 `go build ./...`, `go vet ./...`, `gofmt -l .`, `go test ./...`
+- [x] 3.1 `go build ./...`, `go vet ./...`, `gofmt -l .`, `go test ./...`
       clean
-- [ ] 3.2 `go run ./tools/mutationstaged` over `internal/setup/golden_test.go`
+- [x] 3.2 `go run ./tools/mutationstaged` over `internal/setup/golden_test.go`
       — dry then real; the renderer is test infrastructure, so a low score
       here is expected and reported, not chased (no production branches to
       kill yet)
-- [ ] 3.3 `bash scripts/verify-gate.sh`
+- [x] 3.3 `bash scripts/verify-gate.sh`
 
 ---
 

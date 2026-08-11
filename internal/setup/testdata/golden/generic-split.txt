@@ -1,0 +1,260 @@
+== plan ==
+1  install what this project is missing
+   satisfied=false delegated=false
+   why |
+     
+   describe |
+     This package provides dharness's project lint rules.
+     
+         npm install --save-dev dharness-eslint-plugin
+2  write the files dharness owns
+   satisfied=false delegated=false
+   why |
+     
+   describe |
+     The gate, the architecture and the rule thresholds live in .dharness/, which is
+     committed. The project's own files only ever gain one line pointing at them.
+3  point .fallowrc.json at the file dharness owns
+   satisfied=false delegated=false
+   why |
+     
+   describe |
+     fallow composes with `extends`, so the architecture arrives by reference.
+     Add this line to .fallowrc.json:
+     
+         "extends": ["../.dharness/fallow.jsonc"]
+4  resolve the two architectures this project declares
+   satisfied=true delegated=true
+   why |
+     .fallowrc.json declares its own `boundaries`, and fallow's `extends` replaces that key
+     rather than merging it — the project's block replaces the one dharness owns
+     entirely, without an error. Only one architecture is being enforced, and the
+     configuration does not say which.
+   describe |
+     Move the zones and rules from .fallowrc.json into .dharness/fallow.jsonc, or delete the block dharness
+     owns and keep the project's. Either is a valid answer; having both is not,
+     because only one of them runs and the file gives no sign of which.
+5  point lefthook.yml at the file dharness owns
+   satisfied=true delegated=false
+   why |
+     
+   describe |
+     lefthook composes with `extends`, so the gate arrives by reference.
+     Add this line to lefthook.yml:
+     
+         extends:
+           - .dharness/lefthook.yml
+6  fix the lint config react-doctor silently drops
+   satisfied=true delegated=true
+   why |
+     .eslintrc.json does not parse. react-doctor adopts this file and runs the rules in it,
+     so a broken one drops them all — measured: the same rules that failed the gate
+     with exit 1 report nothing and it exits 0, naming the file nowhere, not even
+     under --verbose. Repairing it means knowing what it was meant to say.
+   describe |
+     Make .eslintrc.json parse, or delete it. Either answer is fine; a file that is present
+     and unreadable is not, because the gate cannot tell you which rules it stopped
+     running.
+7  declare the rules react-doctor should run
+   satisfied=false delegated=false
+   why |
+     
+   describe |
+     react-doctor does not compose, so this is a merge rather than a reference: the
+     package joins `plugins` and its 6 rules join `rules`.
+8  give the agent fallow's own tools
+   satisfied=false delegated=false
+   why |
+     
+   describe |
+     fallow ships an MCP server with the analysis an agent would otherwise ask a
+     wrapper to invent: boundaries, traces, impact, health.
+9  wire the gate into git
+   satisfied=false delegated=true
+   why |
+     nothing answers: there is no lefthook config, no .husky/ and no lefthook
+     binary. Choosing a hook manager is a decision this project has not made, and
+     not a default dharness gets to pick.
+   describe |
+     Choose a hook manager and wire it to run the gate:
+     
+         dharness check
+     
+     lefthook writes its own git hook once configured and installed; husky keeps
+     a shell script that needs one appended line. Either way, the step is
+     satisfied once "dharness check" runs on commit.
+10  install react-doctor's agent skill
+   satisfied=false delegated=true
+   why |
+     its only non-interactive form installs five things: skills for every agent it
+     detects, a package script, a git hook that competes with this gate, and a CI
+     workflow. There is no flag to ask for the skill alone.
+   describe |
+         npx --yes react-doctor@latest install
+     
+     Choose the skill and decline the rest.
+11  decide this project's architecture
+   satisfied=false delegated=true
+   why |
+     architecture boundaries say what the code is meant to be, and no tool can
+     read intent off a tree. Do the analysis and write the result — nothing else
+     needs to change.
+   describe |
+     ### What to find out
+     
+     1. Read the source layout. What are the real seams: features, layers, a
+        delivery shell around a domain, a monorepo of packages that repeat the same
+        internal shape?
+     2. Follow the imports that cross those seams today. A boundary that half the
+        codebase already violates is a wish, not an architecture — say so rather
+        than declaring it and drowning the gate.
+     3. Decide whether one of the presets already describes this project:
+        `bulletproof`, `layered`, `hexagonal` or `feature-sliced`. A preset is one
+        line and expands into zones and rules on its own.
+     4. If none fits, declare zones by glob. `autoDiscover` isolates every feature
+        under a directory without listing them; `root` scopes a zone to one package
+        of a monorepo, which is how several packages share an internal layout
+        without sharing zones.
+     5. Ask the person you are working with whatever the code cannot answer. This
+        is a decision about intent, and they hold it.
+     
+     ### Where to write it
+     
+         .dharness/fallow.jsonc
+     
+     That file is already referenced from this project's fallow configuration, so
+     writing the `boundaries` block there is the whole change.
+     
+     ### How to check the result
+     
+         npx --yes fallow@latest list --boundaries
+     
+     It prints every zone with the number of files it matched and the rules already
+     expanded, and warns when a zone matched nothing — which is what a glob that
+     does not fit this tree looks like. A zone with zero files is a mistake, not a
+     style choice.
+     
+         npx --yes fallow@latest dead-code --boundary-violations
+     
+     Then read what the declaration costs today. Violations that already exist are
+     reported but do not block: the gate fails only on the ones a change
+     introduces, so an architecture can be declared on a codebase that does not
+     yet obey it. Type-only imports do count as crossings, and imports of
+     external packages do not.
+     
+     ### The one rule dharness will not choose for you
+     
+     When a module splits into role files — `*.types.ts`, `*.helpers.ts` and the
+     rest — does this project publish it through an `index.ts`, or does it import
+     the concrete files?
+     
+     Both are architectures, not one right answer. A project can have good
+     reasons to ban barrel files outright, and one that does cannot satisfy a rule
+     demanding the file it deleted — every split module would report forever.
+     
+     So `folder-ownership` ships **off**. The other five rules are guardrails on
+     generated code and stay on; this one is the only one that takes a side.
+     
+     If this project does publish through barrels, turn it on in frontend/doctor.config.json:
+     
+         "rules": {
+           "dharness/folder-ownership": "error"
+         }
+     
+     A severity written there survives every later run: dharness fills in only the
+     rules a project has not answered for itself.
+     
+
+== tree ==
+.dharness/.gitignore
+---
+# dharness — this directory is written by dharness.
+# Everything here is machine-local unless it is named below, so transient files
+# (incremental reports, caches) never show up in git.
+*
+!.gitignore
+!lefthook.yml
+!fallow.jsonc
+!rules.json
+!evidence.json
+---
+.dharness/fallow.jsonc
+---
+{
+  // dharness writes this file; the architecture below is decided by analysis,
+  // not by detection. Declare `boundaries` here rather than in the project's
+  // own fallow config: `extends` replaces this key, it does not merge it.
+  //
+  // See `dharness sync`.
+}
+---
+.dharness/lefthook.yml
+---
+pre-commit:
+  commands:
+    dharness:
+      run: dharness check
+      root: frontend/
+---
+.dharness/rules.json
+---
+{
+  "schema": "dharness.rules/v1",
+  "maxFileLines": 500,
+  "roleSuffixes": [
+    ".types.ts",
+    ".constants.ts",
+    ".helpers.ts",
+    ".schema.ts"
+  ]
+}
+---
+.mcp.json
+---
+{
+  "mcpServers": {
+    "fallow": {
+      "command": "npx",
+      "args": [
+        "--yes",
+        "--package=fallow@latest",
+        "fallow-mcp"
+      ]
+    }
+  }
+}
+---
+frontend/.fallowrc.json
+---
+{
+  "extends": ["../.dharness/fallow.jsonc"]
+}
+---
+frontend/doctor.config.json
+---
+{
+  "plugins": [
+    "dharness-eslint-plugin"
+  ],
+  "rules": {
+    "dharness/folder-ownership": "off",
+    "dharness/max-file-lines": "error",
+    "dharness/pure-index-barrel": "error",
+    "dharness/require-jsdoc": "error",
+    "dharness/require-variable-jsdoc": "error",
+    "dharness/role-file-shape": "error"
+  }
+}
+---
+frontend/package-lock.json
+---
+{
+  "lockfileVersion": 3
+}
+---
+frontend/package.json
+---
+{
+  "name": "split"
+}
+---
