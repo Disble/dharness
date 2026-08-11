@@ -125,11 +125,11 @@ func (ownedFilesStep) Apply(p project.Project, w *Writer) error {
 		return err
 	}
 
-	// The boundaries block is deliberately absent: zones encode intent, and
-	// no detection can read intent off a tree. The model fills this in.
-	// The boundaries block goes here and nowhere else: fallow's `extends`
-	// replaces the key rather than merging it, so the same block in the
-	// project's own config would silently discard this one.
+	// The boundaries block is deliberately absent: zones encode intent, and no
+	// detection can read intent off a tree, so the model fills it in. It goes
+	// here and nowhere else, because fallow's `extends` replaces the key rather
+	// than merging it and the same block in the project's own config would
+	// silently discard this one.
 	architecture := "{\n  // dharness writes this file; the architecture below is decided by analysis,\n  // not by detection. Declare `boundaries` here rather than in the project's\n  // own fallow config: `extends` replaces this key, it does not merge it.\n  //\n  // See `dharness sync`.\n}\n"
 	if err := w.Write(filepath.Join(p.Root, project.Dir, ownedFallow), []byte(architecture)); err != nil {
 		return err
