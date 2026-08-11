@@ -44,80 +44,81 @@ func TestWailsNoMatchNoEvidence(t *testing.T) {
 	}
 }
 
-// TestWailsFallsBackToDocumentedDefaultWhenKeyAbsent is task 16.4's case.
+// The pattern is one property with three inputs, so it is one table.
 //
-// The task's own literal example names "wailsjs/**" as the expected value
-// for a Root == Source fixture, but that is task 16.7's split-layout answer,
-// not this one: design decision 9's formula
-// (filepath.Rel(p.Source, filepath.Join(p.Root, wailsJSDir, "wailsjs"))) is
-// the authoritative source, verified against Wails' own project.go/base.go,
-// and it computes "frontend/wailsjs/**" here — Root and Source are the same
-// directory, and the default wailsjsdir is "frontend", so the bindings sit
-// one level below both. Reconciled the same way Slice 3 reconciled task
-// 10.9 against declaredKeys' actual data flow: recorded here rather than
-// silently absorbed, and pinned against the derivation the design verified,
-// not the task list's copy of task 16.7's answer.
-func TestWailsFallsBackToDocumentedDefaultWhenKeyAbsent(t *testing.T) {
-	root := t.TempDir()
-	writeWailsFixtureFile(t, root, "wails.json", "{}\n")
+// Design decision 9's formula is
+// filepath.Rel(p.Source, filepath.Join(p.Root, wailsJSDir, "wailsjs")), and
+// each row is a layout it has to hold for. Three separate functions repeated
+// the same arrange-detect-assert block and hid that they exercise a single
+// derivation; the duplication was real rather than cosmetic, and collapsing
+// it is what makes the shared property visible.
+//
+// The first row is task 16.4, whose own literal example names "wailsjs/**".
+// That is the third row's split-layout answer, not this one: with Root and
+// Source the same directory and the default wailsjsdir of "frontend", the
+// bindings sit one level below both. The formula is authoritative — verified
+// against Wails' own project.go and base.go — so the row pins what it
+// derives, and the discrepancy is recorded here rather than absorbed, the
+// same posture Slice 3 took with task 10.9.
+func TestWailsPatternFollowsTheVerifiedFormula(t *testing.T) {
+	for _, layout := range []struct {
+		name string
+		// sourceRel is empty when the JS project sits at the repository root.
+		sourceRel  string
+		wailsJSON  string
+		want       []string
+		because    []string
+		notBecause []string
+	}{
+		{
+			name:      "no wailsjsdir, source at the root",
+			wailsJSON: "{}\n",
+			want:      []string{"frontend/wailsjs/**"},
+			because:   []string{"wailsjsdir", "frontend/"},
+		},
+		{
+			name:       "wailsjsdir moved the way Wails' own SvelteKit guide instructs",
+			wailsJSON:  `{"wailsjsdir": "./frontend/src/lib"}`,
+			want:       []string{"frontend/src/lib/wailsjs/**"},
+			because:    []string{"wailsjsdir", "frontend/src/lib"},
+			notBecause: []string{"default"},
+		},
+		{
+			name:      "split layout — the motivating repository's own shape",
+			sourceRel: "frontend",
+			wailsJSON: "{}\n",
+			want:      []string{"wailsjs/**"},
+		},
+	} {
+		t.Run(layout.name, func(t *testing.T) {
+			root := t.TempDir()
+			source := root
+			if layout.sourceRel != "" {
+				source = filepath.Join(root, layout.sourceRel)
+				writeWailsFixtureFile(t, source, "package.json", "{\n  \"name\": \"wails-frontend\"\n}\n")
+			}
+			writeWailsFixtureFile(t, root, "wails.json", layout.wailsJSON)
 
-	match, matched := wails{}.Detect(project.At(root, root))
-	if !matched {
-		t.Fatal("wails{}.Detect() matched == false, want true")
-	}
+			match, matched := wails{}.Detect(project.At(root, source))
+			if !matched {
+				t.Fatal("wails{}.Detect() matched == false, want true")
+			}
 
-	fact := onlyFact(t, match)
-	want := []string{"frontend/wailsjs/**"}
-	if !equalStringSlices(fact.Value.([]string), want) {
-		t.Errorf("ignorePatterns = %v, want %v", fact.Value, want)
-	}
-	if !strings.Contains(fact.Because, "wailsjsdir") || !strings.Contains(fact.Because, "frontend/") {
-		t.Errorf("Because = %q, want it to name the absent key and the frontend/ default", fact.Because)
-	}
-}
-
-// TestWailsReadsWailsJSDirWhenPresent is task 16.6, using the exact override
-// Wails' own SvelteKit guide instructs: "./frontend/src/lib".
-func TestWailsReadsWailsJSDirWhenPresent(t *testing.T) {
-	root := t.TempDir()
-	writeWailsFixtureFile(t, root, "wails.json", `{"wailsjsdir": "./frontend/src/lib"}`)
-
-	match, matched := wails{}.Detect(project.At(root, root))
-	if !matched {
-		t.Fatal("wails{}.Detect() matched == false, want true")
-	}
-
-	fact := onlyFact(t, match)
-	want := []string{"frontend/src/lib/wailsjs/**"}
-	if !equalStringSlices(fact.Value.([]string), want) {
-		t.Errorf("ignorePatterns = %v, want %v", fact.Value, want)
-	}
-	if !strings.Contains(fact.Because, "wailsjsdir") || !strings.Contains(fact.Because, "frontend/src/lib") {
-		t.Errorf("Because = %q, want it to name the key and its value, not the fallback", fact.Because)
-	}
-	if strings.Contains(fact.Because, "default") {
-		t.Errorf("Because = %q, want the configured value, not the fallback text", fact.Because)
-	}
-}
-
-// TestWailsPatternIsRelativeToSourceInASplitLayout is task 16.7 — the
-// motivating repository's own layout and the value design decision 9 was
-// verified against.
-func TestWailsPatternIsRelativeToSourceInASplitLayout(t *testing.T) {
-	root := t.TempDir()
-	source := filepath.Join(root, "frontend")
-	writeWailsFixtureFile(t, root, "wails.json", "{}\n")
-	writeWailsFixtureFile(t, source, "package.json", "{\n  \"name\": \"wails-frontend\"\n}\n")
-
-	match, matched := wails{}.Detect(project.At(root, source))
-	if !matched {
-		t.Fatal("wails{}.Detect() matched == false, want true")
-	}
-
-	fact := onlyFact(t, match)
-	want := []string{"wailsjs/**"}
-	if !equalStringSlices(fact.Value.([]string), want) {
-		t.Errorf("ignorePatterns = %v, want %v — not frontend/wailsjs/**", fact.Value, want)
+			fact := onlyFact(t, match)
+			if !equalStringSlices(fact.Value.([]string), layout.want) {
+				t.Errorf("ignorePatterns = %v, want %v", fact.Value, layout.want)
+			}
+			for _, expected := range layout.because {
+				if !strings.Contains(fact.Because, expected) {
+					t.Errorf("Because = %q, want it to name %q", fact.Because, expected)
+				}
+			}
+			for _, unwanted := range layout.notBecause {
+				if strings.Contains(fact.Because, unwanted) {
+					t.Errorf("Because = %q, want the configured value rather than %q", fact.Because, unwanted)
+				}
+			}
+		})
 	}
 }
 
