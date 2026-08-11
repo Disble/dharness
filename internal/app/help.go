@@ -30,7 +30,7 @@ FLAGS
   --concurrency <n>         mutate only: Stryker workers (default 2)
   --help, -h                Show this message; every command also accepts help
 
-dharness owns invocation only. Each tool keeps its own configuration, written
-by its own init.
+dharness owns invocation only. Each wrapped tool keeps its own configuration,
+written by that tool's own installer.
 `, version)
 }
