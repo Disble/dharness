@@ -610,31 +610,49 @@ line 13 records this exact lesson. No preset manifest in this slice contributes
 an `entry` or `entryPoints` key. If a task below is found carrying one, delete
 it before implementing — do not implement it "for completeness."
 
-#### Phase 16: Wails (spec: `framework-presets` reqs "Wails detection evidence names the file", "the Wails ignore-pattern fact names the key and its fallback"; design Decision 9)
+**Split, as the forecast itself flagged as likely — see apply-progress.md's
+Slice 5 section for the full report.** This pass landed the orchestrator's
+design change (`preset.Match.Uncertain`) plus Phase 16 (Wails) end to end,
+including the golden fixture and the two registry-wide proof tests (19.3,
+19.4). The staged diff was already ~475 lines (code, excluding the golden
+fixture) before Next.js or Expo — over budget on Wails alone, exactly the
+"split per framework" case the forecast named. Next.js, Expo, `factory.go`,
+the multi-preset composition test (18.1), the remaining framework goldens
+(`nextjs`, `wails-nextjs`), and the registry-wide `TestEveryFactCarriesEvidence`
+(19.1) are unstarted and belong to a further PR in this same chain
+(`auto-chain`/`stacked-to-main`, based on this PR).
 
-- [ ] 16.1 RED `internal/preset/wails_test.go`:
+#### Phase 16: Wails (spec: `framework-presets` reqs "Wails detection evidence names the file", "the Wails ignore-pattern fact names the key and its fallback"; design Decision 9) — DONE
+
+- [x] 16.1 RED `internal/preset/wails_test.go`:
       `TestWailsDetectsWailsJSON` — a fixture with `wails.json` at Root;
       `wails{}.Detect(p)` returns `matched == true`, evidence naming
       `wails.json`; fails, `wails.go` does not exist
-- [ ] 16.2 GREEN `internal/preset/wails.go`: `wails` type, Root scope,
+- [x] 16.2 GREEN `internal/preset/wails.go`: `wails` type, Root scope,
       `Detect` checks `p.Root/wails.json` existence
-- [ ] 16.3 RED `internal/preset/wails_test.go`: `TestWailsNoMatchNoEvidence`
+- [x] 16.3 RED `internal/preset/wails_test.go`: `TestWailsNoMatchNoEvidence`
       — no `wails.json`; `matched == false`, registry excludes Wails
-- [ ] 16.4 RED `internal/preset/wails_test.go`:
-      `TestWailsFallsBackToDocumentedDefaultWhenKeyAbsent` — `wails.json`
-      present but declares no `wailsjsdir`; the contributed
-      `ignorePatterns` fact is `wailsjs/**` (Root == Source fixture), and
+- [x] 16.4 RED `internal/preset/wails_test.go`:
+      `TestWailsFallsBackToDocumentedDefaultWhenKeyAbsent` — **deviates from
+      this task's literal expected value; see apply-progress.md's Slice 5
+      section.** `wails.json` present but declares no `wailsjsdir`; pinned
+      against `frontend/wailsjs/**`, not the `wailsjs/**` this task names —
+      that is task 16.7's split-layout answer, and design decision 9's own
+      formula computes `frontend/wailsjs/**` for a Root == Source fixture.
       `Because` names both the absent key and the `frontend/` default
-- [ ] 16.5 GREEN `internal/preset/wails.go`: read `wails.json` with
+- [x] 16.5 GREEN `internal/preset/wails.go`: read `wails.json` with
       `encoding/json` (plain JSON, not JSONC — Wails' own tooling writes
       it); on read/decode failure, fall back silently to the documented
       default and say so in evidence — a malformed file is the project's
-      problem, never a failed `sync`
-- [ ] 16.6 RED `internal/preset/wails_test.go`:
+      problem, never a failed `sync`. **Widened by the orchestrator's design
+      review**: a read/decode failure after `wails.json` is confirmed to
+      exist also sets `Match.Uncertain`, naming what could not be read — the
+      match still stands, per the new field on `preset.Match`
+- [x] 16.6 RED `internal/preset/wails_test.go`:
       `TestWailsReadsWailsJSDirWhenPresent` — `wails.json` declares
       `"wailsjsdir": "./frontend/src/lib"`; contributed pattern reflects it,
       `Because` names the key and its value, not the fallback
-- [ ] 16.7 RED `internal/preset/wails_test.go`:
+- [x] 16.7 RED `internal/preset/wails_test.go`:
       `TestWailsPatternIsRelativeToSourceInASplitLayout` — Root != Source
       (Wails-shaped split, matching Slice 1's `generic-split` fixture
       shape), `wailsjsdir` absent; contributed pattern computes to
@@ -642,13 +660,21 @@ it before implementing — do not implement it "for completeness."
       wailsJSDir, "wailsjs"))`, not `frontend/wailsjs/**` — this is the
       motivating repository's own written-by-hand pattern, and the check
       that the derivation is right
-- [ ] 16.8 GREEN `internal/preset/wails.go`: the `filepath.Rel` computation,
-      slash-separated via `filepath.ToSlash`
-- [ ] 16.9 RED `internal/preset/wails_test.go`: `TestWailsEvidenceValidates`
+- [x] 16.8 GREEN `internal/preset/wails.go`: the `filepath.Rel` computation,
+      slash-separated via `filepath.ToSlash` — applied to the display path
+      going into `Evidence`/`Because` too, not just the fact value, after
+      the wails golden fixture caught a native-separator leak on Windows
+- [x] 16.9 RED `internal/preset/wails_test.go`: `TestWailsEvidenceValidates`
       — the Wails manifest passes `Manifest.Validate()` (schema, non-empty
-      `Because`, no `boundaries` key, encodable `Value`) — the registry-wide
-      `TestEveryFactCarriesEvidence` from Slice 2 must also cover this
-      preset once registered (Phase 19)
+      `Because`, no `boundaries` key, encodable `Value`). The registry-wide
+      `TestEveryFactCarriesEvidence` walk over all four presets (Phase 19)
+      still needs `nextjs`/`expo` to exist — not done this pass; see the
+      Slice 5 split note in apply-progress.md
+- [x] 16.10 (added, not in the original task list) RED/GREEN
+      `TestWailsMalformedJSONStillMatchesAndReportsUncertain` — the
+      orchestrator's own acceptance test for the `Match.Uncertain` design
+      change: a `wails.json` this preset cannot parse still matches, still
+      contributes the documented default, and names what it could not read
 
 #### Phase 17: Next.js and Expo — dependency-only presets (spec: `framework-presets` req "registry selects through one switch")
 
@@ -698,14 +724,16 @@ it before implementing — do not implement it "for completeness."
       `TestEveryFactCarriesEvidence` (registry-wide form, extending Slice
       2's stub-only version) — walks the real registry (`wails`, `nextjs`,
       `expo`, `generic`) against representative fixtures and asserts
-      `Manifest.Validate()` on each match's manifest
+      `Manifest.Validate()` on each match's manifest. **Not done this
+      pass** — `nextjs`/`expo` do not exist yet; `TestWailsEvidenceValidates`
+      (16.9) covers wails alone in the meantime
 - [ ] 19.2 GREEN: fix whatever 19.1 finds (expected: nothing, if Phases
       16–17 built evidence correctly)
-- [ ] 19.3 RED `internal/setup/steps_test.go`:
+- [x] 19.3 RED `internal/setup/steps_test.go`:
       `TestWailsMatchedOwnedFileIsNoLongerEmpty` — the success criterion
       stated directly: a Wails-matched project's `.dharness/fallow.jsonc`
       after `Apply` contains the ignore pattern
-- [ ] 19.4 RED `internal/setup/steps_test.go`:
+- [x] 19.4 RED `internal/setup/steps_test.go`:
       `TestIgnorePatternsCollidesInTheMotivatingShape` — a Wails-matched
       project whose own `.fallowrc.json` already declares `ignorePatterns`;
       the widened `boundariesOwnerStep` (Slice 3) is unsatisfied, names
@@ -722,14 +750,17 @@ it before implementing — do not implement it "for completeness."
 
 #### Phase 21: Slice 5 verification
 
-- [ ] 21.1 `go build ./...`, `go vet ./...`, `gofmt -l .`, `go test ./...`
-      clean
+- [x] 21.1 `go build ./...`, `go vet ./...`, `gofmt -l .`, `go test ./...`
+      clean — passing for the Wails-only diff landed this pass
 - [ ] 21.2 `go run ./tools/mutationstaged` over `internal/preset/wails.go`,
-      `nextjs.go`, `expo.go`, `factory.go` — dry then real, floor 0.80
-- [ ] 21.3 `bash scripts/verify-gate.sh`
+      `nextjs.go`, `expo.go`, `factory.go` — dry then real, floor 0.80.
+      **wails.go's share done**: staged run over `sync.go`, `preset.go`,
+      `wails.go`, `steps.go` scored **1.00 (42/42 killed, 0 survived)**.
+      `nextjs.go`/`expo.go`/`factory.go` do not exist yet
+- [x] 21.3 `bash scripts/verify-gate.sh` — "the hook refused a broken file,
+      as it must"
 - [ ] 21.4 Full success-criteria sweep against `proposal.md`'s checklist —
-      every box traceable to a task above; report any box this task list
-      does not cover rather than silently marking it done
+      not run; the change is not complete (Next.js/Expo remain)
 
 ---
 

@@ -62,7 +62,9 @@ func TestFrameworkGoldens(t *testing.T) {
 	cases := []struct {
 		name    string
 		project func(t *testing.T) project.Project
-	}{}
+	}{
+		{"wails", wailsProject},
+	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -244,6 +246,27 @@ func genericSplitProject(t *testing.T) project.Project {
 		t.Fatal(err)
 	}
 	writeGoldenFixtureFile(t, source, "package.json", "{\n  \"name\": \"split\"\n}\n")
+	writeGoldenFixtureFile(t, source, "package-lock.json", "{\n  \"lockfileVersion\": 3\n}\n")
+
+	p := project.At(root, source)
+	p.InRepository = true
+	return p
+}
+
+// wailsProject is the motivating repository's own layout: a repository root
+// carrying wails.json with no wailsjsdir override, and the JS project one
+// level down at frontend/ — the split shape design decision 9's
+// "wailsjs/**" derivation was verified against. This is the "wails"
+// framework golden; regenerated with -update, never hand-edited.
+func wailsProject(t *testing.T) project.Project {
+	t.Helper()
+	root := t.TempDir()
+	source := filepath.Join(root, "frontend")
+	if err := os.MkdirAll(source, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeGoldenFixtureFile(t, root, "wails.json", "{}\n")
+	writeGoldenFixtureFile(t, source, "package.json", "{\n  \"name\": \"wails-frontend\"\n}\n")
 	writeGoldenFixtureFile(t, source, "package-lock.json", "{\n  \"lockfileVersion\": 3\n}\n")
 
 	p := project.At(root, source)

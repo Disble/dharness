@@ -50,6 +50,13 @@ type Match struct {
 	Scope    Scope
 	Evidence string
 	Manifest Manifest
+
+	// Uncertain names what this preset could not read, and is empty when it
+	// read everything it needed. A preset that recognises a project but
+	// cannot read its configuration still matches and still contributes its
+	// documented defaults — saying "not this framework" because a file
+	// would not parse is the silent no-op this change exists to end.
+	Uncertain string
 }
 
 // Fact is one thing a preset contributes, and the observable that justifies
@@ -106,9 +113,15 @@ func (m Manifest) Validate() error {
 	return nil
 }
 
-// registry is the presets Resolve consults. Slice 2 registers only generic;
-// slice 5's factory widens this to wails, nextjs, expo.
-var registry = []Preset{generic{}}
+// registry is the presets Resolve consults, Root scope before Source (order
+// within a scope is registry order, per resolve). generic always matches and
+// stays last so a real signal is reported before the fallback would ever be
+// reached — Resolve/resolve don't rely on this ordering (a matching preset
+// short-circuits nothing), but it keeps the list read the way it resolves.
+//
+// nextjs and expo (both Source-scope) join once their own presets exist —
+// see the framework-presets task list, Slice 5, Phase 17.
+var registry = []Preset{wails{}, generic{}}
 
 // Resolve returns every preset that matches p, Root scope before Source
 // scope, registry order within a scope. It never returns nil: generic

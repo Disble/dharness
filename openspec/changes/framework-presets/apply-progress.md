@@ -644,3 +644,190 @@ source outside `.dharness/` entirely. No `dirIgnore` edit needed.
   identity) is now reproduced a second time, against a second pair of files,
   independently of Slice 3's own encounters with this tool. Worth surfacing
   to whoever picks up that backlog: it is not a one-off.
+
+## Slice 5 — Wails preset and the `Match.Uncertain` design change — PARTIAL, split by framework
+
+Only Phase 16 (Wails), plus the orchestrator's design-review addition
+(`preset.Match.Uncertain` and its surfacing), plus the parts of Phases 18/19
+that only needed Wails, are complete. Next.js, Expo, `factory.go`, the
+multi-preset composition proof, and the registry-wide contract test are
+**not started**. Reported rather than crammed, per the review workload
+forecast's own explicit permission to split per framework.
+
+### Why this was split
+
+The staged diff for Wails alone (`internal/cli/sync.go`,
+`internal/preset/preset.go`, `internal/preset/wails.go`,
+`internal/setup/steps.go`, plus the four test files and the golden fixture)
+came to 744 lines total, ~475 of them code/tests/docs excluding the
+generated `wails.txt` fixture (269 lines) — already over the 400-line
+budget before Next.js or Expo existed. The task list's own Review Workload
+Forecast for Slice 5 named exactly this outcome as the likely one ("split
+per framework (Wails first, then Expo+Next.js together or separately) if
+the real diff exceeds budget") and the delivery strategy is `auto-chain`, so
+a further PR in the chain is the expected continuation, not a shortfall.
+
+### What was built
+
+- **The orchestrator's design change, implemented first, per its own
+  instruction.** `preset.Match` gained an `Uncertain string` field
+  (`internal/preset/preset.go`) — empty when a match read everything it
+  needed, or naming what it could not read otherwise. `Detect` stays pure
+  (no error return): uncertainty is data on the match, not a failure.
+  Pinned by `TestMatchCarriesUncertain` (`internal/preset/preset_test.go`),
+  a compile-time-shaped RED before the field existed.
+- **Surfacing, following the `UncheckableConfigNote` precedent exactly**
+  (`internal/setup/steps.go`): `UncertainPresetNote(p project.Project)
+  string` walks `preset.Resolve(p)` and joins every non-empty `Uncertain`,
+  naming the preset's ID beside what it could not read. Split into a pure
+  `uncertainNotes(matches []preset.Match) string` for the same reason
+  `collidingKeys` is split from `boundaryCollision` — no real preset carried
+  a non-empty `Uncertain` until wails registered, so the rendering rule is
+  tested against stub matches (`TestUncertainNotesNamesTheMatchAndWhatItCouldNotRead`,
+  `TestUncertainNotesEmptyWhenNothingIsUncertain`, both in
+  `internal/setup/steps_test.go`). Wired into `internal/cli/sync.go`
+  alongside `uncheckable`, printed under its own `## Not checked` block —
+  the same header `UncheckableConfigNote` already uses, kept as two
+  independent blocks rather than merged, since the two blind spots have
+  nothing to do with each other and merging them would couple two
+  unrelated notes' wording.
+- `internal/preset/wails.go` — the `wails` preset (Root scope). `Detect`
+  distinguishes "file absent" (`os.Stat` fails → no match, this is not a
+  Wails project) from "file present but unreadable" (a read or JSON decode
+  failure after the `os.Stat` check succeeds → still matches, contributes
+  the documented `frontend`-relative default, and sets `Uncertain` naming
+  `wails.json` and what went wrong). The task list's own wording at 16.5
+  ("on read/decode failure, fall back... and say so in evidence") reads as
+  if both cases were the same branch; they are not, and treating them the
+  same would make a genuinely absent `wails.json` match anyway. Read the
+  distinction from `TestWailsNoMatchNoEvidence` (no file → no match) versus
+  `TestWailsMalformedJSONStillMatchesAndReportsUncertain` (file present,
+  garbage inside → matches, `Uncertain` set).
+- `wailsIgnorePattern(p, dir)` computes
+  `filepath.Rel(source, filepath.Join(p.Root, dir, "wailsjs"))` +
+  `"/**"`, `filepath.ToSlash`'d — design decision 9's formula, verified
+  against Wails' own source (`v2/pkg/commands/build/base.go`'s
+  `frontend` default, `v2/internal/project/project.go`'s `wailsjsdir` JSON
+  tag). `source` falls back to `p.Root` when `p.Source == ""` (no JS
+  project detected at all) — a case the design's formula doesn't name, so
+  reading the closest analogue was a judgment call rather than a documented
+  answer: with nothing more specific to be relative to, the repository root
+  is what's left.
+- `internal/preset/wails_test.go` — Phase 16's full RED/GREEN suite
+  (16.1–16.9), plus `TestWailsMalformedJSONStillMatchesAndReportsUncertain`,
+  the orchestrator's own explicitly-requested acceptance test for the
+  design change (not in the original task list — labelled 16.10 in
+  `tasks.md`).
+- `internal/preset/preset.go`'s `registry` var now holds `wails{}` ahead of
+  `generic{}` (both Root scope; order between two Root-scope presets that
+  both match — `generic` always does — doesn't affect correctness, since
+  `generic`'s manifest is empty and contributes no key to collide with
+  anything). This is a direct edit to the existing `registry` var, **not**
+  the `factory.go` Phase 18.2 names — that abstraction is deferred to the
+  PR that also adds `nextjs`/`expo`, since a "one switch in a factory" for
+  a registry of one new entry would be premature structure for what this
+  pass actually needed.
+- `internal/setup/steps_test.go` — `TestWailsMatchedOwnedFileIsNoLongerEmpty`
+  (19.3) and `TestIgnorePatternsCollidesInTheMotivatingShape` (19.4), both
+  through the real registry (`Apply`/`preset.Resolve`, not stub matches) —
+  the first time in this change a framework preset is exercised end to end
+  rather than through `stubMatch`.
+- `internal/setup/golden_test.go` — `wailsProject(t)`, the split-layout
+  fixture (`wails.json` at Root, JS project at `Root/frontend`) design
+  decision 9 was verified against. `TestFrameworkGoldens`'s case table
+  gained one entry, `{"wails", wailsProject}`; the fixture
+  `internal/setup/testdata/golden/wails.txt` was captured with
+  `-update`, confirmed RED before it existed
+  (`open testdata\golden\wails.txt: ... cannot find the file`), confirmed
+  GREEN after, and grepped for `Temp`/`AppData`/`Users`/drive letters —
+  none found.
+- `docs/learning-log.md` — three new dated lines: the `Uncertain` field's
+  own rationale, the cross-platform path bug this slice found and fixed
+  (below), and the Root == Source vs split-layout derivation distinction
+  task 16.4's literal wording elided.
+
+### A real bug the golden fixture caught, not a task list ambiguity
+
+`wails.go`'s first draft built `Evidence`/`Because` from
+`filepath.Join(p.Root, "wails.json")` directly — a path with the OS's own
+separator. Rendered into text and captured on Windows, the fixture read
+`<root>\wails.json`: `golden_test.go`'s own `substitutePaths` replaces both
+native and slash spellings of `p.Root`, but the literal `\wails.json` suffix
+survives untouched, and the same code run on Linux/macOS would render
+`<root>/wails.json` instead — a fixture that cannot pass on both platforms
+at once. Fixed by introducing a `display := filepath.ToSlash(path)`
+specifically for the rendered text, keeping the native `path` for the
+actual `os.Stat`/`os.ReadFile` calls. The fixture was captured only after
+this fix; nothing under `testdata/golden/` reflects the pre-fix shape.
+
+### The task 16.4 reconciliation (a judgment call, not silently absorbed)
+
+Task 16.4's literal wording names `"wailsjs/**"` as the expected contributed
+value for "a Root == Source fixture" with `wailsjsdir` absent. That is task
+16.7's split-layout answer, not this one: design decision 9's own formula —
+`filepath.Rel(p.Source, filepath.Join(p.Root, wailsJSDir, "wailsjs"))`,
+verified against Wails' own source — computes `"frontend/wailsjs/**"` when
+Root and Source are the same directory, because the default `wailsjsdir`
+("frontend") still names a subdirectory one level below both. Implemented
+and pinned against the formula's actual output, with the discrepancy
+recorded here rather than silently matching the task's literal string (which
+would have required either weakening the formula or duplicating the
+split-layout answer for a fixture that isn't split) — the same posture
+Slice 3 took for task 10.9's `doctor.config.ts` tension.
+
+### RED/GREEN evidence
+
+- `preset.Match.Uncertain`: no formal RED run (a struct field addition is a
+  compile-time change); `TestMatchCarriesUncertain` was written and passed
+  immediately once the field was added, functioning as the compile pin the
+  task's RED would have been.
+- `internal/preset/wails.go`: `go test ./internal/preset/... -run TestWails`
+  failed to build (`undefined: wails`) before `wails.go` existed; all seven
+  tests pass after.
+- `internal/setup/steps.go`'s `uncertainNotes`: `go vet ./internal/setup/...`
+  failed with `undefined: uncertainNotes` before the function existed;
+  green after.
+- `TestFrameworkGoldens/wails`: failed with
+  `open testdata\golden\wails.txt: The system cannot find the file
+  specified` before the fixture was captured; passed after `-update`, and
+  again on a second unmodified run (confirming the fixture is stable, not
+  merely written once).
+
+### Verification (all clean, for the diff actually staged this pass)
+
+```
+go build ./...        # exit 0
+go vet ./...           # exit 0
+gofmt -l .              # no output
+go test ./...           # ok, all 9 packages
+bash scripts/verify-gate.sh   # "verify-gate: the hook refused a broken file, as it must."
+git add -A && go run ./tools/mutationstaged
+  # Total: 42, Killed: 42, Survived: 0, Score: 1.00 (minimum: 0.80) — PASS
+  # staged set: internal/cli/sync.go, internal/preset/preset.go,
+  # internal/preset/wails.go, internal/setup/steps.go
+```
+
+No survivors to explain away this round.
+
+### Not done this pass — belongs to the next PR in the chain
+
+- Phase 17 (Next.js, Expo — dependency-only presets over `package.json`).
+  Per the orchestrator's evidence-discipline instruction: neither has been
+  verified against its own documentation yet, so the next pass either
+  verifies what each generates and contributes a real fact, or ships an
+  empty manifest with detection only and records that scoping choice
+  explicitly — not invented here.
+- Phase 18: `factory.go` (the registry currently holds a direct edit to
+  `preset.go`'s `registry` var instead), the multi-preset composition test
+  (18.1, needs `nextjs`), and the `nextjs`/`wails-nextjs` framework goldens
+  (18.3/18.4 — only `wails` was captured).
+- Phase 19.1/19.2: the registry-wide `TestEveryFactCarriesEvidence` walk
+  needs all four presets to exist; `TestWailsEvidenceValidates` (16.9)
+  covers wails alone in the meantime.
+- Phase 20: the `entryPoints`-rejection precedent reaffirmation named in
+  20.1 wasn't reached — no Next.js/Expo code exists yet where that
+  temptation could appear. The region-decision half of 20.1 was already
+  satisfied in Slice 2.
+- Phase 21.2 (mutation over `nextjs.go`/`expo.go`/`factory.go`) and 21.4
+  (the full proposal.md success-criteria sweep) — neither file nor a
+  complete change exists yet to check.

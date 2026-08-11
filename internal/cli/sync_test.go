@@ -432,3 +432,47 @@ func TestSyncSaysNothingAboutAConfigItCanCheck(t *testing.T) {
 		t.Errorf("sync reported a blind spot it does not have:\n%s", out)
 	}
 }
+
+// The end of the Uncertain path, proven through sync's own output rather than
+// through the preset in isolation: a Wails project whose wails.json cannot be
+// read is still a Wails project. The preset matches, contributes the
+// documented default, and says what it guessed from.
+//
+// Its own heading, not a second "Not checked": that block says a check did not
+// run, this one says a check ran on a default because the project's answer was
+// unreadable. Two sections sharing a title read as one section repeated.
+func TestSyncSaysWhatAMatchedPresetHadToAssume(t *testing.T) {
+	stubRunner(t)
+
+	root := t.TempDir()
+	gitProject(t, root, "frontend/bun.lock")
+	writeFile(t, filepath.Join(root, "frontend", "package.json"), `{"devDependencies":{"vitest":"^4.0.0"}}`)
+	writeFile(t, filepath.Join(root, "wails.json"), `{"wailsjsdir": `)
+
+	out := runSyncIn(t, root)
+
+	if !strings.Contains(out, "## Assumed") {
+		t.Errorf("sync did not report what the preset had to assume:\n%s", out)
+	}
+	if !strings.Contains(out, "wails") {
+		t.Errorf("the note does not name the preset that assumed:\n%s", out)
+	}
+	if strings.Count(out, "## Not checked") > 1 {
+		t.Errorf("two sections share the \"Not checked\" heading:\n%s", out)
+	}
+}
+
+// And a readable wails.json assumes nothing, or the heading becomes noise on
+// every Wails project.
+func TestSyncAssumesNothingWhenTheFrameworkConfigReads(t *testing.T) {
+	stubRunner(t)
+
+	root := t.TempDir()
+	gitProject(t, root, "frontend/bun.lock")
+	writeFile(t, filepath.Join(root, "frontend", "package.json"), `{"devDependencies":{"vitest":"^4.0.0"}}`)
+	writeFile(t, filepath.Join(root, "wails.json"), `{"wailsjsdir": "./frontend"}`)
+
+	if out := runSyncIn(t, root); strings.Contains(out, "## Assumed") {
+		t.Errorf("sync reported an assumption it did not make:\n%s", out)
+	}
+}

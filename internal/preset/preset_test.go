@@ -12,6 +12,17 @@ func fixtureProject() project.Project {
 	return project.At("", "")
 }
 
+// TestMatchCarriesUncertain pins the field the orchestrator's design review
+// added to Match: a preset that recognises its signal but cannot read its
+// configuration still matches, and names what it could not read here rather
+// than answering false and reading as "not this framework".
+func TestMatchCarriesUncertain(t *testing.T) {
+	m := Match{Uncertain: "wails.json exists but does not parse"}
+	if m.Uncertain != "wails.json exists but does not parse" {
+		t.Errorf("Match.Uncertain = %q, want it to round-trip", m.Uncertain)
+	}
+}
+
 func TestSchemaConstant(t *testing.T) {
 	if Schema != "dharness.preset/v1" {
 		t.Errorf("Schema = %q, want %q", Schema, "dharness.preset/v1")
