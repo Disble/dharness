@@ -89,14 +89,19 @@ func TestCheckRunsReactDoctorBeforeFallow(t *testing.T) {
 		t.Fatalf("RunCheck() = %v, want nil", err)
 	}
 
-	if len(captured.commands) != 2 {
-		t.Fatalf("ran %d commands, want 2: %v", len(captured.commands), captured.commands)
+	if len(captured.commands) != 3 {
+		t.Fatalf("ran %d commands, want 3: %v", len(captured.commands), captured.commands)
 	}
 	if got := toolOf(captured.commands[0]); got != "react-doctor" {
 		t.Errorf("first command = %q, want react-doctor", got)
 	}
-	if got := toolOf(captured.commands[1]); got != "fallow" {
-		t.Errorf("second command = %q, want fallow", got)
+	// Both fallow stages follow: audit answers the changeset-scoped question
+	// and dupes the whole-repository one. react-doctor stays first because
+	// --staged scopes it to the diff, so its cost tracks the change.
+	for _, i := range []int{1, 2} {
+		if got := toolOf(captured.commands[i]); got != "fallow" {
+			t.Errorf("command %d = %q, want fallow", i, got)
+		}
 	}
 }
 
@@ -117,6 +122,7 @@ func TestCheckRunsRemoteLatestEvenWhenWrappedToolsAreInstalled(t *testing.T) {
 	want := []runner.Command{
 		{Label: "react-doctor", Name: "npx", Args: append([]string{"--yes", "react-doctor@latest"}, tool.ReactDoctorStaged()...), Dir: root},
 		{Label: "fallow", Name: "npx", Args: []string{"--yes", "fallow@latest", "audit"}, Dir: root},
+		{Label: "fallow", Name: "npx", Args: []string{"--yes", "fallow@latest", "dupes"}, Dir: root},
 	}
 	if len(captured.commands) != len(want) {
 		t.Fatalf("ran %d commands, want %d: %+v", len(captured.commands), len(want), captured.commands)
@@ -504,5 +510,44 @@ func TestCheckSkipsFallowUntilThereIsHistory(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "no commits yet") {
 		t.Errorf("the gate skipped fallow without saying why:\n%s", out.String())
+	}
+}
+
+// The duplication ceiling dharness writes is only a ceiling if something
+// enforces it, and audit does not: measured against fallow 3.14.0, a
+// repository at 80% duplication with `threshold: 3` set passes `audit` with
+// exit 0 and fails `dupes` with exit 1. audit's verdict is scoped to what the
+// changeset introduces; the percentage is a whole-repository question and
+// `dupes` is the command that asks it.
+//
+// So the gate runs it as its own stage. Without this, dharness would ship a
+// number into every project's config that reads like a gate and gates
+// nothing — the failure this repository spends most of its rules avoiding.
+func TestCheckEnforcesTheDuplicationCeiling(t *testing.T) {
+	captured, _ := stub(t, "src/a.ts\n")
+
+	if err := RunCheck(nil, io.Discard); err != nil {
+		t.Fatalf("RunCheck() = %v, want nil", err)
+	}
+
+	if len(captured.commands) != 3 {
+		t.Fatalf("ran %d commands, want 3: %v", len(captured.commands), captured.commands)
+	}
+
+	last := captured.commands[2]
+	if got := toolOf(last); got != "fallow" {
+		t.Errorf("third command = %q, want fallow", got)
+	}
+	if !slices.Contains(last.Args, "dupes") {
+		t.Errorf("the third stage is not dupes: %+v", last)
+	}
+
+	// No --threshold on the command line: the value belongs in the config
+	// dharness owns, where the project can see it, argue with it and override
+	// it. A flag here would be a number nobody can find.
+	for _, arg := range last.Args {
+		if strings.HasPrefix(arg, "--threshold") {
+			t.Errorf("dupes carries a --threshold flag; the ceiling belongs in the config, not the invocation: %+v", last)
+		}
 	}
 }
