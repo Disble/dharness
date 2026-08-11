@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.0.2](https://github.com/Disble/dharness/compare/v1.0.1...v1.0.2) (2026-08-11)
+
+
+### Bug Fixes
+
+* **setup:** report a legacy lint config react-doctor cannot read ([bd9525e](https://github.com/Disble/dharness/commit/bd9525e3b52608b7f2b2e9a2cc378a2795d62e54))
+* **setup:** report a project that declares its own fallow boundaries ([308c29e](https://github.com/Disble/dharness/commit/308c29e43e2d54fcabfd627b075d12dfb4e071e8))
+* **setup:** ship folder-ownership off and let the project turn it on ([5506ad2](https://github.com/Disble/dharness/commit/5506ad21d13d58ecc4fe9fcded5ec1a7351342e2))
+
 ## [1.0.1](https://github.com/Disble/dharness/compare/v1.0.0...v1.0.1) (2026-08-11)
 
 
