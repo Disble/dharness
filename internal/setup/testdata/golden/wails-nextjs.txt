@@ -195,8 +195,8 @@
   // dharness:presets begin — rewritten by `dharness sync`; edits here are lost.
   // wails: wails.json declares no "wailsjsdir", so the default Wails itself falls back to (frontend/) applies
   "ignorePatterns": ["wailsjs/**"],
-  // generic: dharness sets a 3% duplication ceiling for every project, borrowed from the SonarQube gate this toolchain already answers to; the two measure different things by different algorithms, so they corroborate rather than repeat each other
-  "duplicates": {"threshold":3},
+  // generic: dharness compares structure rather than text (mode "semantic"), reports a clone group only from 3 occurrences, and caps duplication at 3%. fallow's own defaults are mild, 2 and no limit, so all three are departures rather than restatements: structural matching still finds the copy-paste that has since diverged, two occurrences is usually coincidence where three is a pattern, and the ceiling is borrowed from the SonarQube gate this toolchain already answers to — different algorithms, so they corroborate rather than repeat each other
+  "duplicates": {"minOccurrences":3,"mode":"semantic","threshold":3},
   // dharness:presets end
 
   // dharness writes this file; the architecture below is decided by analysis,
