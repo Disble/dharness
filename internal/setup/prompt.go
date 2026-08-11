@@ -61,7 +61,33 @@ func ArchitecturePrompt(p project.Project) string {
 	b.WriteString("reported but do not block: the gate fails only on the ones a change\n")
 	b.WriteString("introduces, so an architecture can be declared on a codebase that does not\n")
 	b.WriteString("yet obey it. Type-only imports do count as crossings, and imports of\n")
-	b.WriteString("external packages do not.\n")
+	b.WriteString("external packages do not.\n\n")
+
+	b.WriteString("### The one rule dharness will not choose for you\n\n")
+	b.WriteString("When a module splits into role files — `*.types.ts`, `*.helpers.ts` and the\n")
+	b.WriteString("rest — does this project publish it through an `index.ts`, or does it import\n")
+	b.WriteString("the concrete files?\n\n")
+	b.WriteString("Both are architectures, not one right answer. A project can have good\n")
+	b.WriteString("reasons to ban barrel files outright, and one that does cannot satisfy a rule\n")
+	b.WriteString("demanding the file it deleted — every split module would report forever.\n\n")
+	b.WriteString("So `folder-ownership` ships **off**. The other five rules are guardrails on\n")
+	b.WriteString("generated code and stay on; this one is the only one that takes a side.\n\n")
+	fmt.Fprintf(&b, "If this project does publish through barrels, turn it on in %s:\n\n", doctorPath(p))
+	b.WriteString("    \"rules\": {\n")
+	fmt.Fprintf(&b, "      %q: \"error\"\n", RulesPrefix+"/folder-ownership")
+	b.WriteString("    }\n\n")
+	b.WriteString("A severity written there survives every later run: dharness fills in only the\n")
+	b.WriteString("rules a project has not answered for itself.\n")
 
 	return b.String()
+}
+
+// doctorPath names react-doctor's config as the reader sees it from the
+// repository root, which is where the plan is read but not always where the
+// JS project lives.
+func doctorPath(p project.Project) string {
+	if rel := p.SourceRel(); rel != "" {
+		return rel + "/" + doctorConfig
+	}
+	return doctorConfig
 }

@@ -264,7 +264,7 @@ func (doctorConfigStep) Apply(p project.Project, w *Writer) error {
 	config.Plugins = dedupe(append(config.Plugins, RulesPackage))
 	for _, id := range RuleIDs() {
 		if _, chosen := config.Rules[id]; !chosen {
-			config.Rules[id] = "error"
+			config.Rules[id] = DefaultSeverity(id)
 		}
 	}
 	return w.WriteJSON(path, config)

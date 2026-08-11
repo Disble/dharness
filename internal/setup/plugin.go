@@ -1,5 +1,7 @@
 package setup
 
+import "strings"
+
 // Everything that consumes the rules package — the install step, the
 // react-doctor declaration, the thresholds file — reads these constants, so
 // the whole contract with it is this one file.
@@ -67,4 +69,33 @@ func RuleIDs() []string {
 		ids = append(ids, RulesPrefix+"/"+rule)
 	}
 	return ids
+}
+
+// offByDefault are the rules dharness writes as "off" rather than "error".
+//
+// A rule belongs here when it encodes an architectural choice instead of a
+// guardrail on generated code. folder-ownership requires that a split module
+// publish an `index.ts`, so a project that deliberately has no barrel files
+// cannot satisfy it — every split module reports, forever, and the rule is
+// not wrong so much as not that project's architecture. Measured on one such
+// repository: eight findings, none actionable, sitting alongside real ones.
+//
+// pure-index-barrel is deliberately not here. It constrains a barrel that
+// exists rather than requiring one, so in a project without barrels it never
+// fires. Inert is not the same as false.
+//
+// ArchitecturePrompt says how to turn this back on, because a default nobody
+// is told about is indistinguishable from the rule not existing.
+var offByDefault = map[string]bool{
+	"folder-ownership": true,
+}
+
+// DefaultSeverity is what dharness writes for a rule the project has not
+// chosen a severity for itself. It accepts either the bare name or the
+// scoped id.
+func DefaultSeverity(rule string) string {
+	if offByDefault[strings.TrimPrefix(rule, RulesPrefix+"/")] {
+		return "off"
+	}
+	return "error"
 }
