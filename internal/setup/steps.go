@@ -320,6 +320,61 @@ type doctorConfigFile struct {
 	Rules   map[string]string `json:"rules,omitempty"`
 }
 
+// ------------------------------------------------ legacy lint config
+//
+// dharness does not run ESLint and does not want to. This step exists because
+// react-doctor does something dharness's gate then depends on: it adopts the
+// project's `.eslintrc.json` and runs the rules declared there.
+//
+// Measured against react-doctor 0.5.7. A valid file reports its rules as
+// `eslint/no-console` and exits 1. The same file with a trailing comma
+// reports nothing, exits 0, and names the file nowhere — not even under
+// --verbose. The gate goes green having quietly stopped enforcing rules it
+// was enforcing a moment earlier.
+//
+// Only this one format is adopted. `.eslintrc.cjs`, `.eslintrc.yml`,
+// `package.json`'s eslintConfig key and flat config were each measured and
+// ignored, so this is one file rather than a family — and a project on flat
+// config, the ESLint 9 default, has nothing here however broken its config.
+
+type legacyLintConfigStep struct{}
+
+func (legacyLintConfigStep) ID() string {
+	return "fix the lint config react-doctor silently drops"
+}
+
+func (legacyLintConfigStep) Satisfied(p project.Project) bool {
+	if !p.HasSource() {
+		return true
+	}
+	raw, err := os.ReadFile(filepath.Join(p.Source, legacyLintConfig))
+	if err != nil {
+		return true
+	}
+	return json.Valid(raw)
+}
+
+func (legacyLintConfigStep) Describe(project.Project) string {
+	return fmt.Sprintf(
+		"Make %s parse, or delete it. Either answer is fine; a file that is present\nand unreadable is not, because the gate cannot tell you which rules it stopped\nrunning.",
+		legacyLintConfig)
+}
+
+// Delegated always returns ok == true: the project's lint rules are the
+// project's, and repairing broken JSON means deciding what it was meant to
+// say.
+func (legacyLintConfigStep) Delegated(project.Project) (string, bool) {
+	return fmt.Sprintf(
+		"%s does not parse. react-doctor adopts this file and runs the rules in it,\nso a broken one drops them all — measured: the same rules that failed the gate\nwith exit 1 report nothing and it exits 0, naming the file nowhere, not even\nunder --verbose. Repairing it means knowing what it was meant to say.",
+		legacyLintConfig), true
+}
+
+// Apply is unreachable: Delegated always answers ok == true, so applySteps
+// never calls it. Kept as a contract assertion, matching architectureStep.
+func (legacyLintConfigStep) Apply(project.Project, *Writer) error {
+	return fmt.Errorf("%s is delegated and must not be applied", legacyLintConfigStep{}.ID())
+}
+
 // ----------------------------------------------------------------- mcp
 
 type mcpStep struct{}

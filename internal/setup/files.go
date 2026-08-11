@@ -24,6 +24,11 @@ const (
 	doctorConfig   = "doctor.config.json"
 	mcpConfig      = ".mcp.json"
 	huskyHook      = ".husky/pre-commit"
+
+	// legacyLintConfig is the one lint config react-doctor adopts, and so the
+	// only one whose breakage reaches dharness's gate. Flat config, the ESLint
+	// 9 default, is not read by react-doctor at all.
+	legacyLintConfig = ".eslintrc.json"
 )
 
 // skillLocations are the paths react-doctor's installer writes a skill into,

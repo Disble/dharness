@@ -855,3 +855,78 @@ func writeProjectFallow(t *testing.T, source, contents string) {
 		t.Fatal(err)
 	}
 }
+
+// react-doctor adopts .eslintrc.json and runs the rules it declares. Measured
+// against react-doctor 0.5.7: a valid one reports `eslint/no-console` and
+// exits 1; the same file with a trailing comma drops those findings and exits
+// 0, and says nothing about the file even under --verbose.
+//
+// That is dharness's gate quietly losing rules it was enforcing, which is why
+// the step exists. Only this one format is adopted — .eslintrc.cjs, .yml,
+// package.json#eslintConfig and flat config were all measured and ignored —
+// so the check is one file, not a family.
+func TestBrokenLegacyESLintConfigIsReportedBecauseReactDoctorAdoptsIt(t *testing.T) {
+	newProject := func(t *testing.T) (project.Project, string) {
+		t.Helper()
+		root := t.TempDir()
+		return project.Project{Root: root, Source: root}, root
+	}
+
+	t.Run("no legacy config", func(t *testing.T) {
+		p, _ := newProject(t)
+		if !(legacyLintConfigStep{}).Satisfied(p) {
+			t.Error("Satisfied() = false with no .eslintrc.json to adopt")
+		}
+	})
+
+	t.Run("valid legacy config", func(t *testing.T) {
+		p, root := newProject(t)
+		writeProjectSource(t, root, legacyLintConfig, `{"rules":{"no-console":"error"}}`)
+		if !(legacyLintConfigStep{}).Satisfied(p) {
+			t.Error("Satisfied() = false for a config react-doctor can read")
+		}
+	})
+
+	t.Run("broken legacy config", func(t *testing.T) {
+		p, root := newProject(t)
+		writeProjectSource(t, root, legacyLintConfig, `{"rules":{"no-console":"error",}`)
+
+		if (legacyLintConfigStep{}).Satisfied(p) {
+			t.Error("Satisfied() = true for a config react-doctor silently drops")
+		}
+		why, ok := (legacyLintConfigStep{}).Delegated(p)
+		if !ok {
+			t.Fatal("Delegated() = false; the project's own lint config is not dharness's to rewrite")
+		}
+		if !strings.Contains(why, "exits 0") {
+			t.Errorf("the reason does not name the silence that makes this worth reporting:\n%s", why)
+		}
+	})
+
+	// Flat config is the ESLint 9 default and react-doctor ignores it, so a
+	// project on flat config has nothing to report however broken it is.
+	t.Run("flat config is not adopted", func(t *testing.T) {
+		p, root := newProject(t)
+		writeProjectSource(t, root, "eslint.config.js", "export default [ this is not javascript")
+		if !(legacyLintConfigStep{}).Satisfied(p) {
+			t.Error("Satisfied() = false for flat config, which react-doctor never reads")
+		}
+	})
+
+	t.Run("no JS project", func(t *testing.T) {
+		if !(legacyLintConfigStep{}).Satisfied(project.Project{Root: t.TempDir()}) {
+			t.Error("Satisfied() = false with no JS project")
+		}
+	})
+}
+
+func writeProjectSource(t *testing.T, root, rel, contents string) {
+	t.Helper()
+	path := filepath.Join(root, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
