@@ -676,59 +676,76 @@ the multi-preset composition test (18.1), the remaining framework goldens
       change: a `wails.json` this preset cannot parse still matches, still
       contributes the documented default, and names what it could not read
 
-#### Phase 17: Next.js and Expo — dependency-only presets (spec: `framework-presets` req "registry selects through one switch")
+#### Phase 17: Next.js and Expo — dependency-only presets (spec: `framework-presets` req "registry selects through one switch") — DONE
 
-- [ ] 17.1 RED `internal/preset/nextjs_test.go`: `TestNextjsDetectsDependency`
+- [x] 17.1 RED `internal/preset/nextjs_test.go`: `TestNextjsDetectsDependency`
       — a `package.json` fixture at Source declaring `next` in
       `dependencies`; `nextjs{}.Detect(p)` returns `matched == true`,
       evidence naming the `package.json` dependency; fails, `nextjs.go`
       does not exist
-- [ ] 17.2 GREEN `internal/preset/nextjs.go`: `nextjs` type, Source scope,
-      `Detect` checks `dependencies`/`devDependencies` for `next`; empty
-      manifest unless slice review decides otherwise (design fixes only
-      Wails' shape; Next.js/Expo are populated here — confirm against
-      `exploration.md`/`design.md` whether either contributes a fact beyond
-      matching. If neither design document specifies a Next.js/Expo
-      manifest fact, ship both with an empty manifest and evidence-only
-      `Detect`, and record that as this slice's own scoping decision in the
-      PR description — do not invent a fact the design never asked for)
-- [ ] 17.3 RED `internal/preset/nextjs_test.go`: `TestNextjsNoMatchWithoutDependency`
-- [ ] 17.4 RED `internal/preset/expo_test.go`: `TestExpoDetectsDependency` —
+- [x] 17.2 GREEN `internal/preset/nextjs.go`: `nextjs` type, Source scope,
+      `Detect` checks `dependencies`/`devDependencies` for `next`.
+      **Scoping decision, recorded here per this task's own instruction**:
+      neither `nextjs` nor `expo` contributes an `ignorePatterns` fact —
+      measured, not left open: fallow honours gitignore, and `.next/`/
+      `.expo/` are gitignored by every starter of each framework, so a
+      pattern would re-implement what the CLI already does (`CLAUDE.md`'s
+      first rule; `docs/learning-log.md`, this date). `nextjs` instead
+      populates the orchestrator's added `Manifest.Seeds` dimension —
+      structural facts Next.js documents about its own routing, offered to
+      `ArchitecturePrompt` as "confirm this against the tree", never as a
+      zone (§21) — verified directly against Next.js's own project-structure
+      documentation, not invented
+- [x] 17.3 RED `internal/preset/nextjs_test.go`: `TestNextjsNoMatchWithoutDependency`
+- [x] 17.4 RED `internal/preset/expo_test.go`: `TestExpoDetectsDependency` —
       same shape for `expo` in `dependencies`
-- [ ] 17.5 GREEN `internal/preset/expo.go`: `expo` type, Source scope,
-      mirrors `nextjs.go`
-- [ ] 17.6 RED `internal/preset/expo_test.go`: `TestExpoNoMatchWithoutDependency`
+- [x] 17.5 GREEN `internal/preset/expo.go`: `expo` type, Source scope,
+      mirrors `nextjs.go`'s detection. **Unverified, recorded rather than
+      guessed**: Expo's file-based-routing documentation returned 404 during
+      this pass, so `expo` ships detection-only with an empty manifest — no
+      facts, no seeds — until a future change verifies a real fact
+- [x] 17.6 RED `internal/preset/expo_test.go`: `TestExpoNoMatchWithoutDependency`
 
-#### Phase 18: multi-preset composition, the real scenario (spec: `framework-presets` req "a Wails root with a Next.js source contributes from both presets")
+#### Phase 18: multi-preset composition, the real scenario (spec: `framework-presets` req "a Wails root with a Next.js source contributes from both presets") — DONE
 
-- [ ] 18.1 RED `internal/preset/preset_test.go`:
+- [x] 18.1 RED `internal/preset/preset_test.go`:
       `TestWailsRootWithNextjsSourceContributesFromBoth` — a fixture with
       `wails.json` at Root and `next` declared at Source; `Resolve(p)`
       returns both matches, and the union'd manifest handed to
       `ownedFilesStep` carries both presets' keys, neither reported absent;
-      fails until both preset packages are registered in the factory
-- [ ] 18.2 GREEN `internal/preset/factory.go` (or wherever the design's "one
-      switch in a factory" lives): register `wails`, `nextjs`, `expo`,
-      `generic` in the real registry
-- [ ] 18.3 RED `internal/setup/golden_test.go`: `TestFrameworkGoldens` cases
-      `wails`, `nextjs`, `wails-nextjs` (per Decision 7's fixture list) —
-      fail, fixtures do not exist yet
-- [ ] 18.4 GREEN: capture the three framework goldens via
-      `go test ./internal/setup -run TestFrameworkGoldens -update`; the
-      commit message/PR description states which manifest fact each golden
-      pins, per Decision 7's living-fixture rule
+      fails until both preset packages are registered in the factory.
+      **Note recorded, not silently absorbed**: `generic` also matches
+      alongside a real Root-scope preset — resolve's own documented rule is
+      that a matching preset short-circuits nothing — so the real assertion
+      is on the two real preset IDs being present and `expo` being absent,
+      not on an exact match count
+- [x] 18.2 GREEN `internal/preset/factory.go`: `registry` moved out of
+      `preset.go` into its own file — the design's "one switch in a
+      factory" — now holding `wails{}, nextjs{}, expo{}, generic{}`
+- [x] 18.3 RED `internal/setup/golden_test.go`: `TestFrameworkGoldens` cases
+      `nextjs`, `wails-nextjs` added (`wails` already existed from Slice 5's
+      first pass) — fail, fixtures do not exist yet; confirmed RED before
+      capture (`nextjs.txt`/`wails-nextjs.txt`: file not found)
+- [x] 18.4 GREEN: captured via
+      `go test ./internal/setup -run TestFrameworkGoldens -update`. `nextjs`
+      pins the two seeds Next.js's own documented top-level structure and
+      "no position beyond routing" quote; `wails-nextjs` pins the same seeds
+      alongside wails' `ignorePatterns` fact, proving both presets render
+      into one project. `wails.txt` (already committed) is byte-for-byte
+      unchanged — confirmed via `git status`, no diff — because wails
+      contributes no seeds and this pass added no new Fact
 
-#### Phase 19: registry-wide contract tests over the real four presets
+#### Phase 19: registry-wide contract tests over the real four presets — DONE
 
-- [ ] 19.1 RED `internal/preset/preset_test.go`:
-      `TestEveryFactCarriesEvidence` (registry-wide form, extending Slice
-      2's stub-only version) — walks the real registry (`wails`, `nextjs`,
-      `expo`, `generic`) against representative fixtures and asserts
-      `Manifest.Validate()` on each match's manifest. **Not done this
-      pass** — `nextjs`/`expo` do not exist yet; `TestWailsEvidenceValidates`
-      (16.9) covers wails alone in the meantime
-- [ ] 19.2 GREEN: fix whatever 19.1 finds (expected: nothing, if Phases
-      16–17 built evidence correctly)
+- [x] 19.1 RED `internal/preset/preset_test.go`:
+      `TestRealRegistryFactsAndSeedsValidate` (registry-wide form, named
+      differently from the stub-only `TestEveryFactCarriesEvidence` to avoid
+      a collision, same intent) — walks `Resolve(p)` over the real registry
+      against a fixture matching wails, nextjs and expo at once, and asserts
+      `Manifest.Validate()` on every match, covering both Facts and the new
+      Seeds
+- [x] 19.2 GREEN: nothing to fix — Phases 16–17 already built evidence
+      correctly; confirmed by running the test, not assumed
 - [x] 19.3 RED `internal/setup/steps_test.go`:
       `TestWailsMatchedOwnedFileIsNoLongerEmpty` — the success criterion
       stated directly: a Wails-matched project's `.dharness/fallow.jsonc`
@@ -741,26 +758,36 @@ the multi-preset composition test (18.1), the remaining framework goldens
       preset's value into the owned file — the end-to-end proof of the
       proposal's "applied to the motivating repository" claim
 
-#### Phase 20: documentation
+#### Phase 20: documentation — DONE
 
-- [ ] 20.1 `docs/learning-log.md`: one dated line for the region decision
-      (Decision 8) if not already recorded in Slice 2, and one for the
-      `entryPoints`-rejection precedent being reaffirmed here rather than
-      re-litigated
+- [x] 20.1 `docs/learning-log.md`: Decision 8's region marker was already
+      recorded in Slice 2 (2026-08-11, "The region dharness rewrites..."), so
+      this pass added: the gitignore/`ignorePatterns` measurement for
+      Next.js and Expo, the `Manifest.Seeds` scope-closure decision, and
+      Expo's unverified-documentation state — four new dated lines total
+      (three for this phase's scope, one folded into 17.5's own entry)
 
-#### Phase 21: Slice 5 verification
+#### Phase 21: Slice 5 verification — DONE
 
 - [x] 21.1 `go build ./...`, `go vet ./...`, `gofmt -l .`, `go test ./...`
-      clean — passing for the Wails-only diff landed this pass
-- [ ] 21.2 `go run ./tools/mutationstaged` over `internal/preset/wails.go`,
-      `nextjs.go`, `expo.go`, `factory.go` — dry then real, floor 0.80.
-      **wails.go's share done**: staged run over `sync.go`, `preset.go`,
-      `wails.go`, `steps.go` scored **1.00 (42/42 killed, 0 survived)**.
-      `nextjs.go`/`expo.go`/`factory.go` do not exist yet
+      clean — passing for the full slice (Wails, Next.js, Expo, factory.go,
+      the Seeds dimension)
+- [x] 21.2 `go run ./tools/mutationstaged` over the staged set
+      (`expo.go`, `factory.go`, `nextjs.go`, `preset.go`, `prompt.go` —
+      `wails.go`/`steps.go`/`sync.go` were already committed from this
+      slice's first pass and outside this run's staged scope). First run:
+      0.90 (19/21 killed), two survivors — a `Manifest.Validate` Seeds-loop
+      `break` mutant (no test constructed a Seed with empty `Because`) and a
+      `len(seeds) > 0` → `> 1` mutant in `ArchitecturePrompt` (every real
+      preset that seeds happens to contribute exactly two, so `>0`/`>1` were
+      indistinguishable through it). Fixed by adding
+      `TestEverySeedCarriesEvidence` and extracting `renderSeeds` into its
+      own function, tested directly against exactly one seed. Re-run: **1.00
+      (25/25 killed)**
 - [x] 21.3 `bash scripts/verify-gate.sh` — "the hook refused a broken file,
       as it must"
-- [ ] 21.4 Full success-criteria sweep against `proposal.md`'s checklist —
-      not run; the change is not complete (Next.js/Expo remain)
+- [x] 21.4 Full success-criteria sweep against `proposal.md`'s checklist —
+      run; see this apply pass's report for the item-by-item result
 
 ---
 

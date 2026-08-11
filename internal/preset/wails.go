@@ -47,11 +47,20 @@ func (wails) Detect(p project.Project) (Match, bool) {
 	if _, err := os.Stat(path); err != nil {
 		return Match{}, false
 	}
-	// Evidence/Because are rendered text, not a filesystem operation — the
-	// slash spelling keeps a golden fixture byte-stable across platforms,
-	// matching golden_test.go's own substitutePaths (native and slash
-	// spellings of p.Root are both replaced with <root>, in that order).
-	display := filepath.ToSlash(path)
+	// Rendered text names the file, never the path to it. Everything a preset
+	// renders is written into .dharness/fallow.jsonc, which is committed: an
+	// absolute path there leaks one machine's disk layout into a shared file,
+	// makes the file differ on every checkout, and — because
+	// ownedFilesStep.Satisfied compares the region's bytes — leaves the step
+	// permanently unsatisfied for everyone but whoever ran sync last,
+	// rewriting it on every run forever.
+	//
+	// The name alone is unambiguous: wails.json is found at the repository
+	// root, which is what detecting it means. No path is needed and none may
+	// be rendered. The golden fixtures cannot enforce this — they substitute
+	// the root with <root> so a fixture captured on one machine passes on
+	// another, which hides exactly this leak — so a direct test does.
+	display := wailsJSONFile
 
 	dir := wailsJSDirDefault
 	because := fmt.Sprintf("%s declares no \"wailsjsdir\", so the default Wails itself falls back to (%s/) applies", display, wailsJSDirDefault)

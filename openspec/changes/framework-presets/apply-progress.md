@@ -831,3 +831,215 @@ No survivors to explain away this round.
 - Phase 21.2 (mutation over `nextjs.go`/`expo.go`/`factory.go`) and 21.4
   (the full proposal.md success-criteria sweep) — neither file nor a
   complete change exists yet to check.
+
+---
+
+## Slice 5b — Next.js, Expo, `factory.go`, and the `Manifest.Seeds` scope-closure (this pass, PR6, final PR of the chain)
+
+Branch `feat/preset-nextjs-expo`, stacked on `feat/preset-frameworks` (PR #13)
+→ #12 → #11 → #10 → #9. This closes both Phases 17–21 left open by the first
+Slice 5 pass, and a scope miss the orchestrator identified: the proposal
+wanted presets carrying facts *and* decisions, and the design's `Manifest`
+only ever grew a `Facts` field — the decisions half (structural context, not
+zones) was lost. This pass adds it.
+
+### The `Manifest.Seeds` dimension (orchestrator-directed, not in design.md)
+
+`internal/preset/preset.go` gained a `Seed{Text, Because}` type and
+`Manifest.Seeds []Seed`, validated the same way `Fact` is —
+`Manifest.Validate()` now also rejects a `Seed` with an empty `Because`.
+`Seed` carries no `Key` field at all, so it structurally cannot collide with
+Decision 8's reserved-`"boundaries"`-key guard: a preset cannot accidentally
+write a zone through the seed path even if it tried. `preset.Seeds(matches
+[]Match) []Seed` enumerates them in the same Root-then-Source, registry
+order `Keys` already uses.
+
+Wired into `ArchitecturePrompt` (`internal/setup/prompt.go`) as a fourth
+`preset.Resolve` call site (design decision 4 names three: `ownedFilesStep`,
+`boundariesOwnerStep`; this is the fourth, documented in the function's own
+doc comment as such). Extracted into `renderSeeds(seeds []preset.Seed)
+string`, returning `""` for an empty slice — the byte-identity path
+`TestGenericGoldenIsUnchanged` depends on, confirmed unchanged (see
+Verification below). The rendered framing is explicit per §21: "Confirm or
+correct this against the tree. It names structure, not zones — those are
+still read from the code and the person who wrote it, never from this
+list." — never "these are your zones."
+
+### `internal/preset` package doc — the "no per-framework rules" decision, written down
+
+Per the orchestrator's fourth instruction: the user confirmed the eslint
+plugin's rules are framework-agnostic, and no evidence supports a
+framework-specific `maxFileLines` or severity. Rather than leave that an
+implicit absence, `internal/preset`'s package doc comment (`preset.go`) now
+states the reasoning directly: five of six rules are guardrails on generated
+code with no framework axis, and `folder-ownership` already left the preset
+rung entirely for git-derived detection (`DefaultSeverity`, Slice 4). A
+future preset arguing otherwise needs a measured case, the same discipline
+`CLAUDE.md` applies everywhere else in this repository.
+
+### Next.js (`internal/preset/nextjs.go`)
+
+Source scope; `Detect` reads `package.json`'s `dependencies`/
+`devDependencies` for `next` (shared `declaresDependency` helper with expo).
+**Contributes no `ignorePatterns` fact — measured, not left open.** fallow
+honours gitignore; `.next/` is gitignored by every Next.js starter, so an
+orphan file inside it is already invisible to fallow (an orphan file in a
+*tracked* directory is reported as unused, the same file inside a gitignored
+one is not — this is the decisive test, recorded in
+`docs/learning-log.md`). A pattern here would re-implement what the CLI
+already does — `CLAUDE.md`'s first rule, the same lesson this repository
+already recorded once for `entryPoints`.
+
+Contributes two `Seed`s instead, verified directly against Next.js's own
+`project-structure` documentation page (not carried over from any local
+checkout — the instruction was explicit that no local path to an upstream
+reference project may appear in any artifact, and none does): the four
+documented top-level folders (`app`/`pages` for routing, `public` for static
+assets, optional `src`), framed as "routes are a delivery shell around the
+domain, not domain modules themselves" — and the unopinionated-elsewhere
+quote, verbatim: *"Next.js is unopinionated about how you organize and
+colocate your project files,"* plus *"components and lib folders are
+generalized placeholders, their naming has no special framework
+significance."* Deliberately **not** conditioned on which of `app/`/`pages/`
+actually exists in the tree — the seed states what Next.js documents, and
+"What to find out" (unchanged, immediately below the seed section) is where
+the agent reads the real tree. This keeps `Detect` a single package.json
+read with no extra directory probing, and avoids inventing a naming
+convention (`components/`, `lib/`) the framework's own docs explicitly
+disclaim.
+
+### Expo (`internal/preset/expo.go`)
+
+Source scope; `Detect` reads `package.json` for `expo`, same shape as
+Next.js. **Detection only — empty manifest, no facts, no seeds.** Expo's
+file-based-routing documentation returned 404 during this pass; shipping an
+invented seed would repeat a mistake this repository has already corrected
+more than once (recorded in the package doc comment and
+`docs/learning-log.md`). No `ignorePatterns` for the same gitignore reason
+as Next.js (`.expo/` is gitignored by every Expo starter).
+
+### `factory.go`
+
+`registry` (`[]Preset{wails{}, nextjs{}, expo{}, generic{}}`) moved out of
+`preset.go` into its own file — the design's "one switch in a factory" —
+worth separating now that it is a four-entry registration point rather than
+a two-line list next to `Resolve`/`resolve`/`Keys`/`Seeds`.
+
+### Multi-preset composition and registry-wide validation
+
+`TestWailsRootWithNextjsSourceContributesFromBoth` (`preset_test.go`, task
+18.1) is the real scenario through the real registry (not stubs): a `wails.
+json`-at-Root + `next`-dependency-at-Source fixture. **Correction against
+the task's own prose**: the task's informal "one Root match and one Source
+match" is not literal — `generic` always matches too (resolve's own
+documented rule: "a matching preset short-circuits nothing"), so the
+fixture actually resolves to three matches (`wails`, `generic`, `nextjs`),
+with `generic`'s empty manifest contributing nothing observable. The test
+asserts on the two real preset IDs being present and `expo` being absent,
+not on an exact count — the first version of this test asserted `len(matches)
+!= 2` and would have failed for the wrong reason (a correct implementation,
+not a bug) had it not been caught before this run.
+
+`TestRealRegistryFactsAndSeedsValidate` (task 19.1's registry-wide form,
+named apart from the existing stub-only `TestEveryFactCarriesEvidence` to
+avoid a name collision) walks `Resolve` over a fixture matching wails,
+nextjs and expo simultaneously and asserts `Manifest.Validate()` on every
+match — covering both `Facts` and the new `Seeds` in one pass.
+
+### Framework goldens
+
+`nextjs` and `wails-nextjs` captured via `-update` (task 18.3/18.4). RED
+confirmed first: both reported "file not found" before capture.
+`nextjs.txt` pins the two seeds rendered under a new "### What the framework
+already documents" section in `architectureStep`'s `Describe` output, with
+no `ignorePatterns` region (empty facts). `wails-nextjs.txt` pins both
+contributions in one repository — wails' `ignorePatterns` fact in the
+`fallow.jsonc` region and nextjs' seeds in the architecture prompt. **`wails.
+txt` (already committed from the first Slice 5 pass) is confirmed
+byte-for-byte unchanged** — `git status` shows no modification — because
+wails contributes no seeds and this pass added no new `Fact`; grepped both
+new fixtures for leaked absolute paths (`AppData`, drive-letter, `/tmp/`),
+clean.
+
+### Two real mutation survivors caught and fixed, not task-list ambiguities
+
+First staged mutation run (`expo.go`, `factory.go`, `nextjs.go`, `preset.go`,
+`prompt.go`) scored **0.90 (19/21 killed)**:
+
+1. `Manifest.Validate`'s `Seeds` loop survived a `Range Break` mutant — no
+   test constructed a `Manifest` with a `Seed` whose `Because` was empty, so
+   the loop being replaced with an immediate `break` (never checking
+   anything) went undetected. Fixed: `TestEverySeedCarriesEvidence`
+   (`preset_test.go`), the direct counterpart to the existing
+   `TestEveryFactCarriesEvidence`.
+2. `internal/setup/prompt.go`'s `len(seeds) > 0` survived an `Integer
+   Increment` mutant to `> 1` — every real preset that seeds (`nextjs`)
+   happens to contribute exactly two seeds, so `>0` and `>1` were
+   indistinguishable through it. Fixed by extracting the render branch into
+   `renderSeeds(seeds []preset.Seed) string`, tested directly
+   (`TestRenderSeedsEmptyForNoSeeds`, `TestRenderSeedsRendersExactlyOneSeed`
+   — deliberately constructed with exactly one seed, not two) rather than
+   only through whatever a real preset happens to contribute.
+
+Re-run after both fixes: **1.00 (25/25 killed, 0 survived)**.
+
+### Verification (all clean)
+
+```
+go build ./...          # exit 0
+go vet ./...             # exit 0
+gofmt -l .                # no output
+go test ./...              # ok, all 9 packages (internal/app, internal/cli,
+                              internal/preset, internal/project, internal/runner,
+                              internal/setup, internal/testsupport/mutation,
+                              internal/tool, tools/mutationstaged)
+bash scripts/verify-gate.sh    # "verify-gate: the hook refused a broken file, as it must."
+git add -A && go run ./tools/mutationstaged
+  # Total: 25, Killed: 25, Survived: 0, Score: 1.00 (minimum: 0.80) — PASS
+  # staged set: internal/preset/expo.go, internal/preset/factory.go,
+  # internal/preset/nextjs.go, internal/preset/preset.go, internal/setup/prompt.go
+```
+
+### `docs/learning-log.md` — three new dated lines this pass
+
+1. The gitignore/`ignorePatterns` measurement for Next.js and Expo.
+2. The `Manifest.Seeds` scope-closure decision and why `Seed` cannot collide
+   with the reserved-`boundaries` guard.
+3. Expo's unverified-documentation state, recorded as a decision.
+
+(Decision 8's region-marker line was already recorded in Slice 2; not
+duplicated here.)
+
+### Line count against the 400-line budget
+
+Code changes (excluding golden fixtures and documentation):
+`expo.go` 60, `expo_test.go` 56, `factory.go` 12, `nextjs.go` 95,
+`nextjs_test.go` 81, `preset.go` +68/-diff, `preset_test.go` +67,
+`golden_test.go` +43, `prompt.go` +34, `setup_test.go` +29 — **~545 lines**,
+over the nominal 400-line budget the forecast already flagged this slice as
+"High risk" for. Not split further: Next.js/Expo and the `Seeds` dimension
+are interdependent (Next.js is the only preset that populates `Seeds` at
+all), and this is explicitly the final PR of the chain per the task
+assignment. Reported here rather than silently absorbed, per this pass's own
+instruction to report an overrun rather than cram it.
+
+### Full proposal.md success-criteria sweep (task 21.4)
+
+| Criterion | Status |
+|---|---|
+| Generic project byte-identical (`Plan()` + tree) | Met — `TestGenericGoldenIsUnchanged`, unmodified fixtures, confirmed unchanged this pass |
+| Wails project's `fallow.jsonc` no longer empty | Met — Slice 5 first pass, `TestWailsMatchedOwnedFileIsNoLongerEmpty` |
+| Collision names the key, shows both values, run continues | Met — Slice 3 + Slice 5 first pass, `TestIgnorePatternsCollidesInTheMotivatingShape` |
+| Resolving a collision makes the step disappear, nothing recorded | Met — Slice 3, `TestCollisionStepDisappearsWhenIntersectionEmpties` |
+| Every manifest fact carries evidence | Met — `Manifest.Validate`, `TestRealRegistryFactsAndSeedsValidate` (this pass, extended to Seeds too) |
+| `folder-ownership` derived, never overwrites a chosen severity | Met — Slice 4 |
+| Wails root + Next.js source contributes from both, resolved by scope | Met — this pass, `TestWailsRootWithNextjsSourceContributesFromBoth` |
+| `go test`/`go vet`/`gofmt`/`mutationstaged` clean on every slice | Met — every slice's own verification section, this one included |
+
+All eight criteria met. The change is complete pending the orchestrator's
+own review and merge sequencing.
+
+### Not committed
+
+Per instruction: no commit, no PR opened. All work left in the tree on
+`feat/preset-nextjs-expo`.

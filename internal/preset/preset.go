@@ -1,6 +1,19 @@
 // Package preset says what is true about a project like this, and how it
 // knows. internal/setup says what gets written; this package holds no file
 // paths, no JSONC, and no writer (design decision 1).
+//
+// No preset here contributes a rule severity or a threshold. Confirmed with
+// the user: the eslint plugin's rules are framework-agnostic. Five of the six
+// rules are guardrails on generated code — a file-length ceiling, jsdoc
+// requirements, barrel purity — and nothing about a three-thousand-line file
+// changes because the framework around it is Next.js instead of Wails. The
+// sixth, folder-ownership, already left this rung entirely: it is derived
+// from whether the tree publishes barrels (DefaultSeverity,
+// internal/setup/plugin.go), which is observable from git rather than
+// assumed from whichever preset happened to match. A future preset that
+// wants a rule or a threshold to vary needs a measured case for it, the same
+// discipline CLAUDE.md already applies everywhere else in this repository —
+// not an assumption that a framework implies a coding convention.
 package preset
 
 import (
@@ -76,13 +89,35 @@ type Fact struct {
 	Because string
 }
 
-// Manifest is an ordered set of facts. A slice, not a map: Go's map
-// iteration order is randomised, and the region rendered into
+// Seed is a structural fact a preset's own framework documents about itself
+// — not a decision. ArchitecturePrompt renders it as "this is what the
+// framework documents; confirm or correct it against the tree", never as
+// "these are your zones": §21 keeps zones with the agent, read from the code
+// and the person who wrote it, not detected. A preset that decided zones
+// instead would be doing architectureStep's job, which Manifest.Validate's
+// reserved "boundaries" key already refuses for Facts — Seed carries no key
+// at all, so it cannot collide with that guard or with anything fallow
+// reads.
+type Seed struct {
+	// Text is the structural fact, in the framework's own documented terms.
+	Text string
+
+	// Because names the observable that justifies Text — a documentation
+	// page, a quoted sentence from it — the same discipline as Fact.Because
+	// and for the same reason: a convention that changes upstream must be
+	// visible in the repository, not only in this binary.
+	Because string
+}
+
+// Manifest is an ordered set of facts and seeds. A slice, not a map: Go's
+// map iteration order is randomised, and the region rendered into
 // .dharness/fallow.jsonc must be byte-stable across runs or every sync
-// produces a diff (the golden pin depends on it).
+// produces a diff (the golden pin depends on it). The same ordering
+// requirement applies to Seeds, rendered into ArchitecturePrompt.
 type Manifest struct {
 	Schema string
 	Facts  []Fact
+	Seeds  []Seed
 }
 
 // boundariesKey is reserved. Zones encode intent, and no preset may ever
@@ -110,18 +145,13 @@ func (m Manifest) Validate() error {
 			return fmt.Errorf("fact %q's value does not encode: %w", fact.Key, err)
 		}
 	}
+	for _, seed := range m.Seeds {
+		if seed.Because == "" {
+			return fmt.Errorf("seed %q carries no evidence", seed.Text)
+		}
+	}
 	return nil
 }
-
-// registry is the presets Resolve consults, Root scope before Source (order
-// within a scope is registry order, per resolve). generic always matches and
-// stays last so a real signal is reported before the fallback would ever be
-// reached — Resolve/resolve don't rely on this ordering (a matching preset
-// short-circuits nothing), but it keeps the list read the way it resolves.
-//
-// nextjs and expo (both Source-scope) join once their own presets exist —
-// see the framework-presets task list, Slice 5, Phase 17.
-var registry = []Preset{wails{}, generic{}}
 
 // Resolve returns every preset that matches p, Root scope before Source
 // scope, registry order within a scope. It never returns nil: generic
@@ -168,4 +198,16 @@ func Keys(matches []Match) []string {
 		}
 	}
 	return keys
+}
+
+// Seeds enumerates every seed contributed across matches, in match order
+// (the same Root-then-Source, registry order Resolve already returns) — so
+// ArchitecturePrompt renders them in a stable sequence and a project's
+// prompt does not reorder itself between two runs.
+func Seeds(matches []Match) []Seed {
+	var seeds []Seed
+	for _, match := range matches {
+		seeds = append(seeds, match.Manifest.Seeds...)
+	}
+	return seeds
 }

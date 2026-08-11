@@ -100,6 +100,17 @@
      read intent off a tree. Do the analysis and write the result — nothing else
      needs to change.
    describe |
+     ### What the framework already documents
+     
+     - Next.js documents four top-level folders: app/ (App Router) or pages/ (Pages Router) for routing, public/ for static assets served as-is, and an optional src/ that wraps the rest. Routes are a delivery shell around the domain, not domain modules themselves.
+       (https://nextjs.org/docs/app/getting-started/project-structure — Next.js's own documented top-level project structure)
+     - Beyond routing, Next.js takes no position on how the rest of the source is organized — read the real seams off this tree rather than assuming a components/ or lib/ convention.
+       (https://nextjs.org/docs/app/getting-started/project-structure: "Next.js is unopinionated about how you organize and colocate your project files," and its own components/lib example folders "have no special framework significance.")
+     
+     Confirm or correct this against the tree. It names structure, not
+     zones — those are still read from the code and the person who wrote it,
+     never from this list.
+     
      ### What to find out
      
      1. Read the source layout. What are the real seams: features, layers, a
@@ -260,7 +271,10 @@ frontend/package-lock.json
 frontend/package.json
 ---
 {
-  "name": "wails-frontend"
+  "name": "wails-nextjs-frontend",
+  "dependencies": {
+    "next": "^14.0.0"
+  }
 }
 ---
 wails.json

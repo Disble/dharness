@@ -180,3 +180,50 @@ func equalStringSlices(got, want []string) bool {
 	}
 	return true
 }
+
+// Rendered evidence must name the file, never the path to it.
+//
+// Everything a preset renders is written into .dharness/fallow.jsonc, which
+// is committed. An absolute path there leaks the layout of one machine's disk
+// into a shared file, makes the file differ on every developer's checkout,
+// and — because ownedFilesStep.Satisfied compares the region's bytes — leaves
+// the step permanently unsatisfied for everyone except whoever ran sync last,
+// rewriting it on every run forever.
+//
+// The golden fixtures cannot catch this: they substitute the root path with
+// <root> precisely so a fixture captured on one machine passes on another, so
+// the leak is invisible to them by construction. Hence a direct test.
+func TestRenderedEvidenceNamesNoAbsolutePath(t *testing.T) {
+	root := t.TempDir()
+	writeWailsFixtureFile(t, root, "wails.json", `{"wailsjsdir": "./frontend/src/lib"}`)
+	p := project.Project{Root: root, Source: filepath.Join(root, "frontend")}
+
+	match, ok := wails{}.Detect(p)
+	if !ok {
+		t.Fatal("Detect() = false for a repository with wails.json")
+	}
+
+	rendered := []string{match.Evidence, match.Uncertain}
+	for _, fact := range match.Manifest.Facts {
+		rendered = append(rendered, fact.Because)
+	}
+	for _, seed := range match.Manifest.Seeds {
+		rendered = append(rendered, seed.Text, seed.Because)
+	}
+
+	for _, text := range rendered {
+		if text == "" {
+			continue
+		}
+		if strings.Contains(text, filepath.ToSlash(root)) || strings.Contains(text, root) {
+			t.Errorf("rendered evidence carries the absolute path to the repository:\n%s", text)
+		}
+		if !strings.Contains(text, wailsJSONFile) && strings.Contains(text, "wails") {
+			continue
+		}
+	}
+
+	if !strings.Contains(match.Evidence, wailsJSONFile) {
+		t.Errorf("Evidence does not name the file it read: %q", match.Evidence)
+	}
+}
