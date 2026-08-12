@@ -211,6 +211,18 @@ ahorro.
 *Salió de:* que react-doctor se acota al cambio con `--staged` mientras fallow
 construye el grafo del repositorio igual, así que tiene un piso más alto.
 
+*Enmendado el 12 de agosto de 2026.* «Por costo ascendente» significa medido, no
+supuesto. La fase de ESLint se había ubicado última por razonamiento, y al
+medirla resultó la más barata de las cuatro: 1008 ms de mediana contra 2959 de
+react-doctor, 2102 de fallow audit y 1398 de fallow dupes, sobre la misma lista
+explícita de archivos en stage y tres corridas cada una. Corre primera. La misma
+medición encontró fallow más barato que react-doctor sobre ese proyecto de
+referencia, pero ese orden se argumentó por escalado —`--staged` acota a
+react-doctor al diff, el grafo le da a fallow un piso— y un repositorio de cinco
+archivos tiene un grafo demasiado chico para probarlo: queda abierto en lugar de
+cerrarse con el instrumento equivocado (`docs/learning-log.md`, 12 de agosto
+de 2026).
+
 ### 13. La salida temprana vale más que cualquier optimización
 
 La forma más barata de correr algo es no correrlo. Si no hay fuentes en el
