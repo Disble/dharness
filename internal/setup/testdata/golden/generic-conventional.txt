@@ -44,7 +44,18 @@
      
          extends:
            - .dharness/lefthook.yml
-6  fix the lint config react-doctor silently drops
+6  point eslint.config.js at the file dharness owns
+   satisfied=false delegated=false
+   why |
+     
+   describe |
+     ESLint's flat config has no `extends` of its own, so the layer arrives by
+     import and spread instead. A new eslint.config.js is written:
+     
+         import dharnessLayer from ".dharness/eslint.config.js";
+     
+         export default [...dharnessLayer({ plugin: dharnessPlugin })];
+7  fix the lint config react-doctor silently drops
    satisfied=true delegated=true
    why |
      .eslintrc.json does not parse. react-doctor adopts this file and runs the rules in it,
@@ -55,14 +66,14 @@
      Make .eslintrc.json parse, or delete it. Either answer is fine; a file that is present
      and unreadable is not, because the gate cannot tell you which rules it stopped
      running.
-7  give the agent fallow's own tools
+8  give the agent fallow's own tools
    satisfied=false delegated=false
    why |
      
    describe |
      fallow ships an MCP server with the analysis an agent would otherwise ask a
      wrapper to invent: boundaries, traces, impact, health.
-8  wire the gate into git
+9  wire the gate into git
    satisfied=false delegated=true
    why |
      nothing answers: there is no lefthook config, no .husky/ and no lefthook
@@ -76,7 +87,7 @@
      lefthook writes its own git hook once configured and installed; husky keeps
      a shell script that needs one appended line. Either way, the step is
      satisfied once "dharness check" runs on commit.
-9  install react-doctor's agent skill
+10  install react-doctor's agent skill
    satisfied=false delegated=true
    why |
      its only non-interactive form installs five things: skills for every agent it
@@ -86,7 +97,7 @@
          npx --yes react-doctor@latest install
      
      Choose the skill and decline the rest.
-10  decide this project's architecture
+11  decide this project's architecture
    satisfied=false delegated=true
    why |
      architecture boundaries say what the code is meant to be, and no tool can
@@ -148,10 +159,14 @@
      So `folder-ownership` ships **off**. The other five rules are guardrails on
      generated code and stay on; this one is the only one that takes a side.
      
-     If this project does publish through barrels, turn it on in doctor.config.json:
+     If this project does publish through barrels, turn it on in its own layer in
+     eslint.config.js — an object placed after dharness's spread, since flat config merges
+     last-wins per rule:
      
-         "rules": {
-           "dharness/folder-ownership": "error"
+         {
+           rules: {
+             "dharness/folder-ownership": "error",
+           },
          }
      
      A severity written there survives every later run: dharness fills in only the
@@ -249,6 +264,19 @@ pre-commit:
     }
   }
 }
+---
+eslint.config.js
+---
+// dharness:eslint-import begin — rewritten by `dharness sync`; edits here are lost.
+import dharnessPlugin from "dharness-eslint-plugin";
+import dharnessLayer from ".dharness/eslint.config.js";
+// dharness:eslint-import end
+
+export default [
+  // dharness:eslint-layer begin — rewritten by `dharness sync`; edits here are lost.
+  ...dharnessLayer({ plugin: dharnessPlugin }),
+  // dharness:eslint-layer end
+];
 ---
 package-lock.json
 ---

@@ -52,6 +52,7 @@ func Plan() []Step {
 		fallowExtendsStep{},
 		boundariesOwnerStep{},
 		lefthookExtendsStep{},
+		eslintExtendsStep{},
 		legacyLintConfigStep{},
 		mcpStep{},
 		hookInstallStep{},

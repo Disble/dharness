@@ -57,3 +57,38 @@ func sortedRuleIDs() []string {
 	sort.Strings(ids)
 	return ids
 }
+
+// eslintImportRegion renders the marked import region: the plugin's own
+// import, one per contributed layer, and the import of the owned factory
+// itself — computed from dir the same way ownedFrom computes fallow.jsonc's
+// reference (files.go's stated reason for both to exist), so the reference
+// resolves from wherever this file actually lives.
+func eslintImportRegion(p project.Project, dir string, layers []preset.Layer, indent, eol string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s%s%s", indent, eslintImportBegin, eol)
+	fmt.Fprintf(&b, "%simport dharnessPlugin from %q;%s", indent, RulesPackage, eol)
+	for _, layer := range layers {
+		fmt.Fprintf(&b, "%simport %s from %q;%s", indent, layer.Binding, layer.Package, eol)
+	}
+	fmt.Fprintf(&b, "%simport dharnessLayer from %q;%s", indent, ownedFrom(p, dir, ownedEslint), eol)
+	fmt.Fprintf(&b, "%s%s%s", indent, eslintImportEnd, eol)
+	return b.String()
+}
+
+// eslintLayerRegion renders the marked spread element: a call into the
+// owned factory, passing the plugin under its fixed "plugin" parameter name
+// and every contributed layer under its own binding — the same list
+// eslintImportRegion imports and ownedEslintConfig destructures, so none of
+// the three can disagree (design decision 3).
+func eslintLayerRegion(layers []preset.Layer, indent, eol string) string {
+	args := []string{"plugin: dharnessPlugin"}
+	for _, layer := range layers {
+		args = append(args, layer.Binding)
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s%s%s", indent, eslintLayerBegin, eol)
+	fmt.Fprintf(&b, "%s...dharnessLayer({ %s }),%s", indent, strings.Join(args, ", "), eol)
+	fmt.Fprintf(&b, "%s%s%s", indent, eslintLayerEnd, eol)
+	return b.String()
+}

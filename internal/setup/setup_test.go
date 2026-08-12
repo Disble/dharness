@@ -741,8 +741,8 @@ func TestArchitecturePromptSaysHowToTurnOnTheBarrelRule(t *testing.T) {
 	})
 
 	for _, expected := range []string{
-		"frontend/" + doctorConfig,
-		`"dharness/folder-ownership": "error"`,
+		"frontend/" + eslintConfig,
+		`"dharness/folder-ownership": "error",`,
 		"index.ts",
 	} {
 		if !strings.Contains(prompt, expected) {

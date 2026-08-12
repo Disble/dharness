@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Disble/dharness/internal/jsconfig"
 	"github.com/Disble/dharness/internal/preset"
 	"github.com/Disble/dharness/internal/project"
 	"github.com/Disble/dharness/internal/runner"
@@ -268,6 +269,115 @@ func (lefthookExtendsStep) Delegated(p project.Project) (string, bool) {
 
 func (lefthookExtendsStep) Apply(p project.Project, w *Writer) error {
 	return wireLefthookExtends(p, w)
+}
+
+// -------------------------------------------------------- eslint extends
+//
+// eslintExtendsStep is a third member of the family above, for
+// eslint.config.js instead of .fallowrc.json or lefthook.yml — split out
+// for the same reason that pair already is: the file it targets is neither
+// of theirs.
+//
+// Unlike the other two, presence alone does not delegate (the MODIFIED
+// step-delegation requirement in spec.md): where the existing config is
+// something dharness understands well enough to edit, Delegated answers
+// ok == false and Apply edits it directly. This slice builds only the
+// refusal matrix and the write-if-absent path; splicing into an existing,
+// understood config is a later slice's write path. Satisfied here answers
+// only "does some ESLint config already exist" — narrower than the full
+// byte comparison a later slice adds once there is something to compare
+// against — so an existing, splice-eligible config never reaches Apply in
+// this slice: Satisfied already reports it done.
+
+type eslintExtendsStep struct{}
+
+func (eslintExtendsStep) ID() string {
+	return fmt.Sprintf("point %s at the file dharness owns", eslintConfig)
+}
+
+func (eslintExtendsStep) Satisfied(p project.Project) bool {
+	if !p.HasSource() {
+		return true
+	}
+	return eslintFlatConfig(p.Source) != "" ||
+		eslintTypeScriptConfig(p.Source) != "" ||
+		eslintLegacyConfig(p.Source) != ""
+}
+
+func (eslintExtendsStep) Describe(p project.Project) string {
+	target := ownedFrom(p, p.Source, ownedEslint)
+	return fmt.Sprintf(
+		"ESLint's flat config has no `extends` of its own, so the layer arrives by\nimport and spread instead. A new %s is written:\n\n    import dharnessLayer from %q;\n\n    export default [...dharnessLayer({ plugin: dharnessPlugin })];",
+		eslintConfig, target)
+}
+
+// Delegated answers the full eslint-config-splice refusal matrix: a
+// TypeScript config, a legacy-only project, an unreadable file, a malformed
+// marker pair, or a shape jsconfig.Analyze does not recognise all delegate
+// (ok == true). No config at all, or an existing flat config jsconfig
+// recognises with well-formed markers, does not (ok == false) — the
+// write-if-absent and future splice/replace paths both start from there.
+func (eslintExtendsStep) Delegated(p project.Project) (string, bool) {
+	if !p.HasSource() {
+		return "", false
+	}
+
+	if path := eslintTypeScriptConfig(p.Source); path != "" {
+		return fmt.Sprintf(
+			"%s is TypeScript, and dharness does not parse it — a second grammar plus\ntyped helpers whose semantics belong to the project, the same reasoning §03's\namendment already applies to Stryker configs.",
+			filepath.Base(path)), true
+	}
+
+	if path := eslintFlatConfig(p.Source); path != "" {
+		return delegateFlatEslintConfig(path)
+	}
+
+	if path := eslintLegacyConfig(p.Source); path != "" {
+		return fmt.Sprintf(
+			"%s is this project's only ESLint configuration, and dharness does not\ncompose a flat config on top of a legacy one — a legacy ESLint config,\nmatching legacyLintConfigStep's own reasoning for the analogous\ndoctor-config case. Migrating to flat config is the project's decision.",
+			filepath.Base(path)), true
+	}
+
+	return "", false
+}
+
+// delegateFlatEslintConfig reads an existing flat config and answers every
+// remaining refusal-matrix cell over it: an unreadable file, a malformed
+// marker pair, or whatever jsconfig.Analyze itself refuses — an
+// unrecognised call expression, an ERROR node, a non-array export.
+// Anything jsconfig accepts, with well-formed markers, is not delegated.
+func delegateFlatEslintConfig(path string) (string, bool) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Sprintf("%s could not be read: %s", filepath.Base(path), err), true
+	}
+
+	if why, malformed := malformedEslintMarkerPair(string(raw)); malformed {
+		return why, true
+	}
+
+	if _, why, ok := jsconfig.Analyze(raw); !ok {
+		return why, true
+	}
+
+	return "", false
+}
+
+// malformedEslintMarkerPair checks both marker pairs eslintExtendsStep owns
+// and reports the first malformed one found, or ("", false) when neither
+// is.
+func malformedEslintMarkerPair(raw string) (why string, malformed bool) {
+	if _, _, state := markerRegion(raw, eslintImportBegin, eslintImportEnd); state == markersMalformed {
+		return "the dharness:eslint-import marker pair is malformed — a begin with no\nmatching end, an end with no matching begin, or more than one of either —\nand dharness refuses to guess at a half-written region.", true
+	}
+	if _, _, state := markerRegion(raw, eslintLayerBegin, eslintLayerEnd); state == markersMalformed {
+		return "the dharness:eslint-layer marker pair is malformed — a begin with no\nmatching end, an end with no matching begin, or more than one of either —\nand dharness refuses to guess at a half-written region.", true
+	}
+	return "", false
+}
+
+func (eslintExtendsStep) Apply(p project.Project, w *Writer) error {
+	return wireEslintExtends(p, w)
 }
 
 // --------------------------------------------------- boundaries owner

@@ -389,3 +389,215 @@ func TestUncheckableConfigNoteIsSilentWhenTheConfigCanBeRead(t *testing.T) {
 		t.Errorf("UncheckableConfigNote() = %q with no JS project: an unrelated config was read from the working directory", note)
 	}
 }
+
+// TestEslintExtendsStepDelegatedRefusalMatrix walks every eslint-config-splice
+// refusal-matrix cell in spec.md: ok == true only for a TypeScript config, a
+// legacy-only project, an unreadable file, an unrecognised call, an ERROR
+// node, or a malformed marker pair. No config at all, or a config
+// jsconfig.Analyze recognises with well-formed markers, must not delegate —
+// the write-if-absent and (later) splice/replace paths both start from
+// ok == false.
+func TestEslintExtendsStepDelegatedRefusalMatrix(t *testing.T) {
+	cases := []struct {
+		name       string
+		write      func(t *testing.T, source string)
+		wantOK     bool
+		wantWhyHas string
+	}{
+		{
+			name:       "no config at all",
+			write:      func(*testing.T, string) {},
+			wantOK:     false,
+			wantWhyHas: "",
+		},
+		{
+			name: "TypeScript config always delegates",
+			write: func(t *testing.T, source string) {
+				writeStepFixtureFile(t, source, "eslint.config.ts", "export default [];\n")
+			},
+			wantOK:     true,
+			wantWhyHas: "TypeScript",
+		},
+		{
+			name: "TypeScript .mts config always delegates",
+			write: func(t *testing.T, source string) {
+				writeStepFixtureFile(t, source, "eslint.config.mts", "export default [];\n")
+			},
+			wantOK:     true,
+			wantWhyHas: "TypeScript",
+		},
+		{
+			name: "legacy .eslintrc.json-only delegates",
+			write: func(t *testing.T, source string) {
+				writeStepFixtureFile(t, source, ".eslintrc.json", "{}")
+			},
+			wantOK:     true,
+			wantWhyHas: "legacy",
+		},
+		{
+			name: "plain array-literal export is not delegated",
+			write: func(t *testing.T, source string) {
+				writeStepFixtureFile(t, source, "eslint.config.js", "export default [\n  { rules: {} },\n];\n")
+			},
+			wantOK: false,
+		},
+		{
+			name: "recognised defineConfig(...) is not delegated",
+			write: func(t *testing.T, source string) {
+				writeStepFixtureFile(t, source, "eslint.config.js",
+					"import { defineConfig } from \"eslint/config\";\nexport default defineConfig([\n  { rules: {} },\n]);\n")
+			},
+			wantOK: false,
+		},
+		{
+			name: "unrecognised call expression delegates",
+			write: func(t *testing.T, source string) {
+				writeStepFixtureFile(t, source, "eslint.config.js", "export default tseslint.config(\n  { rules: {} },\n);\n")
+			},
+			wantOK:     true,
+			wantWhyHas: "callee",
+		},
+		{
+			name: "ERROR node delegates",
+			write: func(t *testing.T, source string) {
+				writeStepFixtureFile(t, source, "eslint.config.js", "export default [\n  { a: 1 + },\n];\n")
+			},
+			wantOK:     true,
+			wantWhyHas: "ERROR",
+		},
+		{
+			name: "malformed dharness:eslint-import marker pair delegates",
+			write: func(t *testing.T, source string) {
+				writeStepFixtureFile(t, source, "eslint.config.js",
+					eslintImportBegin+"\nimport dharnessPlugin from \"dharness-eslint-plugin\";\nexport default [];\n")
+			},
+			wantOK:     true,
+			wantWhyHas: "eslint-import",
+		},
+		{
+			name: "malformed dharness:eslint-layer marker pair delegates",
+			write: func(t *testing.T, source string) {
+				writeStepFixtureFile(t, source, "eslint.config.js",
+					"export default [\n  "+eslintLayerBegin+"\n  ...dharnessLayer({ plugin: dharnessPlugin }),\n];\n")
+			},
+			wantOK:     true,
+			wantWhyHas: "eslint-layer",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			tc.write(t, root)
+			p := project.Project{Root: root, Source: root}
+
+			why, ok := (eslintExtendsStep{}).Delegated(p)
+			if ok != tc.wantOK {
+				t.Fatalf("Delegated() ok = %t, why = %q, want ok = %t", ok, why, tc.wantOK)
+			}
+			if tc.wantOK && why == "" {
+				t.Error("Delegated() why is empty on ok = true")
+			}
+			if tc.wantWhyHas != "" && !strings.Contains(why, tc.wantWhyHas) {
+				t.Errorf("Delegated() why = %q, want it to mention %q", why, tc.wantWhyHas)
+			}
+			if !tc.wantOK && why != "" {
+				t.Errorf("Delegated() why = %q, want empty on ok = false", why)
+			}
+		})
+	}
+}
+
+// TestEslintExtendsStepDelegatedWithoutASource pins the same guard every
+// other extends step already has: no JS project means nothing to inspect.
+func TestEslintExtendsStepDelegatedWithoutASource(t *testing.T) {
+	why, ok := (eslintExtendsStep{}).Delegated(project.Project{Root: t.TempDir()})
+	if ok {
+		t.Errorf("Delegated() ok = true with no source, why = %q", why)
+	}
+}
+
+func writeStepFixtureFile(t *testing.T, dir, name, contents string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(contents), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestEslintExtendsStepApplyWritesAConfigWhenNoneExists pins the spec
+// scenario "a project with no ESLint config gets one written": Apply writes
+// a complete eslint.config.js importing and spreading the owned factory,
+// matching wireFallowExtends's write-if-absent shape.
+func TestEslintExtendsStepApplyWritesAConfigWhenNoneExists(t *testing.T) {
+	root := t.TempDir()
+	p := project.Project{Root: root, Source: root}
+
+	if err := (eslintExtendsStep{}).Apply(p, &Writer{}); err != nil {
+		t.Fatalf("Apply() = %v", err)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(root, eslintConfig))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(raw)
+
+	for _, want := range []string{
+		eslintImportBegin,
+		"import dharnessPlugin from \"dharness-eslint-plugin\";",
+		"import dharnessLayer from \".dharness/eslint.config.js\";",
+		eslintImportEnd,
+		"export default [",
+		eslintLayerBegin,
+		"...dharnessLayer({ plugin: dharnessPlugin }),",
+		eslintLayerEnd,
+		"];",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("Apply() wrote a file missing %q:\n%s", want, got)
+		}
+	}
+}
+
+// TestEslintExtendsStepApplyResolvesFromASplitLayout triangulates the case
+// above against the split-layout target ownedFrom already gives every other
+// project file.
+func TestEslintExtendsStepApplyResolvesFromASplitLayout(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "frontend")
+	if err := os.MkdirAll(source, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p := project.Project{Root: root, Source: source}
+
+	if err := (eslintExtendsStep{}).Apply(p, &Writer{}); err != nil {
+		t.Fatalf("Apply() = %v", err)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(source, eslintConfig))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "import dharnessLayer from \"../.dharness/eslint.config.js\";") {
+		t.Errorf("Apply() did not resolve the owned factory from the split layout:\n%s", raw)
+	}
+}
+
+// TestEslintExtendsStepApplyResultIsAlreadySatisfied triangulates
+// write-if-absent against Satisfied: once Apply has run, a fresh Satisfied
+// call over the same project must already report true — the same
+// idempotency shape every other extends step gives.
+func TestEslintExtendsStepApplyResultIsAlreadySatisfied(t *testing.T) {
+	root := t.TempDir()
+	p := project.Project{Root: root, Source: root}
+
+	if (eslintExtendsStep{}).Satisfied(p) {
+		t.Fatal("Satisfied() = true before Apply ever ran")
+	}
+	if err := (eslintExtendsStep{}).Apply(p, &Writer{}); err != nil {
+		t.Fatalf("Apply() = %v", err)
+	}
+	if !(eslintExtendsStep{}).Satisfied(p) {
+		t.Error("Satisfied() = false right after Apply wrote the file")
+	}
+}

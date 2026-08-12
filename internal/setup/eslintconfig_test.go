@@ -2,6 +2,7 @@ package setup
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -78,5 +79,83 @@ func TestOwnedEslintConfigNamesTheDharnessPluginBinding(t *testing.T) {
 
 	if !strings.Contains(got, "plugins: { dharness: plugin }") {
 		t.Errorf("ownedEslintConfig() = %q, want the plugin bound under the dharness key", got)
+	}
+}
+
+// TestEslintImportRegionRendersThePluginAndTheOwnedFactoryImport pins the
+// no-layers case: the marker pair, the plugin's own import and the owned
+// factory's import, computed via ownedFrom the same way fallow.jsonc's
+// reference is (files.go's stated reason for both to exist).
+func TestEslintImportRegionRendersThePluginAndTheOwnedFactoryImport(t *testing.T) {
+	root := t.TempDir()
+	p := project.Project{Root: root, Source: root}
+
+	got := eslintImportRegion(p, p.Source, nil, "", "\n")
+
+	want := eslintImportBegin + "\n" +
+		"import dharnessPlugin from \"dharness-eslint-plugin\";\n" +
+		"import dharnessLayer from \".dharness/eslint.config.js\";\n" +
+		eslintImportEnd + "\n"
+	if got != want {
+		t.Errorf("eslintImportRegion() = %q, want %q", got, want)
+	}
+}
+
+// TestEslintImportRegionRendersOneImportPerLayer triangulates the case
+// above with a contributed layer: the binding is both imported and later
+// passed to the factory call, spelled identically (design decision 3).
+func TestEslintImportRegionRendersOneImportPerLayer(t *testing.T) {
+	root := t.TempDir()
+	p := project.Project{Root: root, Source: root}
+	layers := []preset.Layer{{Package: "eslint-config-next", Binding: "dharnessNext", Because: "published by Next.js"}}
+
+	got := eslintImportRegion(p, p.Source, layers, "", "\n")
+
+	if !strings.Contains(got, "import dharnessNext from \"eslint-config-next\";\n") {
+		t.Errorf("eslintImportRegion() does not import the contributed layer:\n%s", got)
+	}
+}
+
+// TestEslintImportRegionResolvesFromASplitLayout pins the split-layout
+// shape ownedFrom already gives .fallowrc.json: the reference climbs out of
+// Source to reach Root/.dharness/, exactly the same relative path a project
+// config would need to resolve the owned factory.
+func TestEslintImportRegionResolvesFromASplitLayout(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "frontend")
+	p := project.Project{Root: root, Source: source}
+
+	got := eslintImportRegion(p, p.Source, nil, "", "\n")
+
+	if !strings.Contains(got, "import dharnessLayer from \"../.dharness/eslint.config.js\";\n") {
+		t.Errorf("eslintImportRegion() does not resolve from the split layout:\n%s", got)
+	}
+}
+
+// TestEslintLayerRegionCallsTheFactoryWithEveryBinding pins the spread
+// element's own shape: the marker pair, the plugin passed under its fixed
+// "plugin" parameter name, and every contributed layer passed under its own
+// binding — shorthand, since the local name already matches.
+func TestEslintLayerRegionCallsTheFactoryWithEveryBinding(t *testing.T) {
+	layers := []preset.Layer{{Package: "eslint-config-next", Binding: "dharnessNext", Because: "published by Next.js"}}
+
+	got := eslintLayerRegion(layers, "  ", "\n")
+
+	want := "  " + eslintLayerBegin + "\n" +
+		"  ...dharnessLayer({ plugin: dharnessPlugin, dharnessNext }),\n" +
+		"  " + eslintLayerEnd + "\n"
+	if got != want {
+		t.Errorf("eslintLayerRegion() = %q, want %q", got, want)
+	}
+}
+
+// TestEslintLayerRegionWithNoLayersCallsWithOnlyThePlugin triangulates the
+// case above with no contributed layers — the shape generic and Wails
+// projects render today.
+func TestEslintLayerRegionWithNoLayersCallsWithOnlyThePlugin(t *testing.T) {
+	got := eslintLayerRegion(nil, "  ", "\n")
+
+	if !strings.Contains(got, "...dharnessLayer({ plugin: dharnessPlugin }),\n") {
+		t.Errorf("eslintLayerRegion() = %q, want the plugin-only call with no layers", got)
 	}
 }

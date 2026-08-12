@@ -286,3 +286,77 @@ func TestEnsureSharedIsANoOpWhenTheEntryAlreadyExists(t *testing.T) {
 		t.Errorf("ensureShared() left %d occurrences of the entry, want exactly 1", got)
 	}
 }
+
+// TestEslintConfigDetectionOneFixturePerCase pins the four kinds
+// eslintExtendsStep tells apart: flat, TypeScript, legacy-only and absent —
+// each detector answers independently, so a project with more than one kind
+// present is not this test's concern.
+func TestEslintConfigDetectionOneFixturePerCase(t *testing.T) {
+	cases := []struct {
+		name   string
+		file   string
+		detect func(string) string
+	}{
+		{"flat .js", "eslint.config.js", eslintFlatConfig},
+		{"flat .mjs", "eslint.config.mjs", eslintFlatConfig},
+		{"flat .cjs", "eslint.config.cjs", eslintFlatConfig},
+		{"TypeScript .ts", "eslint.config.ts", eslintTypeScriptConfig},
+		{"TypeScript .mts", "eslint.config.mts", eslintTypeScriptConfig},
+		{"TypeScript .cts", "eslint.config.cts", eslintTypeScriptConfig},
+		{"legacy .eslintrc.json", ".eslintrc.json", eslintLegacyConfig},
+		{"legacy .eslintrc.js", ".eslintrc.js", eslintLegacyConfig},
+		{"legacy .eslintrc.cjs", ".eslintrc.cjs", eslintLegacyConfig},
+		{"legacy .eslintrc.yml", ".eslintrc.yml", eslintLegacyConfig},
+		{"legacy .eslintrc.yaml", ".eslintrc.yaml", eslintLegacyConfig},
+		{"legacy .eslintrc", ".eslintrc", eslintLegacyConfig},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			path := filepath.Join(root, tc.file)
+			if err := os.WriteFile(path, []byte("{}"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			if got := tc.detect(root); got != path {
+				t.Errorf("detect() = %q, want %q", got, path)
+			}
+		})
+	}
+}
+
+// TestEslintConfigDetectionIsEmptyWhenAbsent pins the fourth case none of
+// the three fixture-per-case detectors reach: nothing present at all.
+func TestEslintConfigDetectionIsEmptyWhenAbsent(t *testing.T) {
+	root := t.TempDir()
+
+	for name, detect := range map[string]func(string) string{
+		"flat":       eslintFlatConfig,
+		"TypeScript": eslintTypeScriptConfig,
+		"legacy":     eslintLegacyConfig,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := detect(root); got != "" {
+				t.Errorf("detect() = %q, want \"\" with nothing present", got)
+			}
+		})
+	}
+}
+
+// TestEslintFlatConfigPrefersJSOverMjsAndCjs pins the "which one responds"
+// order eslintFlatConfigNames fixes, the same shape fallowConfigCandidates
+// already establishes for fallow's own config.
+func TestEslintFlatConfigPrefersJSOverMjsAndCjs(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"eslint.config.mjs", "eslint.config.js"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("{}"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	want := filepath.Join(root, "eslint.config.js")
+	if got := eslintFlatConfig(root); got != want {
+		t.Errorf("eslintFlatConfig() = %q, want %q", got, want)
+	}
+}

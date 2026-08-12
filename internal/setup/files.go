@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Disble/dharness/internal/preset"
 	"github.com/Disble/dharness/internal/project"
 )
 
@@ -22,7 +23,7 @@ const (
 const (
 	lefthookConfig = "lefthook.yml"
 	fallowConfig   = ".fallowrc.json"
-	doctorConfig   = "doctor.config.json"
+	eslintConfig   = "eslint.config.js"
 	mcpConfig      = ".mcp.json"
 	huskyHook      = ".husky/pre-commit"
 
@@ -241,4 +242,71 @@ func wireLefthookExtends(p project.Project, w *Writer) error {
 	target := ownedFrom(p, p.Root, ownedLefthook)
 	path := filepath.Join(p.Root, lefthookConfig)
 	return w.Write(path, fmt.Appendf(nil, "extends:\n  - %s\n", target))
+}
+
+// eslintFlatConfigNames are ESLint 9's flat config file names, tried in the
+// order ESLint itself resolves them when a project somehow carries more
+// than one.
+var eslintFlatConfigNames = []string{"eslint.config.js", "eslint.config.mjs", "eslint.config.cjs"}
+
+// eslintTypeScriptConfigNames are the same shape written in TypeScript,
+// which dharness never parses — the same reasoning §03's amendment already
+// applies to Stryker configs: a second grammar plus typed helpers whose
+// semantics belong to the project.
+var eslintTypeScriptConfigNames = []string{"eslint.config.ts", "eslint.config.mts", "eslint.config.cts"}
+
+// eslintLegacyConfigNames are the pre-flat-config ESLint file names, wider
+// than legacyLintConfig — the one format legacyLintConfigStep adopts —
+// because this question is "does any legacy config exist at all", not "is
+// the one react-doctor reads broken".
+var eslintLegacyConfigNames = []string{".eslintrc.json", ".eslintrc.js", ".eslintrc.cjs", ".eslintrc.yml", ".eslintrc.yaml", ".eslintrc"}
+
+// eslintFlatConfig names the project's flat ESLint config path, or "" when
+// none of the candidates exist — the same "which one responds" shape
+// fallowConfigPath already answers for fallow's own config.
+func eslintFlatConfig(source string) string {
+	return firstExisting(source, eslintFlatConfigNames)
+}
+
+// eslintTypeScriptConfig names the project's TypeScript flat config path, or
+// "" when none exists.
+func eslintTypeScriptConfig(source string) string {
+	return firstExisting(source, eslintTypeScriptConfigNames)
+}
+
+// eslintLegacyConfig names the project's legacy ESLint config path, or ""
+// when none exists.
+func eslintLegacyConfig(source string) string {
+	return firstExisting(source, eslintLegacyConfigNames)
+}
+
+// firstExisting names the first of names that exists directly under dir, or
+// "" when none do.
+func firstExisting(dir string, names []string) string {
+	for _, name := range names {
+		path := filepath.Join(dir, name)
+		if _, err := os.Stat(path); err == nil {
+			return path
+		}
+	}
+	return ""
+}
+
+// wireEslintExtends writes a complete eslint.config.js that imports and
+// spreads .dharness/eslint.config.js. It runs only when
+// eslintExtendsStep.Delegated(p) returned ok == false with no ESLint config
+// of any kind present — the write-if-absent case; splicing into an
+// existing, understood config is a later slice's write path.
+func wireEslintExtends(p project.Project, w *Writer) error {
+	layers := preset.Layers(preset.Resolve(p))
+
+	var b strings.Builder
+	b.WriteString(eslintImportRegion(p, p.Source, layers, "", "\n"))
+	b.WriteString("\n")
+	b.WriteString("export default [\n")
+	b.WriteString(eslintLayerRegion(layers, "  ", "\n"))
+	b.WriteString("];\n")
+
+	path := filepath.Join(p.Source, eslintConfig)
+	return w.Write(path, []byte(b.String()))
 }
