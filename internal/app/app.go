@@ -6,7 +6,6 @@
 package app
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -56,18 +55,10 @@ func (e *UnknownCommandError) Error() string {
 	return fmt.Sprintf("unknown command %q; expected sync, check, mutate or version", e.Command)
 }
 
-// ExitCode maps an error to a process status.
-//
-// A wrapped tool's own exit code is propagated unchanged: a gate that reports
-// its own status instead of the tool's turns a failed check into a green commit
-// whenever the two disagree.
+// ExitCode maps an error to a process status. It forwards to
+// runner.ExitCode, which owns the implementation now that internal/cli needs
+// to reach it too — internal/app cannot be that shared home, since it is the
+// package that imports internal/cli, not the other way around.
 func ExitCode(err error) int {
-	if err == nil {
-		return 0
-	}
-	var exitErr *runner.ExitError
-	if errors.As(err, &exitErr) && exitErr.Code != 0 {
-		return exitErr.Code
-	}
-	return 1
+	return runner.ExitCode(err)
 }

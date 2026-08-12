@@ -1,11 +1,14 @@
 package setup
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/Disble/dharness/internal/report"
 )
 
 // Writer records what a run touched so the whole thing can be undone.
@@ -76,6 +79,40 @@ func (w *Writer) remember(path string) error {
 	}
 	w.touched = append(w.touched, snapshot{path: path, existed: true, data: data, mode: info.Mode().Perm()})
 	return nil
+}
+
+// Changed classifies the files this run touched between two marks, as paths
+// relative to root so the report names a directory rather than a bare file
+// name (defect 9). It reads each path back from disk because Writer stores
+// pre-write bytes only, never post-write.
+//
+// A file that did not exist is created without a read: its prior absence is
+// recorded fact, and Apply would have returned an error if the write had
+// failed. A file that existed and cannot be read back now is reported
+// modified — of the three kinds, unchanged is the only one that claims
+// nothing happened, and claiming it from a failed read is the fabrication
+// §09 forbids.
+func (w *Writer) Changed(root string, from, to int) []report.FileChange {
+	var changes []report.FileChange
+	for _, taken := range w.touched[from:to] {
+		path := taken.path
+		if rel, err := filepath.Rel(root, taken.path); err == nil {
+			path = rel
+		}
+		path = filepath.ToSlash(path)
+
+		if !taken.existed {
+			changes = append(changes, report.FileChange{Path: path, Kind: report.Created})
+			continue
+		}
+
+		kind := report.Modified
+		if after, err := os.ReadFile(taken.path); err == nil && bytes.Equal(after, taken.data) {
+			kind = report.Unchanged
+		}
+		changes = append(changes, report.FileChange{Path: path, Kind: kind})
+	}
+	return changes
 }
 
 // Undo restores every file this run touched, in reverse order.

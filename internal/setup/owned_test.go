@@ -1,6 +1,7 @@
 package setup
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -126,7 +127,7 @@ func TestArchitectureStepStaysUnsatisfiedWithoutTheAgentBlock(t *testing.T) {
 	p.InRepository = true
 
 	w := &Writer{}
-	if err := (ownedFilesStep{}).Apply(p, w); err != nil {
+	if _, err := (ownedFilesStep{}).Apply(p, w, io.Discard); err != nil {
 		t.Fatalf("Apply() = %v", err)
 	}
 
@@ -291,7 +292,7 @@ func TestOwnedFilesSatisfiedComparesRegionBytesOnly(t *testing.T) {
 	}
 
 	w := &Writer{}
-	if err := (ownedFilesStep{}).Apply(p, w); err != nil {
+	if _, err := (ownedFilesStep{}).Apply(p, w, io.Discard); err != nil {
 		t.Fatalf("Apply() = %v", err)
 	}
 
@@ -313,7 +314,7 @@ func TestApplyWritesTheOwnedEslintConfigAndDeclaresItShared(t *testing.T) {
 	p.InRepository = true
 
 	w := &Writer{}
-	if err := (ownedFilesStep{}).Apply(p, w); err != nil {
+	if _, err := (ownedFilesStep{}).Apply(p, w, io.Discard); err != nil {
 		t.Fatalf("Apply() = %v", err)
 	}
 
@@ -344,7 +345,7 @@ func TestOwnedFilesSatisfiedRequiresTheEslintAllowListEntry(t *testing.T) {
 	p := project.At(root, root)
 	p.InRepository = true
 
-	if err := (ownedFilesStep{}).Apply(p, &Writer{}); err != nil {
+	if _, err := (ownedFilesStep{}).Apply(p, &Writer{}, io.Discard); err != nil {
 		t.Fatalf("Apply() = %v", err)
 	}
 	if !(ownedFilesStep{}).Satisfied(p) {
@@ -377,7 +378,7 @@ func TestOwnedFilesSatisfiedComparesTheEslintConfigBytes(t *testing.T) {
 	p := project.At(root, root)
 	p.InRepository = true
 
-	if err := (ownedFilesStep{}).Apply(p, &Writer{}); err != nil {
+	if _, err := (ownedFilesStep{}).Apply(p, &Writer{}, io.Discard); err != nil {
 		t.Fatalf("Apply() = %v", err)
 	}
 
@@ -401,7 +402,7 @@ func TestOwnedFilesSatisfiedFalseWhenTheEslintConfigFileIsMissing(t *testing.T) 
 	p := project.At(root, root)
 	p.InRepository = true
 
-	if err := (ownedFilesStep{}).Apply(p, &Writer{}); err != nil {
+	if _, err := (ownedFilesStep{}).Apply(p, &Writer{}, io.Discard); err != nil {
 		t.Fatalf("Apply() = %v", err)
 	}
 	if err := os.Remove(filepath.Join(root, project.Dir, ownedEslint)); err != nil {
@@ -422,7 +423,7 @@ func TestOwnedFilesSatisfiedFalseWhenTheGitignoreFileIsMissing(t *testing.T) {
 	p := project.At(root, root)
 	p.InRepository = true
 
-	if err := (ownedFilesStep{}).Apply(p, &Writer{}); err != nil {
+	if _, err := (ownedFilesStep{}).Apply(p, &Writer{}, io.Discard); err != nil {
 		t.Fatalf("Apply() = %v", err)
 	}
 	if err := os.Remove(filepath.Join(root, project.Dir, ".gitignore")); err != nil {
@@ -457,7 +458,7 @@ func TestApplyReadsTheExistingFileRatherThanRewritingTheSkeleton(t *testing.T) {
 
 	var after [3]string
 	for run := range after {
-		if err := (ownedFilesStep{}).Apply(p, &Writer{}); err != nil {
+		if _, err := (ownedFilesStep{}).Apply(p, &Writer{}, io.Discard); err != nil {
 			t.Fatalf("Apply() run %d = %v", run+1, err)
 		}
 		raw, err := os.ReadFile(path)

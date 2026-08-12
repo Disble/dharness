@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/Disble/dharness/internal/preset"
 	"github.com/Disble/dharness/internal/project"
+	"github.com/Disble/dharness/internal/report"
 	"github.com/Disble/dharness/internal/runner"
 )
 
@@ -85,16 +87,16 @@ func (stubDelegatedStep) Delegated(project.Project) (string, bool) {
 	return "handed to the agent", true
 }
 
-func (s stubDelegatedStep) Apply(project.Project, *Writer) error {
+func (s stubDelegatedStep) Apply(project.Project, *Writer, io.Writer) (Facts, error) {
 	*s.applied = true
-	return nil
+	return Facts{}, nil
 }
 
 func TestApplySkipsEveryDelegatedStep(t *testing.T) {
 	applied := false
 	step := stubDelegatedStep{applied: &applied}
 
-	if err := applySteps([]Step{step}, project.Project{}, io.Discard); err != nil {
+	if _, err := applySteps([]Step{step}, project.Project{}, io.Discard); err != nil {
 		t.Fatalf("applySteps() = %v", err)
 	}
 	if applied {
@@ -106,8 +108,115 @@ func TestApplySkipsEveryDelegatedStep(t *testing.T) {
 // calls its Apply. The error Apply returns is a contract assertion for the
 // case that should be unreachable, not a code path any run takes.
 func TestAgentSkillApplyIsUnreachable(t *testing.T) {
-	if err := (agentSkillStep{}).Apply(project.Project{}, &Writer{}); err == nil {
+	if _, err := (agentSkillStep{}).Apply(project.Project{}, &Writer{}, io.Discard); err == nil {
 		t.Error("agentSkillStep.Apply() = nil, want the delegated-and-must-not-be-applied assertion")
+	}
+}
+
+// stubSinkStep is a minimal Step whose Apply writes a marker to the out
+// parameter it is handed and returns structured Facts, standing in for a
+// real step (installStep, hookInstallStep) without depending on either.
+type stubSinkStep struct{}
+
+func (stubSinkStep) ID() string                               { return "stub sink step" }
+func (stubSinkStep) Describe(project.Project) string          { return "" }
+func (stubSinkStep) Satisfied(project.Project) bool           { return false }
+func (stubSinkStep) Delegated(project.Project) (string, bool) { return "", false }
+
+func (stubSinkStep) Apply(_ project.Project, _ *Writer, out io.Writer) (Facts, error) {
+	fmt.Fprint(out, "marker-bytes-from-the-stub-step")
+	return Facts{Installed: []string{"pkg"}}, nil
+}
+
+// stubWriteStep writes one file per path it is given, letting a test build
+// a step whose attributed files are known in advance.
+type stubWriteStep struct {
+	id    string
+	paths []string
+}
+
+func (s stubWriteStep) ID() string                             { return s.id }
+func (stubWriteStep) Describe(project.Project) string          { return "" }
+func (stubWriteStep) Satisfied(project.Project) bool           { return false }
+func (stubWriteStep) Delegated(project.Project) (string, bool) { return "", false }
+
+func (s stubWriteStep) Apply(_ project.Project, w *Writer, _ io.Writer) (Facts, error) {
+	for _, path := range s.paths {
+		if err := w.Write(path, []byte("content")); err != nil {
+			return Facts{}, err
+		}
+	}
+	return Facts{}, nil
+}
+
+// TestPerStepFileAttributionIsPartitioned pins the file-attribution
+// requirement's own scenario: two steps that both write files are
+// attributed independently, with no overlap between them, even though both
+// share the one Writer applySteps threads through the whole run.
+func TestPerStepFileAttributionIsPartitioned(t *testing.T) {
+	root := t.TempDir()
+	a := filepath.Join(root, "a.txt")
+	b1 := filepath.Join(root, "b1.txt")
+	b2 := filepath.Join(root, "b2.txt")
+
+	steps := []Step{
+		stubWriteStep{id: "step A", paths: []string{a}},
+		stubWriteStep{id: "step B", paths: []string{b1, b2}},
+	}
+
+	outcomes, err := applySteps(steps, project.Project{Root: root}, io.Discard)
+	if err != nil {
+		t.Fatalf("applySteps() = %v", err)
+	}
+	if len(outcomes) != 2 {
+		t.Fatalf("applySteps() returned %d outcomes, want 2", len(outcomes))
+	}
+
+	wantPaths := func(changes []report.FileChange) []string {
+		paths := make([]string, len(changes))
+		for i, change := range changes {
+			paths[i] = change.Path
+		}
+		return paths
+	}
+
+	if got := wantPaths(outcomes[0].wrote); !slices.Equal(got, []string{"a.txt"}) {
+		t.Errorf("step A's attributed files = %v, want [a.txt]", got)
+	}
+	if got := wantPaths(outcomes[1].wrote); !slices.Equal(got, []string{"b1.txt", "b2.txt"}) {
+		t.Errorf("step B's attributed files = %v, want [b1.txt b2.txt]", got)
+	}
+}
+
+// TestApplyWritesOnlyToTheGivenSink pins the sink requirement (spec.md
+// step-outcome, first two requirements) at the applySteps layer: a step's
+// Apply writes only through the out parameter it is handed — a per-step
+// buffer applySteps controls — never through some channel of its own
+// choosing, and its structured Facts return value survives the trip back to
+// the caller, a fact no byte stream could carry.
+//
+// The marker text is expected to reach the writer applySteps itself was
+// given: Decision 9's own invariant for this slice ("nothing a user sees
+// changes") and TestSyncStdoutUnchangedAfterTheSinkMove both require
+// applySteps to copy each step's captured sink back onto its own stdout, so
+// dharness sync's real output stays byte-identical until slice 4 rewrites
+// RunSync to render a report instead of streaming live. What the sink
+// prevents is a step writing to some channel applySteps never sees at all
+// (os.Stdout/os.Stderr directly — defect 5), not the framed copy back.
+func TestApplyWritesOnlyToTheGivenSink(t *testing.T) {
+	var stdout bytes.Buffer
+	outcomes, err := applySteps([]Step{stubSinkStep{}}, project.Project{}, &stdout)
+	if err != nil {
+		t.Fatalf("applySteps() = %v", err)
+	}
+	if len(outcomes) != 1 {
+		t.Fatalf("applySteps() returned %d outcomes, want 1", len(outcomes))
+	}
+	if !slices.Equal(outcomes[0].facts.Installed, []string{"pkg"}) {
+		t.Errorf("outcome Facts.Installed = %v, want [pkg]", outcomes[0].facts.Installed)
+	}
+	if strings.Count(stdout.String(), "marker-bytes-from-the-stub-step") != 1 {
+		t.Errorf("the step's sink content did not reach the writer applySteps was given, exactly once: %q", stdout.String())
 	}
 }
 
@@ -217,7 +326,7 @@ func writeFallow(t *testing.T, root, contents string) {
 func TestMCPConfigRunsTheBundledBinaryFromFallowLatest(t *testing.T) {
 	root := t.TempDir()
 	p := project.Project{Root: root, Source: root, PackageManager: "pnpm"}
-	if err := (mcpStep{}).Apply(p, &Writer{}); err != nil {
+	if _, err := (mcpStep{}).Apply(p, &Writer{}, io.Discard); err != nil {
 		t.Fatalf("Apply() = %v", err)
 	}
 
@@ -526,7 +635,7 @@ func TestFallowExtendsIsDelegatedWhenTheProjectOwnsTheConfig(t *testing.T) {
 		t.Errorf("Delegated() why = %q, want it to name %s", why, fallowConfig)
 	}
 
-	if err := applySteps([]Step{fallowExtendsStep{}}, p, io.Discard); err != nil {
+	if _, err := applySteps([]Step{fallowExtendsStep{}}, p, io.Discard); err != nil {
 		t.Fatalf("applySteps() = %v", err)
 	}
 	raw, err := os.ReadFile(filepath.Join(root, fallowConfig))
@@ -553,7 +662,7 @@ func TestLefthookExtendsIsDelegatedWhenTheProjectOwnsTheConfig(t *testing.T) {
 		t.Errorf("Delegated() why = %q, want it to name %s", why, lefthookConfig)
 	}
 
-	if err := applySteps([]Step{lefthookExtendsStep{}}, p, io.Discard); err != nil {
+	if _, err := applySteps([]Step{lefthookExtendsStep{}}, p, io.Discard); err != nil {
 		t.Fatalf("applySteps() = %v", err)
 	}
 	raw, err := os.ReadFile(filepath.Join(root, lefthookConfig))
@@ -621,7 +730,7 @@ func TestExtendsStepsWriteTheirFileWhenTheProjectHasNone(t *testing.T) {
 		t.Fatalf("Delegated() = %q, true; want ok=false with no config present", why)
 	}
 
-	if err := applySteps([]Step{fallowExtendsStep{}, lefthookExtendsStep{}}, p, io.Discard); err != nil {
+	if _, err := applySteps([]Step{fallowExtendsStep{}, lefthookExtendsStep{}}, p, io.Discard); err != nil {
 		t.Fatalf("applySteps() = %v", err)
 	}
 
@@ -696,7 +805,7 @@ func TestOwnedFilesCarryTheThresholdsTheRulesCannot(t *testing.T) {
 	root := t.TempDir()
 	p := project.Project{Root: root}
 
-	if err := (ownedFilesStep{}).Apply(p, &Writer{}); err != nil {
+	if _, err := (ownedFilesStep{}).Apply(p, &Writer{}, io.Discard); err != nil {
 		t.Fatalf("Apply() = %v", err)
 	}
 

@@ -5,7 +5,6 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/Disble/dharness/internal/app"
 	"github.com/Disble/dharness/internal/runner"
 )
 
@@ -127,11 +126,14 @@ func TestSummaryCarriesNoOmitempty(t *testing.T) {
 // substituting a failed == 0 check for the assignment disagrees with the
 // delegated-work case here and dies.
 //
-// app.ExitCode is used rather than runner.ExitCode because slice 1 (this
-// package) has no consumer and cannot depend on the runner.ExitCode move
-// design.md Decision 1 schedules for slice 2 — app.ExitCode is today's
-// exact implementation of the same decision, and Decision 1 states the move
-// changes no caller's behaviour.
+// runner.ExitCode is used rather than app.ExitCode: slice 2 moved
+// ExitCode's implementation to internal/runner and left
+// internal/app.ExitCode as a one-line forwarder (design.md Decision 1), and
+// internal/setup now imports internal/report — so internal/app (which
+// imports internal/cli, which imports internal/setup) can no longer be
+// imported from this package's own tests without an import cycle. Decision
+// 1 states the move changes no caller's behaviour, so this substitution
+// changes nothing this test pins.
 func TestReportExitIsAPlainAssignedField(t *testing.T) {
 	cases := []struct {
 		name string
@@ -146,7 +148,7 @@ func TestReportExitIsAPlainAssignedField(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			r := Report{
 				Summary: Summary{Failed: 0, Delegated: 1},
-				Exit:    app.ExitCode(tc.err),
+				Exit:    runner.ExitCode(tc.err),
 			}
 
 			raw, err := json.Marshal(r)

@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -217,6 +218,34 @@ func TestSyncAppliesAndDelegatesInOneRun(t *testing.T) {
 	}
 	if len(*commands) == 0 {
 		t.Error("nothing was applied even though installStep was pending")
+	}
+}
+
+// TestSyncStdoutUnchangedAfterTheSinkMove is the explicit guard for Decision
+// 9's "slice 2 changes nothing a user sees": installStep.Apply now routes
+// its subprocess output through the sink applySteps hands it (task 2.6)
+// instead of os.Stdout directly, and applySteps copies that sink straight
+// back onto the writer RunSync was given. A stubbed runner.Run's
+// recognisable output must still appear inline, in the same position — right
+// after the step's own heading — that it does today.
+func TestSyncStdoutUnchangedAfterTheSinkMove(t *testing.T) {
+	t.Cleanup(runner.SetForTest(func(_ runner.Command, stdout, _ io.Writer) error {
+		fmt.Fprint(stdout, "added dharness-eslint-plugin@0.3.0\n")
+		return nil
+	}))
+
+	out := syncOutput(t, func(root string) {
+		writeFile(t, filepath.Join(root, "package.json"), `{"devDependencies":{"vitest":"^4.0.0"}}`)
+	})
+
+	applying := strings.Index(out, "Applying:")
+	heading := strings.Index(out, "install what this project is missing")
+	marker := strings.Index(out, "added dharness-eslint-plugin@0.3.0")
+	if applying == -1 || heading == -1 || marker == -1 {
+		t.Fatalf("expected sections missing from output:\n%s", out)
+	}
+	if !(applying < heading && heading < marker) {
+		t.Errorf("subprocess output did not appear inline right after the step heading:\n%s", out)
 	}
 }
 

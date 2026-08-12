@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -68,23 +69,30 @@ func (s installStep) Describe(p project.Project) string {
 // installing a package to the agent instead of dharness.
 func (installStep) Delegated(project.Project) (string, bool) { return "", false }
 
-func (installStep) Apply(p project.Project, w *Writer) error {
+// Apply routes the install and its rollback compensation through out rather
+// than os.Stdout/os.Stderr directly (step-outcome's sink requirement,
+// defect 5), and returns the package specs this run asked the manager to
+// add as Facts — a fact no byte stream can answer (Decision 2).
+func (installStep) Apply(p project.Project, w *Writer, out io.Writer) (Facts, error) {
 	packages := integrationPackages(p)
 
 	for _, path := range p.PackageStateFiles() {
 		if err := w.remember(path); err != nil {
-			return fmt.Errorf("snapshot package state before install: %w", err)
+			return Facts{}, fmt.Errorf("snapshot package state before install: %w", err)
 		}
 	}
 
-	installErr := runner.Run(tool.InstallPackages(p.PackageManager, p.Source, packages), os.Stdout, os.Stderr)
+	installErr := runner.Run(tool.InstallPackages(p.PackageManager, p.Source, packages), out, out)
 	w.compensate(func() error {
-		if err := runner.Run(tool.RemovePackages(p.PackageManager, p.Source, packages), os.Stdout, os.Stderr); err != nil {
+		if err := runner.Run(tool.RemovePackages(p.PackageManager, p.Source, packages), out, out); err != nil {
 			return fmt.Errorf("remove integration packages added by this run: %w", err)
 		}
 		return nil
 	})
-	return installErr
+	if installErr != nil {
+		return Facts{}, installErr
+	}
+	return Facts{Installed: packages}, nil
 }
 
 // integrationPackages lists the packages dharness adds to p, as opposed to
@@ -161,15 +169,15 @@ func (ownedFilesStep) Describe(project.Project) string {
 // write.
 func (ownedFilesStep) Delegated(project.Project) (string, bool) { return "", false }
 
-func (ownedFilesStep) Apply(p project.Project, w *Writer) error {
+func (ownedFilesStep) Apply(p project.Project, w *Writer, _ io.Writer) (Facts, error) {
 	// EnsureDir also writes the ignore rules, so a transient file appearing
 	// later is never the first thing to create them.
 	if _, err := p.EnsureDir(""); err != nil {
-		return err
+		return Facts{}, err
 	}
 
 	if err := w.Write(filepath.Join(p.Root, project.Dir, ownedLefthook), []byte(gateConfig(p))); err != nil {
-		return err
+		return Facts{}, err
 	}
 
 	// The boundaries block is deliberately absent from what dharness ever
@@ -187,18 +195,18 @@ func (ownedFilesStep) Apply(p project.Project, w *Writer) error {
 	matches := preset.Resolve(p)
 	content := replaceRegion(base, presetRegion(matches))
 	if err := w.Write(fallowPath, []byte(content)); err != nil {
-		return err
+		return Facts{}, err
 	}
 
 	eslintPath := filepath.Join(p.Root, project.Dir, ownedEslint)
 	if err := w.Write(eslintPath, []byte(ownedEslintConfig(p, preset.Layers(matches)))); err != nil {
-		return err
+		return Facts{}, err
 	}
 	if err := ensureShared(p, w, ownedEslint); err != nil {
-		return err
+		return Facts{}, err
 	}
 
-	return w.WriteJSON(filepath.Join(p.Root, project.Dir, ownedRules), DefaultThresholds())
+	return Facts{}, w.WriteJSON(filepath.Join(p.Root, project.Dir, ownedRules), DefaultThresholds())
 }
 
 // ------------------------------------------------------------- extends
@@ -240,8 +248,8 @@ func (fallowExtendsStep) Delegated(p project.Project) (string, bool) {
 		fallowConfig), true
 }
 
-func (fallowExtendsStep) Apply(p project.Project, w *Writer) error {
-	return wireFallowExtends(p, w)
+func (fallowExtendsStep) Apply(p project.Project, w *Writer, _ io.Writer) (Facts, error) {
+	return Facts{}, wireFallowExtends(p, w)
 }
 
 type lefthookExtendsStep struct{}
@@ -276,8 +284,8 @@ func (lefthookExtendsStep) Delegated(p project.Project) (string, bool) {
 		lefthookConfig), true
 }
 
-func (lefthookExtendsStep) Apply(p project.Project, w *Writer) error {
-	return wireLefthookExtends(p, w)
+func (lefthookExtendsStep) Apply(p project.Project, w *Writer, _ io.Writer) (Facts, error) {
+	return Facts{}, wireLefthookExtends(p, w)
 }
 
 // -------------------------------------------------------- eslint extends
@@ -424,25 +432,25 @@ func malformedEslintMarkerPair(raw string) (why string, malformed bool) {
 // anything is written, so an unparseable result never reaches disk at all
 // (design decision 6); Writer.Undo remains the backstop for steps that ran
 // earlier in this same applySteps call, not for this file.
-func (eslintExtendsStep) Apply(p project.Project, w *Writer) error {
+func (eslintExtendsStep) Apply(p project.Project, w *Writer, _ io.Writer) (Facts, error) {
 	path := eslintFlatConfig(p.Source)
 	if path == "" {
-		return wireEslintExtends(p, w)
+		return Facts{}, wireEslintExtends(p, w)
 	}
 
 	src, err := os.ReadFile(path)
 	if err != nil {
-		return fmt.Errorf("read %s before splicing: %w", filepath.Base(path), err)
+		return Facts{}, fmt.Errorf("read %s before splicing: %w", filepath.Base(path), err)
 	}
 
 	candidate, err := spliceEslintConfig(p, path, src)
 	if err != nil {
-		return err
+		return Facts{}, err
 	}
 	if err := verifyEslintCandidate(candidate); err != nil {
-		return fmt.Errorf("%s: %w", filepath.Base(path), err)
+		return Facts{}, fmt.Errorf("%s: %w", filepath.Base(path), err)
 	}
-	return w.Write(path, candidate)
+	return Facts{}, w.Write(path, candidate)
 }
 
 // --------------------------------------------------- boundaries owner
@@ -687,8 +695,8 @@ func quotedKeys(keys []string) string {
 
 // Apply is unreachable: Delegated always answers ok == true, so applySteps
 // never calls it. Kept as a contract assertion, matching architectureStep.
-func (boundariesOwnerStep) Apply(project.Project, *Writer) error {
-	return fmt.Errorf("%s is delegated and must not be applied", boundariesOwnerStep{}.ID())
+func (boundariesOwnerStep) Apply(project.Project, *Writer, io.Writer) (Facts, error) {
+	return Facts{}, fmt.Errorf("%s is delegated and must not be applied", boundariesOwnerStep{}.ID())
 }
 
 // ------------------------------------------------ legacy lint config
@@ -742,8 +750,8 @@ func (legacyLintConfigStep) Delegated(project.Project) (string, bool) {
 
 // Apply is unreachable: Delegated always answers ok == true, so applySteps
 // never calls it. Kept as a contract assertion, matching architectureStep.
-func (legacyLintConfigStep) Apply(project.Project, *Writer) error {
-	return fmt.Errorf("%s is delegated and must not be applied", legacyLintConfigStep{}.ID())
+func (legacyLintConfigStep) Apply(project.Project, *Writer, io.Writer) (Facts, error) {
+	return Facts{}, fmt.Errorf("%s is delegated and must not be applied", legacyLintConfigStep{}.ID())
 }
 
 // ----------------------------------------------------------------- mcp
@@ -773,13 +781,13 @@ func (mcpStep) Describe(project.Project) string {
 // it belongs to the project instead.
 func (mcpStep) Delegated(project.Project) (string, bool) { return "", false }
 
-func (mcpStep) Apply(p project.Project, w *Writer) error {
+func (mcpStep) Apply(p project.Project, w *Writer, _ io.Writer) (Facts, error) {
 	path := filepath.Join(p.Root, mcpConfig)
 
 	config := mcpConfigFile{Servers: map[string]mcpServer{}}
 	if raw, err := os.ReadFile(path); err == nil {
 		if err := json.Unmarshal(raw, &config); err != nil {
-			return fmt.Errorf("%s is not readable as JSON, so it cannot be merged: %w", mcpConfig, err)
+			return Facts{}, fmt.Errorf("%s is not readable as JSON, so it cannot be merged: %w", mcpConfig, err)
 		}
 		if config.Servers == nil {
 			config.Servers = map[string]mcpServer{}
@@ -793,7 +801,7 @@ func (mcpStep) Apply(p project.Project, w *Writer) error {
 		Command: binary.Name,
 		Args:    binary.Args,
 	}
-	return w.WriteJSON(path, config)
+	return Facts{}, w.WriteJSON(path, config)
 }
 
 type mcpConfigFile struct {
@@ -850,9 +858,9 @@ func (hookInstallStep) Delegated(p project.Project) (string, bool) {
 	}
 }
 
-func (hookInstallStep) Apply(p project.Project, w *Writer) error {
+func (hookInstallStep) Apply(p project.Project, w *Writer, out io.Writer) (Facts, error) {
 	if hookManager(p) == managerHusky {
-		return appendHuskyGate(p, w)
+		return Facts{}, appendHuskyGate(p, w)
 	}
 
 	path := p.LocalBinary("lefthook")
@@ -860,7 +868,7 @@ func (hookInstallStep) Apply(p project.Project, w *Writer) error {
 	if path != "" {
 		command = tool.Installed("lefthook", path, p.Root, "install")
 	}
-	return runner.Run(command, os.Stdout, os.Stderr)
+	return Facts{}, runner.Run(command, out, out)
 }
 
 // --------------------------------------------------------- agent skill
@@ -892,8 +900,8 @@ func (agentSkillStep) Delegated(project.Project) (string, bool) {
 
 // Apply is unreachable: Delegated always answers ok == true, so applySteps
 // never calls it. Kept as a contract assertion — see TestAgentSkillApplyIsUnreachable.
-func (agentSkillStep) Apply(project.Project, *Writer) error {
-	return fmt.Errorf("%s is delegated and must not be applied", agentSkillStep{}.ID())
+func (agentSkillStep) Apply(project.Project, *Writer, io.Writer) (Facts, error) {
+	return Facts{}, fmt.Errorf("%s is delegated and must not be applied", agentSkillStep{}.ID())
 }
 
 // -------------------------------------------------------- architecture
@@ -921,8 +929,8 @@ func (architectureStep) Delegated(project.Project) (string, bool) {
 
 // Apply is unreachable: Delegated always answers ok == true, so applySteps
 // never calls it. Kept as a contract assertion, matching agentSkillStep.
-func (architectureStep) Apply(project.Project, *Writer) error {
-	return fmt.Errorf("%s is delegated and must not be applied", architectureStep{}.ID())
+func (architectureStep) Apply(project.Project, *Writer, io.Writer) (Facts, error) {
+	return Facts{}, fmt.Errorf("%s is delegated and must not be applied", architectureStep{}.ID())
 }
 
 func dedupe(values []string) []string {

@@ -112,3 +112,22 @@ func SetForTest(replacement func(Command, io.Writer, io.Writer) error) func() {
 	Run = replacement
 	return func() { Run = previous }
 }
+
+// ExitCode maps an error to a process status.
+//
+// A wrapped tool's own exit code is propagated unchanged: a gate that reports
+// its own status instead of the tool's turns a failed check into a green commit
+// whenever the two disagree. It lives here rather than in internal/app because
+// its whole body depends on ExitError and nothing else, and internal/cli needs
+// to reach it without the import cycle internal/app's own dependency on
+// internal/cli would create.
+func ExitCode(err error) int {
+	if err == nil {
+		return 0
+	}
+	var exitErr *ExitError
+	if errors.As(err, &exitErr) && exitErr.Code != 0 {
+		return exitErr.Code
+	}
+	return 1
+}

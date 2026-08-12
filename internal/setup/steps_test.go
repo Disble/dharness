@@ -524,7 +524,7 @@ func TestEslintExtendsStepApplyWritesAConfigWhenNoneExists(t *testing.T) {
 	root := t.TempDir()
 	p := project.Project{Root: root, Source: root}
 
-	if err := (eslintExtendsStep{}).Apply(p, &Writer{}); err != nil {
+	if _, err := (eslintExtendsStep{}).Apply(p, &Writer{}, io.Discard); err != nil {
 		t.Fatalf("Apply() = %v", err)
 	}
 
@@ -562,7 +562,7 @@ func TestEslintExtendsStepApplyResolvesFromASplitLayout(t *testing.T) {
 	}
 	p := project.Project{Root: root, Source: source}
 
-	if err := (eslintExtendsStep{}).Apply(p, &Writer{}); err != nil {
+	if _, err := (eslintExtendsStep{}).Apply(p, &Writer{}, io.Discard); err != nil {
 		t.Fatalf("Apply() = %v", err)
 	}
 
@@ -586,7 +586,7 @@ func TestEslintExtendsStepApplyResultIsAlreadySatisfied(t *testing.T) {
 	if (eslintExtendsStep{}).Satisfied(p) {
 		t.Fatal("Satisfied() = true before Apply ever ran")
 	}
-	if err := (eslintExtendsStep{}).Apply(p, &Writer{}); err != nil {
+	if _, err := (eslintExtendsStep{}).Apply(p, &Writer{}, io.Discard); err != nil {
 		t.Fatalf("Apply() = %v", err)
 	}
 	if !(eslintExtendsStep{}).Satisfied(p) {
@@ -606,7 +606,7 @@ func TestEslintExtendsStepApplyInsertsBothRegionsIntoAnExistingArrayLiteral(t *t
 	writeStepFixtureFile(t, root, eslintConfig, original)
 	p := project.Project{Root: root, Source: root}
 
-	if err := (eslintExtendsStep{}).Apply(p, &Writer{}); err != nil {
+	if _, err := (eslintExtendsStep{}).Apply(p, &Writer{}, io.Discard); err != nil {
 		t.Fatalf("Apply() = %v", err)
 	}
 
@@ -662,7 +662,7 @@ func TestPresentMarkersWithStaleBytesAreReplacedNotDuplicated(t *testing.T) {
 	writeStepFixtureFile(t, root, eslintConfig, stale)
 	p := project.Project{Root: root, Source: root}
 
-	if err := (eslintExtendsStep{}).Apply(p, &Writer{}); err != nil {
+	if _, err := (eslintExtendsStep{}).Apply(p, &Writer{}, io.Discard); err != nil {
 		t.Fatalf("Apply() = %v", err)
 	}
 
@@ -714,7 +714,7 @@ func TestSpliceGuardRollsBackAnUnparseableResult(t *testing.T) {
 	})
 	defer restore()
 
-	if err := (eslintExtendsStep{}).Apply(p, &Writer{}); err == nil {
+	if _, err := (eslintExtendsStep{}).Apply(p, &Writer{}, io.Discard); err == nil {
 		t.Fatal("Apply() = nil, want an error from the candidate guard")
 	}
 
@@ -737,7 +737,7 @@ func TestSecondSyncWritesNothing(t *testing.T) {
 	writeStepFixtureFile(t, root, eslintConfig, original)
 	p := project.Project{Root: root, Source: root}
 
-	if err := (eslintExtendsStep{}).Apply(p, &Writer{}); err != nil {
+	if _, err := (eslintExtendsStep{}).Apply(p, &Writer{}, io.Discard); err != nil {
 		t.Fatalf("first Apply() = %v", err)
 	}
 	if !(eslintExtendsStep{}).Satisfied(p) {
@@ -750,7 +750,7 @@ func TestSecondSyncWritesNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := (eslintExtendsStep{}).Apply(p, &Writer{}); err != nil {
+	if _, err := (eslintExtendsStep{}).Apply(p, &Writer{}, io.Discard); err != nil {
 		t.Fatalf("second Apply() = %v", err)
 	}
 	afterSecond, err := os.ReadFile(path)
@@ -831,7 +831,7 @@ func TestEslintExtendsStepApplyPreservesCRLFAndBOMThroughTheSplice(t *testing.T)
 	writeStepFixtureFile(t, root, eslintConfig, bom)
 	p := project.Project{Root: root, Source: root}
 
-	if err := (eslintExtendsStep{}).Apply(p, &Writer{}); err != nil {
+	if _, err := (eslintExtendsStep{}).Apply(p, &Writer{}, io.Discard); err != nil {
 		t.Fatalf("Apply() = %v", err)
 	}
 
