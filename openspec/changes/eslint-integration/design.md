@@ -1099,15 +1099,32 @@ the reason in each case rather than silently:
       manages and what Decision 2's allow list covers. Decision 3's split —
       bare specifiers in the project's config, injection into the owned file —
       *is* the shipped pattern, applied to module resolution.
-- [ ] **The four marker strings ship into every adopting repository and
-      cannot be changed cheaply afterwards**, exactly as `dharness:presets`
-      could not. Settle the exact spelling in **slice 3a's** review, not
-      afterwards. This is the same open question framework-presets left, and
-      it is still open there.
-- [ ] **The gate stage's placement is provisional (last) until slice 4's
-      measurement.** The spec makes the measurement a requirement; this design
-      makes it a merge condition. Do not close this by reasoning about
-      ESLint's cost profile in isolation.
+- [x] **The four marker strings — settled in slice 3a, as this document
+      required.** The spelling proposed in Decision 4 was adopted verbatim:
+      `presetBegin`'s exact grammar, so a reader who has seen one region
+      recognises the other with no new documentation. They ship into every
+      adopting repository and cannot be changed cheaply afterwards, which is
+      why the question was raised — and the answer was that a string reasoned
+      through once does not benefit from being reopened at implementation
+      time. Framework-presets' equivalent question stays open there.
+- [x] **The gate stage's placement — measured in slice 4, and the measurement
+      reversed it.** Provisional was *last*; ESLint measured **cheapest of the
+      four**: 1008 ms median against react-doctor's 2959, fallow audit's 2102
+      and fallow dupes' 1398 (three runs each on a reference project, recorded
+      in `docs/learning-log.md`, 12 August 2026). It runs **first**. Local
+      resolution is most of the reason — it skips the package-manager round
+      trip the remote-executed stages pay every run. This is exactly what the
+      merge condition existed to catch: reasoning about ESLint's cost profile
+      in isolation would have left it last.
+
+      **A second question the same measurement raised, deliberately left
+      open**: fallow measured cheaper than react-doctor on that project too,
+      which contradicts the existing order read literally. That order was
+      argued from *scaling* — `--staged` bounds react-doctor to the diff,
+      fallow's repository-graph build gives it a floor — and a five-file
+      reference project has a graph too small to test the claim. Wall-clock on
+      a toy repository is the wrong instrument, so the order stands until
+      something measures the right thing.
 - [ ] **The call-expression distribution stays unmeasured**, as the proposal
       and spec both record. Nothing in this design depends on the number:
       `defineConfig` splices, everything else delegates, and both paths ship
