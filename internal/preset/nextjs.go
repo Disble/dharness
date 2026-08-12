@@ -17,6 +17,17 @@ const nextjsDependency = "next"
 // local checkout — see the framework-presets task list, Slice 5, Phase 17).
 const nextjsDocs = "https://nextjs.org/docs/app/getting-started/project-structure"
 
+// nextjsESLintDocs is the page the Layer's Because cites — a different page
+// from nextjsDocs above, read directly against Next.js's own documentation
+// for this change: "Next.js provides an ESLint configuration package,
+// `eslint-config-next`", the package this preset contributes.
+const nextjsESLintDocs = "https://nextjs.org/docs/app/api-reference/config/eslint"
+
+// eslintConfigNextPackage is what nextjsESLintDocs names — published and
+// versioned by Next.js itself (vercel/next.js, packages/eslint-config-next),
+// not a version dharness invents.
+const eslintConfigNextPackage = "eslint-config-next"
+
 // nextjs is the Next.js preset: Source scope, because "next" is declared
 // where the JS project lives, not at the repository root.
 //
@@ -37,7 +48,10 @@ func (nextjs) Scope() Scope { return Source }
 // dependencies/devDependencies alone. What it contributes is two seeds —
 // Next.js's own documented structure — never a fact: Next.js is explicit
 // that it takes no position on anything beyond routing, so asserting more
-// would invent a convention the framework itself disclaims.
+// would invent a convention the framework itself disclaims. The one Layer
+// it does contribute is different in kind: eslint-config-next is an
+// installable package Next.js itself publishes and versions, not a
+// convention dharness is guessing at.
 func (nextjs) Detect(p project.Project) (Match, bool) {
 	path := filepath.Join(p.Source, "package.json")
 	raw, err := os.ReadFile(path)
@@ -77,6 +91,15 @@ func (nextjs) Detect(p project.Project) (Match, bool) {
 					Because: nextjsDocs + `: "Next.js is unopinionated about how you organize and ` +
 						`colocate your project files," and its own components/lib example ` +
 						`folders "have no special framework significance."`,
+				},
+			},
+			Layers: []Layer{
+				{
+					Package: eslintConfigNextPackage,
+					Binding: "dharnessNext",
+					Because: nextjsESLintDocs + `: "Next.js provides an ESLint configuration package, ` +
+						"`eslint-config-next`" + `" — published and versioned by Next.js itself, not a ` +
+						`version dharness invents`,
 				},
 			},
 		},

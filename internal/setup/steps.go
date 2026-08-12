@@ -61,7 +61,7 @@ func (installStep) Satisfied(p project.Project) bool {
 
 func (s installStep) Describe(p project.Project) string {
 	return fmt.Sprintf("This package provides dharness's project lint rules.\n\n    %s %s",
-		tool.InstallCommand(p.PackageManager), strings.Join(integrationPackages(), " "))
+		tool.InstallCommand(p.PackageManager), strings.Join(integrationPackages(p), " "))
 }
 
 // Delegated is always false: there is no repository state that hands
@@ -69,7 +69,7 @@ func (s installStep) Describe(p project.Project) string {
 func (installStep) Delegated(project.Project) (string, bool) { return "", false }
 
 func (installStep) Apply(p project.Project, w *Writer) error {
-	packages := integrationPackages()
+	packages := integrationPackages(p)
 
 	for _, path := range p.PackageStateFiles() {
 		if err := w.remember(path); err != nil {
@@ -87,10 +87,18 @@ func (installStep) Apply(p project.Project, w *Writer) error {
 	return installErr
 }
 
-// integrationPackages lists the packages dharness adds to a project, as
-// opposed to the CLIs it invokes without installing.
-func integrationPackages() []string {
-	return dedupe([]string{RulesPackage})
+// integrationPackages lists the packages dharness adds to p, as opposed to
+// the CLIs it invokes without installing: the fixed set every project gets,
+// plus whatever the matched presets contribute. It takes a project now
+// because the answer depends on detection — the same re-derive-at-the-
+// call-site rule framework-presets decision 4 fixed, and for the same
+// reason: a memoised value would be recorded state (§07).
+func integrationPackages(p project.Project) []string {
+	packages := []string{RulesPackage}
+	for _, layer := range preset.Layers(preset.Resolve(p)) {
+		packages = append(packages, layer.Package)
+	}
+	return dedupe(packages)
 }
 
 // ---------------------------------------------------------- owned files

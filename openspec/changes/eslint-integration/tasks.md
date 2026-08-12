@@ -181,12 +181,12 @@ matched presets are unreachable today; add `TestNoBindingIsContributedTwice`
 (`TestNoScalarKeyIsContributedTwice`'s shape) so a future fifth preset
 degrades visibly instead of emitting a duplicate `const`.
 
-- [ ] 5.1 `Manifest.Validate`: `Package` carries no `@` after position 0; `Binding` matches `[A-Za-z_$][A-Za-z0-9_$]*` and carries the `dharness` prefix (no reserved-word table — Decision 7 cut). Obs: `TestLayerValidateRejectsAPinnedVersion` (design's Testing Strategy table); `TestLayerValidateRejectsAnInvalidBinding` and `TestBareBindingIsRejectedAtBuildTime` — names derived from spec.md's scenario titles, not cited verbatim in design.md's Testing Strategy table.
-- [ ] 5.2 `internal/preset/nextjs.go`: `Layer{Package: "eslint-config-next", Binding: "dharnessNext", Because: <published/versioned by Next.js itself>}`. Obs: registry `Validate` test passes; `TestInstallIncludesPresetContributedPackages` (Next.js fixture).
-- [ ] 5.3 `internal/preset/expo.go`: `Layer{Package: "eslint-config-expo", Binding: "dharnessExpo", Because: <published/versioned by Expo itself>}`. Obs: same registry test, Expo fixture.
-- [ ] 5.4 `TestNoBindingIsContributedTwice` (open question above).
-- [ ] 5.5 `internal/setup/steps.go`: `integrationPackages(p)` takes a project, appends `preset.Layers(preset.Resolve(p))` packages to the fixed `RulesPackage` set, deduped. Obs: `TestInstallIncludesPresetContributedPackages` (design's Testing Strategy table); `TestFailedInstallRollsBackOnlyWhatThisRunAdded` (derived from spec.md's scenario title, not cited verbatim in design.md) — no new rollback mechanism.
-- [ ] 5.6 Regenerate the framework golden fixtures (Next.js, Expo, and the existing third) via `-update` — never the generic fixture. Obs: `go test ./internal/setup/... -update`, diff reviewed, generic fixture byte-identical to 3a's.
+- [x] 5.1 `Manifest.Validate`: `Package` carries no `@` after position 0; `Binding` matches `[A-Za-z_$][A-Za-z0-9_$]*` and carries the `dharness` prefix (no reserved-word table — Decision 7 cut). Obs: `TestLayerValidateRejectsAPinnedVersion` (design's Testing Strategy table); `TestLayerValidateRejectsAnInvalidBinding` and `TestBareBindingIsRejectedAtBuildTime` — names derived from spec.md's scenario titles, not cited verbatim in design.md's Testing Strategy table.
+- [x] 5.2 `internal/preset/nextjs.go`: `Layer{Package: "eslint-config-next", Binding: "dharnessNext", Because: <published/versioned by Next.js itself>}`. Obs: registry `Validate` test passes; `TestInstallIncludesPresetContributedPackages` (Next.js fixture).
+- [x] 5.3 `internal/preset/expo.go`: `Layer{Package: "eslint-config-expo", Binding: "dharnessExpo", Because: <published/versioned by Expo itself>}`. Obs: same registry test, Expo fixture.
+- [x] 5.4 `TestNoBindingIsContributedTwice` (open question above).
+- [x] 5.5 `internal/setup/steps.go`: `integrationPackages(p)` takes a project, appends `preset.Layers(preset.Resolve(p))` packages to the fixed `RulesPackage` set, deduped. Obs: `TestInstallIncludesPresetContributedPackages` (design's Testing Strategy table); `TestFailedInstallRollsBackOnlyWhatThisRunAdded` (derived from spec.md's scenario title, not cited verbatim in design.md) — no new rollback mechanism.
+- [x] 5.6 Regenerate the framework golden fixtures (Next.js, Expo, and the existing third) via `-update` — never the generic fixture. Obs: `go test ./internal/setup/... -update`, diff reviewed, generic fixture byte-identical to 3a's.
 
 ---
 

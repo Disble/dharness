@@ -19,6 +19,8 @@ package preset
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
+	"strings"
 
 	"github.com/Disble/dharness/internal/project"
 )
@@ -154,11 +156,35 @@ type Manifest struct {
 // block from ever reading as each other (design decision 8).
 const boundariesKey = "boundaries"
 
+// dharnessBindingPrefix is what makes an emitted import binding
+// collision-proof by construction (Layer.Binding's doc comment, design
+// decision 7): dharness writes its import into a file the project also
+// writes imports into, and two import declarations under one identifier in
+// an ES module are a SyntaxError.
+const dharnessBindingPrefix = "dharness"
+
+// bindingPattern is the exact grammar an import binding and a destructured
+// factory parameter both require. It is checked, not the JS reserved-word
+// list — that table was cut as a ~40-entry list policing two registry
+// entries dharness writes itself (design decision 7).
+var bindingPattern = regexp.MustCompile(`^[A-Za-z_$][A-Za-z0-9_$]*$`)
+
+// packagePinnedVersion reports whether pkg carries a version pin — an "@"
+// anywhere after position 0. "@scope/name" keeps its own leading "@" legal;
+// "name@1.2.3" and "@scope/name@1.2.3" do not.
+func packagePinnedVersion(pkg string) bool {
+	if pkg == "" {
+		return false
+	}
+	return strings.Contains(pkg[1:], "@")
+}
+
 // Validate reports an authoring error: an empty Because, an unencodable
-// Value, a Schema other than Schema, or the reserved key "boundaries".
-// Called by a test that walks the whole registry, never by a user's run —
-// an authoring bug is recoverable, and failing sync for it would block on
-// something dharness itself broke.
+// Value, a Schema other than Schema, the reserved key "boundaries", a
+// pinned Layer.Package, or a Layer.Binding that is not a namespaced JS
+// identifier. Called by a test that walks the whole registry, never by a
+// user's run — an authoring bug is recoverable, and failing sync for it
+// would block on something dharness itself broke.
 func (m Manifest) Validate() error {
 	if m.Schema != Schema {
 		return fmt.Errorf("manifest schema %q, want %q", m.Schema, Schema)
@@ -177,6 +203,20 @@ func (m Manifest) Validate() error {
 	for _, seed := range m.Seeds {
 		if seed.Because == "" {
 			return fmt.Errorf("seed %q carries no evidence", seed.Text)
+		}
+	}
+	for _, layer := range m.Layers {
+		if layer.Because == "" {
+			return fmt.Errorf("layer %q carries no evidence", layer.Package)
+		}
+		if packagePinnedVersion(layer.Package) {
+			return fmt.Errorf("layer package %q is pinned to a version; dharness installs what the framework itself publishes and versions", layer.Package)
+		}
+		if !bindingPattern.MatchString(layer.Binding) {
+			return fmt.Errorf("layer binding %q is not a valid JavaScript identifier", layer.Binding)
+		}
+		if !strings.HasPrefix(layer.Binding, dharnessBindingPrefix) {
+			return fmt.Errorf("layer binding %q is not namespaced to dharness — two import declarations under one identifier in an ES module is a SyntaxError", layer.Binding)
 		}
 	}
 	return nil

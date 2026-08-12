@@ -45,6 +45,34 @@ func TestExpoNoMatchWithoutDependency(t *testing.T) {
 	}
 }
 
+// TestExpoContributesESLintConfigLayer is TestNextjsContributesESLintConfigLayer's
+// counterpart for Expo: eslint-config-expo, namespaced under "dharnessExpo",
+// verified against Expo's own "Using ESLint" guide rather than invented —
+// unlike Facts and Seeds, this is a checkable observable this change could
+// verify, so it ships even though expo otherwise stays detection-only.
+func TestExpoContributesESLintConfigLayer(t *testing.T) {
+	root := t.TempDir()
+	writeWailsFixtureFile(t, root, "package.json", `{"dependencies":{"expo":"~51.0.0"}}`)
+
+	match, _ := expo{}.Detect(project.At(root, root))
+	if len(match.Manifest.Layers) != 1 {
+		t.Fatalf("Manifest.Layers = %+v, want exactly one contributed layer", match.Manifest.Layers)
+	}
+	layer := match.Manifest.Layers[0]
+	if layer.Package != "eslint-config-expo" {
+		t.Errorf("Layer.Package = %q, want %q", layer.Package, "eslint-config-expo")
+	}
+	if layer.Binding != "dharnessExpo" {
+		t.Errorf("Layer.Binding = %q, want the namespaced %q", layer.Binding, "dharnessExpo")
+	}
+	if layer.Because == "" {
+		t.Error("Layer.Because is empty, want a checkable observable")
+	}
+	if err := match.Manifest.Validate(); err != nil {
+		t.Errorf("expo's manifest fails Validate(): %v", err)
+	}
+}
+
 func TestExpoManifestValidates(t *testing.T) {
 	root := t.TempDir()
 	writeWailsFixtureFile(t, root, "package.json", `{"dependencies":{"expo":"~51.0.0"}}`)

@@ -241,6 +241,98 @@ func TestLayersIsEmptyWhenNoMatchContributesOne(t *testing.T) {
 	}
 }
 
+// TestLayerValidateRejectsAPinnedVersion pins the first of Decision 7's two
+// new rules: an "@" anywhere after position 0 pins a version, which the spec
+// forbids — dharness installs what the framework itself publishes and
+// versions. "@scope/name" keeps its own leading "@" legal.
+func TestLayerValidateRejectsAPinnedVersion(t *testing.T) {
+	m := Manifest{Schema: Schema, Layers: []Layer{{Package: "eslint-config-next@14.0.0", Binding: "dharnessNext", Because: "test"}}}
+	if err := m.Validate(); err == nil {
+		t.Error("Validate() = nil for a pinned package version, want an error")
+	}
+}
+
+// TestScopedPackageWithNoVersionValidates triangulates the rule above: the
+// leading "@" of a scoped package name is not itself a pin.
+func TestScopedPackageWithNoVersionValidates(t *testing.T) {
+	m := Manifest{Schema: Schema, Layers: []Layer{{Package: "@org/eslint-config", Binding: "dharnessOrg", Because: "test"}}}
+	if err := m.Validate(); err != nil {
+		t.Errorf("Validate() = %v for a scoped, unpinned package, want nil", err)
+	}
+}
+
+// TestSingleCharacterPackageNamePinIsCaught pins the exact boundary
+// "no @ after position 0" draws: a one-character package name pinned
+// immediately at position 1 ("x@1.2.3") must still be caught. A check that
+// starts scanning one byte too late (position 2 instead of 1) would miss
+// exactly this case while still catching every longer package name.
+func TestSingleCharacterPackageNamePinIsCaught(t *testing.T) {
+	m := Manifest{Schema: Schema, Layers: []Layer{{Package: "x@1.2.3", Binding: "dharnessX", Because: "test"}}}
+	if err := m.Validate(); err == nil {
+		t.Error("Validate() = nil for a single-character package name pinned at position 1, want an error")
+	}
+}
+
+// TestLayerValidateRejectsAnInvalidBinding pins Decision 7's second rule: a
+// binding that is not a valid JavaScript identifier would produce a config
+// that does not parse — an authoring bug caught at build time, exactly as
+// json.Marshal on Fact.Value already is.
+func TestLayerValidateRejectsAnInvalidBinding(t *testing.T) {
+	m := Manifest{Schema: Schema, Layers: []Layer{{Package: "eslint-config-next", Binding: "dharness-next", Because: "test"}}}
+	if err := m.Validate(); err == nil {
+		t.Error("Validate() = nil for a binding that is not a valid identifier, want an error")
+	}
+}
+
+// TestBareBindingIsRejectedAtBuildTime is spec.md's own scenario title: a
+// registry entry whose binding is the bare package name — a valid
+// identifier, but not namespaced to dharness — fails Validate() rather than
+// reaching a repository, where it would collide with a project's own import
+// of the same package under the same name (a SyntaxError).
+func TestBareBindingIsRejectedAtBuildTime(t *testing.T) {
+	m := Manifest{Schema: Schema, Layers: []Layer{{Package: "eslint-config-next", Binding: "next", Because: "test"}}}
+	if err := m.Validate(); err == nil {
+		t.Error("Validate() = nil for a bare, non-namespaced binding, want an error")
+	}
+}
+
+// TestLayerValidateRequiresEvidence is Layer's own form of
+// TestEveryFactCarriesEvidence — the same evidence-required rule (§17),
+// over the third contribution kind.
+func TestLayerValidateRequiresEvidence(t *testing.T) {
+	m := Manifest{Schema: Schema, Layers: []Layer{{Package: "eslint-config-next", Binding: "dharnessNext", Because: ""}}}
+	if err := m.Validate(); err == nil {
+		t.Error("Validate() = nil for a layer with no evidence, want an error")
+	}
+}
+
+// TestNoBindingIsContributedTwice is TestNoScalarKeyIsContributedTwice's
+// (internal/setup/owned_test.go) counterpart for Layer.Binding: unlike a
+// scalar Fact, no rule picks a winner when two matches contribute the same
+// binding — the design's argument is that the collision is unreachable with
+// today's registry (nextjs and expo contribute one each, under different
+// bindings), and this test is what keeps that true rather than assumed. A
+// future fifth preset that collides here must fail loudly instead of
+// silently emitting a duplicate `const` into the generated import region.
+func TestNoBindingIsContributedTwice(t *testing.T) {
+	root := t.TempDir()
+	writeWailsFixtureFile(t, root, "package.json", `{"dependencies":{"next":"^14.0.0","expo":"~51.0.0"}}`)
+
+	matches := Resolve(project.At(root, root))
+	layers := Layers(matches)
+	if len(layers) != 2 {
+		t.Fatalf("Layers() = %+v, want exactly the nextjs and expo layers", layers)
+	}
+
+	seen := map[string]string{}
+	for _, layer := range layers {
+		if owner, ok := seen[layer.Binding]; ok {
+			t.Fatalf("Layers() contributed binding %q twice, from %q and %q — a future preset must degrade visibly instead", layer.Binding, owner, layer.Package)
+		}
+		seen[layer.Binding] = layer.Package
+	}
+}
+
 func containsKey(keys []string, want string) bool {
 	for _, key := range keys {
 		if key == want {
