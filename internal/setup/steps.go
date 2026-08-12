@@ -633,13 +633,17 @@ func EslintResidueNote(p project.Project) string {
 
 	path := filepath.Join(p.Source, "doctor.config.json")
 	candidates := append([]string{RulesPackage}, RuleIDs()...)
-	if len(declaredKeys(path, candidates)) == 0 {
+	found := declaredKeys(path, candidates)
+	if len(found) == 0 {
 		return ""
 	}
 
+	// One per line rather than joined: the list is as long as the project's
+	// residue, and a sentence that grows with it stops being readable at the
+	// width the rest of this output is written to (§16).
 	return fmt.Sprintf(
-		"doctor.config.json still declares %s under `plugins` and/or one of dharness's\nrule ids under `rules`, left behind by the mechanism this version retires.\ndharness does not edit or delete it — it cannot tell its own earlier write\napart from a value the project set into the same file afterwards (§05) —\nand those entries are inert now: the gate's react-doctor invocation runs\nwith `--staged`, and a plugin's rules do not fire under that flag (measured\nagainst react-doctor 0.5.7).",
-		RulesPackage)
+		"doctor.config.json still declares these, left behind by the mechanism\nthis version retires:\n\n    %s\n\ndharness does not edit or delete them — it cannot tell its own earlier\nwrite apart from a value the project set into the same file afterwards\n(§05) — and they are inert now: the gate's react-doctor invocation runs\nwith `--staged`, and a plugin's rules do not fire under that flag\n(measured against react-doctor 0.5.7).",
+		strings.Join(found, "\n    "))
 }
 
 // ownedValue names what dharness itself would write for key: the
