@@ -45,6 +45,16 @@ func TestExpoNoMatchWithoutDependency(t *testing.T) {
 	}
 }
 
+// TestExpoContributesESLintConfigLayer is TestNextjsContributesESLintConfigLayer's
+// counterpart for Expo: eslint-config-expo, namespaced under "dharnessExpo",
+// verified against Expo's own "Using ESLint" guide rather than invented —
+// unlike Facts and Seeds, this is a checkable observable this change could
+// verify, so it ships even though expo otherwise stays detection-only.
+func TestExpoContributesESLintConfigLayer(t *testing.T) {
+	assertLayerContribution(t, expo{}.Detect,
+		`{"dependencies":{"expo":"~51.0.0"}}`, "eslint-config-expo", "dharnessExpo")
+}
+
 func TestExpoManifestValidates(t *testing.T) {
 	root := t.TempDir()
 	writeWailsFixtureFile(t, root, "package.json", `{"dependencies":{"expo":"~51.0.0"}}`)

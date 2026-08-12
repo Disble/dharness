@@ -513,6 +513,143 @@ func TestCheckSkipsFallowUntilThereIsHistory(t *testing.T) {
 	}
 }
 
+// ESLint is the one wrapped tool this gate resolves locally rather than
+// through the remote executor, and it measured cheapest of the four stages
+// (docs/learning-log.md, 12 August 2026), so it runs first when installed.
+func TestCheckRunsEslintFirstWhenInstalled(t *testing.T) {
+	captured, root := stub(t, "src/a.ts\nsrc/b.tsx\n")
+	binDir := filepath.Join(root, "node_modules", ".bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(binDir, binaryName("eslint")), "")
+
+	if err := RunCheck(nil, io.Discard); err != nil {
+		t.Fatalf("RunCheck() = %v", err)
+	}
+
+	if len(captured.commands) != 4 {
+		t.Fatalf("ran %d commands, want 4 (eslint, react-doctor, fallow audit, fallow dupes): %+v", len(captured.commands), captured.commands)
+	}
+
+	first := captured.commands[0]
+	if first.Label != "eslint" {
+		t.Errorf("first command = %q, want eslint", first.Label)
+	}
+	if !strings.Contains(first.Name, "node_modules") {
+		t.Errorf("eslint resolved through %q, want the locally installed copy, never the remote executor", first.Name)
+	}
+	if !slices.Equal(first.Args, []string{"src/a.ts", "src/b.tsx"}) {
+		t.Errorf("eslint args = %v, want exactly the staged files", first.Args)
+	}
+	for _, arg := range first.Args {
+		if arg == "--cache" {
+			t.Error("eslint invoked with --cache, which this change explicitly rejects")
+		}
+	}
+
+	if got := toolOf(captured.commands[1]); got != "react-doctor" {
+		t.Errorf("second command = %q, want react-doctor", got)
+	}
+}
+
+// A split layout stages paths relative to the repository root, but the
+// stage runs with Dir: p.Source and ESLint takes explicit paths — so a
+// project split from its repository still has to hand ESLint paths it can
+// resolve from where it runs, not from the repository's own root.
+func TestCheckRebasesEslintPathsInASplitLayout(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "frontend")
+	if err := os.MkdirAll(source, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(source, "package-lock.json"), "{}")
+
+	captured := &record{fail: map[string]error{}}
+	t.Cleanup(runner.SetForTest(captured.run))
+	t.Cleanup(project.SetGitOutputForTest(func(_ string, args ...string) ([]byte, error) {
+		switch {
+		case len(args) >= 2 && args[0] == "rev-parse" && args[1] == "--show-toplevel":
+			return []byte(root + "\n"), nil
+		case len(args) >= 1 && args[0] == "ls-files":
+			return []byte("frontend/package-lock.json\x00"), nil
+		default:
+			return []byte("frontend/src/a.ts\x00"), nil
+		}
+	}))
+	previous := workingDirectory
+	workingDirectory = func() (string, error) { return source, nil }
+	t.Cleanup(func() { workingDirectory = previous })
+
+	binDir := filepath.Join(source, "node_modules", ".bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(binDir, binaryName("eslint")), "")
+
+	if err := RunCheck(nil, io.Discard); err != nil {
+		t.Fatalf("RunCheck() = %v", err)
+	}
+
+	if len(captured.commands) == 0 {
+		t.Fatal("no commands ran")
+	}
+	first := captured.commands[0]
+	if first.Label != "eslint" {
+		t.Fatalf("first command = %q, want eslint: %+v", first.Label, captured.commands)
+	}
+	if !slices.Equal(first.Args, []string{"src/a.ts"}) {
+		t.Errorf("eslint args = %v, want [src/a.ts] rebased from frontend/src/a.ts", first.Args)
+	}
+	if first.Dir != source {
+		t.Errorf("eslint Dir = %q, want %q", first.Dir, source)
+	}
+}
+
+// Most projects have not installed ESLint yet. The gate still runs
+// react-doctor and fallow, and it has to say why ESLint did not join them
+// rather than leaving a silent gap — the same shape HasCommits already uses
+// for a repository with no history.
+func TestEslintStageIsSkippedWithoutABinary(t *testing.T) {
+	captured, _ := stub(t, "src/a.ts\n")
+
+	var out bytes.Buffer
+	if err := RunCheck(nil, &out); err != nil {
+		t.Fatalf("RunCheck() = %v", err)
+	}
+
+	for _, cmd := range captured.commands {
+		if toolOf(cmd) == "eslint" {
+			t.Fatalf("eslint ran without a local install: %+v", captured.commands)
+		}
+	}
+	if !strings.Contains(out.String(), "eslint did not run") {
+		t.Errorf("output does not say ESLint was skipped:\n%s", out.String())
+	}
+}
+
+// ESLint runs first now, so its failure has to cut every stage behind it —
+// the same short-circuit react-doctor's own failure already proved.
+func TestEslintFailureStopsBeforeReactDoctor(t *testing.T) {
+	captured, root := stub(t, "src/a.ts\n")
+	binDir := filepath.Join(root, "node_modules", ".bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(binDir, binaryName("eslint")), "")
+	captured.fail["eslint"] = &runner.ExitError{Command: "eslint", Code: 1}
+
+	err := RunCheck(nil, io.Discard)
+
+	var exitErr *runner.ExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("RunCheck() = %v, want ExitError", err)
+	}
+	if len(captured.commands) != 1 {
+		t.Errorf("ran %d commands after eslint failed, want 1: %+v", len(captured.commands), captured.commands)
+	}
+}
+
 // The duplication ceiling dharness writes is only a ceiling if something
 // enforces it, and audit does not: measured against fallow 3.14.0, a
 // repository at 80% duplication with `threshold: 3` set passes `audit` with

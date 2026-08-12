@@ -6,7 +6,7 @@
    describe |
      This package provides dharness's project lint rules.
      
-         npm install --save-dev dharness-eslint-plugin eslint-config-next
+         npm install --save-dev dharness-eslint-plugin eslint-config-expo
 2  write the files dharness owns
    satisfied=false delegated=false
    why |
@@ -104,17 +104,6 @@
      read intent off a tree. Do the analysis and write the result — nothing else
      needs to change.
    describe |
-     ### What the framework already documents
-     
-     - Next.js documents four top-level folders: app/ (App Router) or pages/ (Pages Router) for routing, public/ for static assets served as-is, and an optional src/ that wraps the rest. Routes are a delivery shell around the domain, not domain modules themselves.
-       (https://nextjs.org/docs/app/getting-started/project-structure — Next.js's own documented top-level project structure)
-     - Beyond routing, Next.js takes no position on how the rest of the source is organized — read the real seams off this tree rather than assuming a components/ or lib/ convention.
-       (https://nextjs.org/docs/app/getting-started/project-structure: "Next.js is unopinionated about how you organize and colocate your project files," and its own components/lib example folders "have no special framework significance.")
-     
-     Confirm or correct this against the tree. It names structure, not
-     zones — those are still read from the code and the person who wrote it,
-     never from this list.
-     
      ### What to find out
      
      1. Read the source layout. What are the real seams: features, layers, a
@@ -204,9 +193,9 @@
 // array because the packages it names are installed beside the project's
 // package.json, and a bare specifier resolves from the file that writes it
 // — which, in a split layout, is not this directory.
-export default function dharnessLayer({ plugin, dharnessNext }) {
+export default function dharnessLayer({ plugin, dharnessExpo }) {
   return [
-    ...dharnessNext,
+    ...dharnessExpo,
     {
       plugins: { dharness: plugin },
       rules: {
@@ -281,13 +270,13 @@ eslint.config.js
 ---
 // dharness:eslint-import begin — rewritten by `dharness sync`; edits here are lost.
 import dharnessPlugin from "dharness-eslint-plugin";
-import dharnessNext from "eslint-config-next";
+import dharnessExpo from "eslint-config-expo";
 import dharnessLayer from ".dharness/eslint.config.js";
 // dharness:eslint-import end
 
 export default [
   // dharness:eslint-layer begin — rewritten by `dharness sync`; edits here are lost.
-  ...dharnessLayer({ plugin: dharnessPlugin, dharnessNext }),
+  ...dharnessLayer({ plugin: dharnessPlugin, dharnessExpo }),
   // dharness:eslint-layer end
 ];
 ---
@@ -300,9 +289,9 @@ package-lock.json
 package.json
 ---
 {
-  "name": "nextjs-app",
+  "name": "expo-app",
   "dependencies": {
-    "next": "^14.0.0"
+    "expo": "~51.0.0"
   }
 }
 ---

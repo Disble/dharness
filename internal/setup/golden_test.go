@@ -65,6 +65,7 @@ func TestFrameworkGoldens(t *testing.T) {
 	}{
 		{"wails", wailsProject},
 		{"nextjs", nextjsProject},
+		{"expo", expoProject},
 		{"wails-nextjs", wailsNextjsProject},
 	}
 
@@ -287,6 +288,21 @@ func nextjsProject(t *testing.T) project.Project {
 	if err := os.MkdirAll(filepath.Join(root, "app"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+
+	p := project.At(root, root)
+	p.InRepository = true
+	return p
+}
+
+// expoProject is a conventional layout (Root == Source) whose package.json
+// declares the "expo" dependency — the "expo" framework golden, slice 5's
+// counterpart to nextjsProject, added to prove Layer contributions for a
+// second preset regenerate independently of Next.js.
+func expoProject(t *testing.T) project.Project {
+	t.Helper()
+	root := t.TempDir()
+	writeGoldenFixtureFile(t, root, "package.json", "{\n  \"name\": \"expo-app\",\n  \"dependencies\": {\n    \"expo\": \"~51.0.0\"\n  }\n}\n")
+	writeGoldenFixtureFile(t, root, "package-lock.json", "{\n  \"lockfileVersion\": 3\n}\n")
 
 	p := project.At(root, root)
 	p.InRepository = true

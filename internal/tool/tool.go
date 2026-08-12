@@ -20,6 +20,7 @@ const (
 	ReactDoctor = "react-doctor"
 	Fallow      = "fallow"
 	Stryker     = "stryker"
+	ESLint      = "eslint"
 )
 
 const strykerCoreLatest = "@stryker-mutator/core@latest"
@@ -232,6 +233,25 @@ func StrykerDryRun(paths []string, testRunner string, concurrency int) []string 
 		"--concurrency", strconv.Itoa(concurrency),
 		"--reporters", "clear-text,json",
 	)
+}
+
+// ESLintStaged lints exactly the staged files, by explicit path.
+//
+// No --cache. It writes .eslintcache into the project's tree, which §03
+// would then have to account for as project-owned or dharness-owned, and it
+// is stale-prone across branches — a cache keyed on a file's content and
+// the config's mtime reports a clean file after a branch switch that
+// changed neither. The staged file list is the larger win and it is already
+// available. Caching is a measured optimisation, deferred, and this comment
+// is here so it is not re-added as an obvious improvement.
+//
+// The paths arrive relative to p.Source, not to the repository: the command
+// runs where the package manager installed ESLint, and git reports paths
+// from the repository root — internal/project's
+// StagedSourceFilesFromSource does the stripping, so this function stays a
+// pure pass-through rather than duplicating that path math.
+func ESLintStaged(files []string) []string {
+	return files
 }
 
 func mutate(paths []string) []string {

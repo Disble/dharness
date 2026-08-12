@@ -139,3 +139,38 @@ dharness read an unrelated repository's config and the assertion fails.
 The general shape: **a guard against an empty path needs a test that puts a
 matching file where the unguarded code would look.** An empty temp directory
 proves nothing, because the unguarded code finds nothing there either.
+
+---
+
+## 7. Hunk proximity sweeps untouched functions into scope
+
+**Measured on 2026-08-12**, during the ESLint slice that deleted
+`doctorConfigStep`'s neighbours in `internal/setup/steps.go`.
+
+Staged scope is computed from the diff's line ranges, so a function the change
+never touched is mutated when it sits close enough to a hunk. The run reported
+a survivor in `lefthookExtendsStep.Satisfied` (`steps.go:243-246`), which that
+diff did not modify.
+
+The survivor is real, not an artefact. `Satisfied` is
+
+    hookManager(p) != managerLefthook || extendsWired(root, lefthookConfig, target)
+
+and the suite pins only the left side:
+`TestLefthookExtendsSatisfiedWhenLefthookIsNotTheHookManager` covers the
+short-circuit, `TestExtendsWiredIsFalseWithoutTheFile` covers `extendsWired`
+alone. **No test reaches the case where lefthook *is* the hook manager and the
+config is already wired**, so replacing the right operand with `true` survives.
+
+Two separate things worth doing, and they are not the same thing:
+
+1. The gap itself — one test with lefthook as the manager and a
+   `lefthook.yml` that already extends the owned file.
+2. The scoping behaviour. A survivor in code the diff never touched is
+   indistinguishable, in the report, from one the change introduced. The
+   author has to open each survivor to find out which it is, and the honest
+   answer differs: your own new code gets fixed, pre-existing code gets
+   recorded rather than silently absorbed into an unrelated review.
+
+Entry 1 is about scope losing *which file* an offset came from. This is the
+neighbouring problem: scope keeping code that no longer belongs to the change.

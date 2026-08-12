@@ -59,6 +59,16 @@ func TestNextjsContributesNoIgnorePatterns(t *testing.T) {
 	}
 }
 
+// TestNextjsContributesESLintConfigLayer pins the requirement's own
+// scenario ("a Next.js project's owned config layers the framework's own
+// package first"): eslint-config-next, namespaced under "dharnessNext" so
+// it cannot collide with a project's own "import next from ...", verified
+// against Next.js's own ESLint documentation rather than invented.
+func TestNextjsContributesESLintConfigLayer(t *testing.T) {
+	assertLayerContribution(t, nextjs{}.Detect,
+		`{"dependencies":{"next":"^14.0.0"}}`, "eslint-config-next", "dharnessNext")
+}
+
 // TestNextjsSeedsNameStructureNotZones pins §21's framing: a seed offers
 // what the framework documents, evidenced the same way a Fact.Because is,
 // and never decides a zone.

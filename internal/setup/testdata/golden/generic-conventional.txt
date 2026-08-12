@@ -44,7 +44,18 @@
      
          extends:
            - .dharness/lefthook.yml
-6  fix the lint config react-doctor silently drops
+6  point eslint.config.js at the file dharness owns
+   satisfied=false delegated=false
+   why |
+     
+   describe |
+     ESLint's flat config has no `extends` of its own, so the layer arrives by
+     import and spread instead. A new eslint.config.js is written:
+     
+         import dharnessLayer from ".dharness/eslint.config.js";
+     
+         export default [...dharnessLayer({ plugin: dharnessPlugin })];
+7  fix the lint config react-doctor silently drops
    satisfied=true delegated=true
    why |
      .eslintrc.json does not parse. react-doctor adopts this file and runs the rules in it,
@@ -55,13 +66,6 @@
      Make .eslintrc.json parse, or delete it. Either answer is fine; a file that is present
      and unreadable is not, because the gate cannot tell you which rules it stopped
      running.
-7  declare the rules react-doctor should run
-   satisfied=false delegated=false
-   why |
-     
-   describe |
-     react-doctor does not compose, so this is a merge rather than a reference: the
-     package joins `plugins` and its 6 rules join `rules`.
 8  give the agent fallow's own tools
    satisfied=false delegated=false
    why |
@@ -155,10 +159,14 @@
      So `folder-ownership` ships **off**. The other five rules are guardrails on
      generated code and stay on; this one is the only one that takes a side.
      
-     If this project does publish through barrels, turn it on in doctor.config.json:
+     If this project does publish through barrels, turn it on in its own layer in
+     eslint.config.js — an object placed after dharness's spread, since flat config merges
+     last-wins per rule:
      
-         "rules": {
-           "dharness/folder-ownership": "error"
+         {
+           rules: {
+             "dharness/folder-ownership": "error",
+           },
          }
      
      A severity written there survives every later run: dharness fills in only the
@@ -177,6 +185,29 @@
 !fallow.jsonc
 !rules.json
 !evidence.json
+!eslint.config.js
+---
+.dharness/eslint.config.js
+---
+// dharness writes this file. It exports a factory rather than a config
+// array because the packages it names are installed beside the project's
+// package.json, and a bare specifier resolves from the file that writes it
+// — which, in a split layout, is not this directory.
+export default function dharnessLayer({ plugin }) {
+  return [
+    {
+      plugins: { dharness: plugin },
+      rules: {
+        "dharness/folder-ownership": "off",
+        "dharness/max-file-lines": "error",
+        "dharness/pure-index-barrel": "error",
+        "dharness/require-jsdoc": "error",
+        "dharness/require-variable-jsdoc": "error",
+        "dharness/role-file-shape": "error",
+      },
+    },
+  ];
+}
 ---
 .dharness/fallow.jsonc
 ---
@@ -234,21 +265,18 @@ pre-commit:
   }
 }
 ---
-doctor.config.json
+eslint.config.js
 ---
-{
-  "plugins": [
-    "dharness-eslint-plugin"
-  ],
-  "rules": {
-    "dharness/folder-ownership": "off",
-    "dharness/max-file-lines": "error",
-    "dharness/pure-index-barrel": "error",
-    "dharness/require-jsdoc": "error",
-    "dharness/require-variable-jsdoc": "error",
-    "dharness/role-file-shape": "error"
-  }
-}
+// dharness:eslint-import begin — rewritten by `dharness sync`; edits here are lost.
+import dharnessPlugin from "dharness-eslint-plugin";
+import dharnessLayer from ".dharness/eslint.config.js";
+// dharness:eslint-import end
+
+export default [
+  // dharness:eslint-layer begin — rewritten by `dharness sync`; edits here are lost.
+  ...dharnessLayer({ plugin: dharnessPlugin }),
+  // dharness:eslint-layer end
+];
 ---
 package-lock.json
 ---

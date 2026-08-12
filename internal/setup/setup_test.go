@@ -115,7 +115,7 @@ func TestInstallStepPlansOnlyMissingIntegrationPackages(t *testing.T) {
 	p, _, _ := integrationProject(t)
 	want := []string{RulesPackage}
 
-	if got := integrationPackages(); !slices.Equal(got, want) {
+	if got := integrationPackages(p); !slices.Equal(got, want) {
 		t.Fatalf("integrationPackages() = %v, want %v", got, want)
 	}
 	description := (installStep{}).Describe(p)
@@ -327,6 +327,71 @@ func TestApplyCompensatesPartialInstallFailure(t *testing.T) {
 	assertPackageState(t, p.Source, packageJSON, lockfile)
 }
 
+// TestInstallIncludesPresetContributedPackages pins integrationPackages(p)
+// becoming preset-aware (design decision 7): a matched preset's Layer
+// package joins the fixed RulesPackage set, for both presets that
+// contribute one today.
+func TestInstallIncludesPresetContributedPackages(t *testing.T) {
+	cases := []struct {
+		name    string
+		project func(t *testing.T) (project.Project, []byte, []byte)
+		want    string
+	}{
+		{"nextjs", nextjsIntegrationProject, "eslint-config-next"},
+		{"expo", expoIntegrationProject, "eslint-config-expo"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p, _, _ := tc.project(t)
+			got := integrationPackages(p)
+			if !slices.Contains(got, RulesPackage) {
+				t.Errorf("integrationPackages() = %v, want %q present", got, RulesPackage)
+			}
+			if !slices.Contains(got, tc.want) {
+				t.Errorf("integrationPackages() = %v, want %q contributed by the matched preset", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestFailedInstallRollsBackOnlyWhatThisRunAdded is spec.md's own scenario
+// title: a Next.js-matched project whose installStep.Apply fails partway
+// through must roll back exactly the packages this run's own
+// integrationPackages(p) added — RulesPackage and the preset-contributed
+// eslint-config-next together — through the existing snapshot-and-compensate
+// mechanism, with no new rollback path for preset-contributed packages
+// (design decision 7).
+func TestFailedInstallRollsBackOnlyWhatThisRunAdded(t *testing.T) {
+	p, packageJSON, lockfile := nextjsIntegrationProject(t)
+	installErr := errors.New("install failed after changing files")
+	var commands []runner.Command
+	t.Cleanup(runner.SetForTest(func(cmd runner.Command, _, _ io.Writer) error {
+		commands = append(commands, cmd)
+		if cmd.Args[0] == "install" {
+			writePackageState(t, p.Source, "partially changed", "partial lock")
+			return installErr
+		}
+		return nil
+	}))
+
+	err := Apply(p, io.Discard)
+	if !errors.Is(err, installErr) {
+		t.Fatalf("Apply() = %v, want install failure", err)
+	}
+	if len(commands) != 2 || commands[1].Args[0] != "uninstall" {
+		t.Fatalf("partial install was not compensated: %+v", commands)
+	}
+	for _, cmd := range commands {
+		for _, pkg := range []string{RulesPackage, "eslint-config-next"} {
+			if !slices.Contains(cmd.Args, pkg) {
+				t.Errorf("command %v did not carry package %q", cmd.Args, pkg)
+			}
+		}
+	}
+	assertPackageState(t, p.Source, packageJSON, lockfile)
+}
+
 // Writer.Undo restores files it snapshotted, but not directories created by
 // os.MkdirAll nor the .gitignore project.Project.EnsureDir writes outside the
 // Writer. The rollback report must not claim more than Undo actually did.
@@ -382,6 +447,40 @@ func integrationProject(t *testing.T) (project.Project, []byte, []byte) {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Join(root, "node_modules", "pre-existing-integration"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return project.Project{Root: root, Source: root, PackageManager: "npm", TestRunner: "vitest"}, packageJSON, lockfile
+}
+
+// nextjsIntegrationProject is integrationProject's counterpart for a
+// project the nextjs preset matches: package.json declares "next", so
+// integrationPackages(p) includes eslint-config-next alongside RulesPackage
+// (design decision 7).
+func nextjsIntegrationProject(t *testing.T) (project.Project, []byte, []byte) {
+	t.Helper()
+	root := t.TempDir()
+	packageJSON := []byte(`{"dependencies":{"next":"^14.0.0"},"devDependencies":{"vitest":"^4.0.0"}}`)
+	lockfile := []byte(`{"lockfileVersion":3}`)
+	if err := os.WriteFile(filepath.Join(root, "package.json"), packageJSON, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "package-lock.json"), lockfile, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return project.Project{Root: root, Source: root, PackageManager: "npm", TestRunner: "vitest"}, packageJSON, lockfile
+}
+
+// expoIntegrationProject is nextjsIntegrationProject's counterpart for the
+// expo preset.
+func expoIntegrationProject(t *testing.T) (project.Project, []byte, []byte) {
+	t.Helper()
+	root := t.TempDir()
+	packageJSON := []byte(`{"dependencies":{"expo":"~51.0.0"},"devDependencies":{"vitest":"^4.0.0"}}`)
+	lockfile := []byte(`{"lockfileVersion":3}`)
+	if err := os.WriteFile(filepath.Join(root, "package.json"), packageJSON, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "package-lock.json"), lockfile, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return project.Project{Root: root, Source: root, PackageManager: "npm", TestRunner: "vitest"}, packageJSON, lockfile
@@ -732,68 +831,6 @@ func TestAppendHuskyGateFailsOnAHookItCannotRead(t *testing.T) {
 	}
 }
 
-// Five of the six rules are guardrails on generated code and arrive at
-// "error". folder-ownership is not one: it requires that a split module
-// publish an index.ts, which a project that deliberately has no barrel files
-// cannot satisfy. dharness writes it "off" and the architecture prompt says
-// how to turn it on.
-func TestDoctorConfigLeavesTheArchitecturalRuleOff(t *testing.T) {
-	root := t.TempDir()
-	p := project.Project{Root: root, Source: root, PackageManager: "bun"}
-
-	if err := (doctorConfigStep{}).Apply(p, &Writer{}); err != nil {
-		t.Fatalf("Apply() = %v", err)
-	}
-
-	var config doctorConfigFile
-	raw, err := os.ReadFile(filepath.Join(root, doctorConfig))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := json.Unmarshal(raw, &config); err != nil {
-		t.Fatal(err)
-	}
-
-	if got := config.Rules[RulesPrefix+"/folder-ownership"]; got != "off" {
-		t.Errorf("folder-ownership = %q, want \"off\": it requires an index.ts this project may forbid", got)
-	}
-	for _, rule := range []string{"max-file-lines", "require-jsdoc", "require-variable-jsdoc", "role-file-shape", "pure-index-barrel"} {
-		id := RulesPrefix + "/" + rule
-		if got := config.Rules[id]; got != "error" {
-			t.Errorf("%s = %q, want \"error\"", id, got)
-		}
-	}
-}
-
-// pure-index-barrel stays at "error" on purpose and is not an exception to
-// the rule above: it constrains a barrel that exists rather than requiring
-// one, so a project without barrels never sees it fire.
-func TestDoctorConfigKeepsASeverityTheProjectAlreadyChose(t *testing.T) {
-	root := t.TempDir()
-	p := project.Project{Root: root, Source: root, PackageManager: "bun"}
-	writeFile := filepath.Join(root, doctorConfig)
-	chosen := `{"rules":{"dharness/folder-ownership":"error","dharness/require-jsdoc":"warn"}}`
-	if err := os.WriteFile(writeFile, []byte(chosen), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := (doctorConfigStep{}).Apply(p, &Writer{}); err != nil {
-		t.Fatalf("Apply() = %v", err)
-	}
-
-	var config doctorConfigFile
-	raw, _ := os.ReadFile(writeFile)
-	if err := json.Unmarshal(raw, &config); err != nil {
-		t.Fatal(err)
-	}
-	if got := config.Rules[RulesPrefix+"/folder-ownership"]; got != "error" {
-		t.Errorf("folder-ownership = %q; a severity the project chose must survive sync", got)
-	}
-	if got := config.Rules[RulesPrefix+"/require-jsdoc"]; got != "warn" {
-		t.Errorf("require-jsdoc = %q; a severity the project chose must survive sync", got)
-	}
-}
-
 // A rule dharness turns off has to say so where the decision is made, or it
 // is a silent default. The architecture prompt names the rule, the file and
 // the exact edit.
@@ -803,8 +840,8 @@ func TestArchitecturePromptSaysHowToTurnOnTheBarrelRule(t *testing.T) {
 	})
 
 	for _, expected := range []string{
-		"frontend/" + doctorConfig,
-		`"dharness/folder-ownership": "error"`,
+		"frontend/" + eslintConfig,
+		`"dharness/folder-ownership": "error",`,
 		"index.ts",
 	} {
 		if !strings.Contains(prompt, expected) {

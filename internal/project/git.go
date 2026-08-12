@@ -106,6 +106,27 @@ func (p Project) StagedSourceFiles() ([]string, error) {
 	return scoped, nil
 }
 
+// StagedSourceFilesFromSource is StagedSourceFiles with the source prefix
+// removed, for a tool that runs in p.Source and takes explicit paths.
+// StagedSourceFiles already filtered to that prefix, so this only strips it.
+func (p Project) StagedSourceFilesFromSource() ([]string, error) {
+	staged, err := p.StagedSourceFiles()
+	if err != nil {
+		return nil, err
+	}
+
+	prefix := p.SourceRel()
+	if prefix == "" {
+		return staged, nil
+	}
+
+	rebased := make([]string, len(staged))
+	for i, file := range staged {
+		rebased[i] = strings.TrimPrefix(file, prefix+"/")
+	}
+	return rebased, nil
+}
+
 // PublishesBarrels reports whether this project's resolved Source tree
 // publishes at least one index.ts/index.tsx barrel, asked of git rather than
 // walked — matching Discover's own precedent of asking the tool: the index
@@ -122,8 +143,8 @@ func (p Project) StagedSourceFiles() ([]string, error) {
 // publishing, and requires at least one directory component to match.
 //
 // A method rather than a Project field: the probe costs a subprocess, and
-// only doctorConfigStep's first-write default needs the answer — Discover
-// runs for every command and never asks about barrels.
+// only DefaultSeverity's folder-ownership default needs the answer —
+// Discover runs for every command and never asks about barrels.
 func (p Project) PublishesBarrels() bool {
 	if !p.InRepository || !p.HasSource() {
 		return false

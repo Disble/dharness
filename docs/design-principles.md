@@ -96,6 +96,18 @@ que falte; esa instalación pertenece a la misma transacción que los archivos y
 ante un fallo, desinstala exactamente lo agregado por esa ejecución y restaura
 byte por byte el manifiesto y el lockfile.
 
+*Enmendado el 12 de agosto de 2026.* ESLint es la excepción registrada a lo
+anterior: la fase del gate se resuelve con `p.LocalBinary("eslint")`, el
+binario que el propio proyecto instaló, nunca con el ejecutor remoto — porque
+el flat config del proyecto importa sus propios plugins y configuraciones de
+framework, algo que un entorno transitorio no puede resolver. La medición
+contra las otras tres fases (react-doctor, fallow audit, fallow dupes) sobre
+la misma lista explícita de archivos en stage, tres corridas cada una, la
+ubicó además como la más barata de las cuatro — no la más cara, como se había
+asumido de forma provisional — así que corre primero en el orden del gate, no
+al final; react-doctor y fallow conservan el orden relativo que ya tenían,
+que esta medición no revisó (`docs/learning-log.md`, 12 de agosto de 2026).
+
 ### 04. Un comando que no se puede nombrar está haciendo dos cosas
 
 El nombre no es presentación, es diagnóstico. Cuando ninguno encaja, casi siempre
@@ -198,6 +210,18 @@ ahorro.
 
 *Salió de:* que react-doctor se acota al cambio con `--staged` mientras fallow
 construye el grafo del repositorio igual, así que tiene un piso más alto.
+
+*Enmendado el 12 de agosto de 2026.* «Por costo ascendente» significa medido, no
+supuesto. La fase de ESLint se había ubicado última por razonamiento, y al
+medirla resultó la más barata de las cuatro: 1008 ms de mediana contra 2959 de
+react-doctor, 2102 de fallow audit y 1398 de fallow dupes, sobre la misma lista
+explícita de archivos en stage y tres corridas cada una. Corre primera. La misma
+medición encontró fallow más barato que react-doctor sobre ese proyecto de
+referencia, pero ese orden se argumentó por escalado —`--staged` acota a
+react-doctor al diff, el grafo le da a fallow un piso— y un repositorio de cinco
+archivos tiene un grafo demasiado chico para probarlo: queda abierto en lugar de
+cerrarse con el instrumento equivocado (`docs/learning-log.md`, 12 de agosto
+de 2026).
 
 ### 13. La salida temprana vale más que cualquier optimización
 

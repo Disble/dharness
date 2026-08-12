@@ -1,6 +1,7 @@
 package setup
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Disble/dharness/internal/jsconfig"
 	"github.com/Disble/dharness/internal/preset"
 	"github.com/Disble/dharness/internal/project"
 	"github.com/Disble/dharness/internal/runner"
@@ -59,7 +61,7 @@ func (installStep) Satisfied(p project.Project) bool {
 
 func (s installStep) Describe(p project.Project) string {
 	return fmt.Sprintf("This package provides dharness's project lint rules.\n\n    %s %s",
-		tool.InstallCommand(p.PackageManager), strings.Join(integrationPackages(), " "))
+		tool.InstallCommand(p.PackageManager), strings.Join(integrationPackages(p), " "))
 }
 
 // Delegated is always false: there is no repository state that hands
@@ -67,7 +69,7 @@ func (s installStep) Describe(p project.Project) string {
 func (installStep) Delegated(project.Project) (string, bool) { return "", false }
 
 func (installStep) Apply(p project.Project, w *Writer) error {
-	packages := integrationPackages()
+	packages := integrationPackages(p)
 
 	for _, path := range p.PackageStateFiles() {
 		if err := w.remember(path); err != nil {
@@ -85,10 +87,18 @@ func (installStep) Apply(p project.Project, w *Writer) error {
 	return installErr
 }
 
-// integrationPackages lists the packages dharness adds to a project, as
-// opposed to the CLIs it invokes without installing.
-func integrationPackages() []string {
-	return dedupe([]string{RulesPackage})
+// integrationPackages lists the packages dharness adds to p, as opposed to
+// the CLIs it invokes without installing: the fixed set every project gets,
+// plus whatever the matched presets contribute. It takes a project now
+// because the answer depends on detection — the same re-derive-at-the-
+// call-site rule framework-presets decision 4 fixed, and for the same
+// reason: a memoised value would be recorded state (§07).
+func integrationPackages(p project.Project) []string {
+	packages := []string{RulesPackage}
+	for _, layer := range preset.Layers(preset.Resolve(p)) {
+		packages = append(packages, layer.Package)
+	}
+	return dedupe(packages)
 }
 
 // ---------------------------------------------------------- owned files
@@ -111,11 +121,35 @@ func (ownedFilesStep) Satisfied(p project.Project) bool {
 		}
 	}
 
+	matches := preset.Resolve(p)
+
 	raw, err := os.ReadFile(filepath.Join(p.Root, project.Dir, ownedFallow))
 	if err != nil {
 		return false
 	}
-	return regionBytes(string(raw)) == presetRegion(preset.Resolve(p))
+	if regionBytes(string(raw)) != presetRegion(matches) {
+		return false
+	}
+
+	// Unlike fallow.jsonc, eslint.config.js carries no agent-editable block —
+	// dharness wrote every byte of it — so the whole file is compared, the
+	// same way the six severities converge on the next run rather than
+	// being written once (design decision 8). The read error is not checked
+	// separately: ownedEslintConfig never renders "", so a missing file
+	// (read back as empty bytes) can never equal it either way.
+	eslint, _ := os.ReadFile(filepath.Join(p.Root, project.Dir, ownedEslint))
+	if string(eslint) != ownedEslintConfig(p, preset.Layers(matches)) {
+		return false
+	}
+
+	// The allow list is repaired rather than written once (design decision
+	// 2): a repository adopted before this change predates the entry, and
+	// hand-removing it must bring the step back the same way any other
+	// derived state does (§15). Same reasoning as above: a missing
+	// .gitignore reads back as empty bytes, which never contains the
+	// non-empty entry string either.
+	ignore, _ := os.ReadFile(filepath.Join(p.Root, project.Dir, ".gitignore"))
+	return strings.Contains(string(ignore), "!"+ownedEslint)
 }
 
 func (ownedFilesStep) Describe(project.Project) string {
@@ -150,8 +184,17 @@ func (ownedFilesStep) Apply(p project.Project, w *Writer) error {
 	if existing, err := os.ReadFile(fallowPath); err == nil {
 		base = string(existing)
 	}
-	content := replaceRegion(base, presetRegion(preset.Resolve(p)))
+	matches := preset.Resolve(p)
+	content := replaceRegion(base, presetRegion(matches))
 	if err := w.Write(fallowPath, []byte(content)); err != nil {
+		return err
+	}
+
+	eslintPath := filepath.Join(p.Root, project.Dir, ownedEslint)
+	if err := w.Write(eslintPath, []byte(ownedEslintConfig(p, preset.Layers(matches)))); err != nil {
+		return err
+	}
+	if err := ensureShared(p, w, ownedEslint); err != nil {
 		return err
 	}
 
@@ -235,6 +278,171 @@ func (lefthookExtendsStep) Delegated(p project.Project) (string, bool) {
 
 func (lefthookExtendsStep) Apply(p project.Project, w *Writer) error {
 	return wireLefthookExtends(p, w)
+}
+
+// -------------------------------------------------------- eslint extends
+//
+// eslintExtendsStep is a third member of the family above, for
+// eslint.config.js instead of .fallowrc.json or lefthook.yml — split out
+// for the same reason that pair already is: the file it targets is neither
+// of theirs.
+//
+// Unlike the other two, presence alone does not delegate (the MODIFIED
+// step-delegation requirement in spec.md): where the existing config is
+// something dharness understands well enough to edit, Delegated answers
+// ok == false and Apply edits it directly — inserting the two marked regions
+// when neither exists yet, replacing them in place when they already do
+// (design decision 6). Satisfied is a byte comparison, the same rule
+// ownedFilesStep.Satisfied already applies to a file dharness owns: true
+// when the marked regions are absent for a reason that always delegates (no
+// flat config splice is eligible for), or when they are present and equal to
+// what this run would render. A config spliced before a preset started
+// contributing a layer converges by replacement on the next run instead of
+// drifting.
+
+type eslintExtendsStep struct{}
+
+func (eslintExtendsStep) ID() string {
+	return fmt.Sprintf("point %s at the file dharness owns", eslintConfig)
+}
+
+// Satisfied answers a byte comparison for a splice-eligible flat config
+// (design decision 6, ownedFilesStep.Satisfied's rule applied to a file
+// dharness does not own): true only when the candidate this run would
+// produce is byte-identical to what is already on disk. Every other
+// existing-config shape — TypeScript, legacy-only, unreadable, a malformed
+// marker pair, or anything jsconfig.Analyze itself refuses — always
+// delegates (Delegated answers ok == true for all of them), so there is
+// nothing for this step to ever converge there; reporting it satisfied keeps
+// it out of sync's pending list rather than double-reporting what Delegated
+// already explains.
+func (eslintExtendsStep) Satisfied(p project.Project) bool {
+	if !p.HasSource() {
+		return true
+	}
+
+	path := eslintFlatConfig(p.Source)
+	if path == "" {
+		return eslintTypeScriptConfig(p.Source) != "" || eslintLegacyConfig(p.Source) != ""
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return true
+	}
+	if _, malformed := malformedEslintMarkerPair(string(raw)); malformed {
+		return true
+	}
+	if _, why, ok := jsconfig.Analyze(raw); !ok {
+		_ = why
+		return true
+	}
+
+	candidate, err := spliceEslintConfig(p, path, raw)
+	if err != nil {
+		return false
+	}
+	return bytes.Equal(candidate, raw)
+}
+
+func (eslintExtendsStep) Describe(p project.Project) string {
+	target := ownedFrom(p, p.Source, ownedEslint)
+	return fmt.Sprintf(
+		"ESLint's flat config has no `extends` of its own, so the layer arrives by\nimport and spread instead. A new %s is written:\n\n    import dharnessLayer from %q;\n\n    export default [...dharnessLayer({ plugin: dharnessPlugin })];",
+		eslintConfig, target)
+}
+
+// Delegated answers the full eslint-config-splice refusal matrix: a
+// TypeScript config, a legacy-only project, an unreadable file, a malformed
+// marker pair, or a shape jsconfig.Analyze does not recognise all delegate
+// (ok == true). No config at all, or an existing flat config jsconfig
+// recognises with well-formed markers, does not (ok == false) — the
+// write-if-absent and future splice/replace paths both start from there.
+func (eslintExtendsStep) Delegated(p project.Project) (string, bool) {
+	if !p.HasSource() {
+		return "", false
+	}
+
+	if path := eslintTypeScriptConfig(p.Source); path != "" {
+		return fmt.Sprintf(
+			"%s is TypeScript, and dharness does not parse it — a second grammar plus\ntyped helpers whose semantics belong to the project, the same reasoning §03's\namendment already applies to Stryker configs.",
+			filepath.Base(path)), true
+	}
+
+	if path := eslintFlatConfig(p.Source); path != "" {
+		return delegateFlatEslintConfig(path)
+	}
+
+	if path := eslintLegacyConfig(p.Source); path != "" {
+		return fmt.Sprintf(
+			"%s is this project's only ESLint configuration, and dharness does not\ncompose a flat config on top of a legacy one — a legacy ESLint config,\nmatching legacyLintConfigStep's own reasoning for the analogous\ndoctor-config case. Migrating to flat config is the project's decision.",
+			filepath.Base(path)), true
+	}
+
+	return "", false
+}
+
+// delegateFlatEslintConfig reads an existing flat config and answers every
+// remaining refusal-matrix cell over it: an unreadable file, a malformed
+// marker pair, or whatever jsconfig.Analyze itself refuses — an
+// unrecognised call expression, an ERROR node, a non-array export.
+// Anything jsconfig accepts, with well-formed markers, is not delegated.
+func delegateFlatEslintConfig(path string) (string, bool) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Sprintf("%s could not be read: %s", filepath.Base(path), err), true
+	}
+
+	if why, malformed := malformedEslintMarkerPair(string(raw)); malformed {
+		return why, true
+	}
+
+	if _, why, ok := jsconfig.Analyze(raw); !ok {
+		return why, true
+	}
+
+	return "", false
+}
+
+// malformedEslintMarkerPair checks both marker pairs eslintExtendsStep owns
+// and reports the first malformed one found, or ("", false) when neither
+// is.
+func malformedEslintMarkerPair(raw string) (why string, malformed bool) {
+	if _, _, state := markerRegion(raw, eslintImportBegin, eslintImportEnd); state == markersMalformed {
+		return "the dharness:eslint-import marker pair is malformed — a begin with no\nmatching end, an end with no matching begin, or more than one of either —\nand dharness refuses to guess at a half-written region.", true
+	}
+	if _, _, state := markerRegion(raw, eslintLayerBegin, eslintLayerEnd); state == markersMalformed {
+		return "the dharness:eslint-layer marker pair is malformed — a begin with no\nmatching end, an end with no matching begin, or more than one of either —\nand dharness refuses to guess at a half-written region.", true
+	}
+	return "", false
+}
+
+// Apply writes the config that has none yet (unchanged from slice 3a), or
+// splices an existing one: insert when neither marked region exists,
+// replace in place when both already do. The candidate is verified — no
+// ERROR node, exactly one well-formed region of each marker kind — before
+// anything is written, so an unparseable result never reaches disk at all
+// (design decision 6); Writer.Undo remains the backstop for steps that ran
+// earlier in this same applySteps call, not for this file.
+func (eslintExtendsStep) Apply(p project.Project, w *Writer) error {
+	path := eslintFlatConfig(p.Source)
+	if path == "" {
+		return wireEslintExtends(p, w)
+	}
+
+	src, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read %s before splicing: %w", filepath.Base(path), err)
+	}
+
+	candidate, err := spliceEslintConfig(p, path, src)
+	if err != nil {
+		return err
+	}
+	if err := verifyEslintCandidate(candidate); err != nil {
+		return fmt.Errorf("%s: %w", filepath.Base(path), err)
+	}
+	return w.Write(path, candidate)
 }
 
 // --------------------------------------------------- boundaries owner
@@ -404,6 +612,40 @@ func uncertainNotes(matches []preset.Match) string {
 	return strings.Join(notes, "\n\n")
 }
 
+// EslintResidueNote reports the six dharness/* severities and the
+// RulesPackage plugin declaration a repository adopted before this change
+// still carries in doctor.config.json, left behind by the mechanism this
+// version retires (design decision 8) — or "" when there is nothing to
+// report, which is every project adopted under this version and any older
+// one hand-cleaned.
+//
+// It is a note beside the plan, not a step, for UncheckableConfigNote's exact
+// reason: dharness cannot tell its own earlier write apart from a value the
+// project set into the same file afterwards (§05), so there is no state the
+// project can reach that clears it — and a step with no completion state is
+// not pending work. Unlike UncheckableConfigNote's blind spot, this is not an
+// unknown: dharness can read the file fine and knows exactly what it holds,
+// so it names what it found rather than saying the answer is unknown.
+func EslintResidueNote(p project.Project) string {
+	if !p.HasSource() {
+		return ""
+	}
+
+	path := filepath.Join(p.Source, "doctor.config.json")
+	candidates := append([]string{RulesPackage}, RuleIDs()...)
+	found := declaredKeys(path, candidates)
+	if len(found) == 0 {
+		return ""
+	}
+
+	// One per line rather than joined: the list is as long as the project's
+	// residue, and a sentence that grows with it stops being readable at the
+	// width the rest of this output is written to (§16).
+	return fmt.Sprintf(
+		"doctor.config.json still declares these, left behind by the mechanism\nthis version retires:\n\n    %s\n\ndharness does not edit or delete them — it cannot tell its own earlier\nwrite apart from a value the project set into the same file afterwards\n(§05) — and they are inert now: the gate's react-doctor invocation runs\nwith `--staged`, and a plugin's rules do not fire under that flag\n(measured against react-doctor 0.5.7).",
+		strings.Join(found, "\n    "))
+}
+
 // ownedValue names what dharness itself would write for key: the
 // architecture block the agent writes for "boundaries" — no preset may ever
 // contribute that key (framework-presets design decision 2's guard) — or a
@@ -447,67 +689,6 @@ func quotedKeys(keys []string) string {
 // never calls it. Kept as a contract assertion, matching architectureStep.
 func (boundariesOwnerStep) Apply(project.Project, *Writer) error {
 	return fmt.Errorf("%s is delegated and must not be applied", boundariesOwnerStep{}.ID())
-}
-
-// -------------------------------------------------------- doctor config
-
-type doctorConfigStep struct{}
-
-func (doctorConfigStep) ID() string { return "declare the rules react-doctor should run" }
-
-func (doctorConfigStep) Satisfied(p project.Project) bool {
-	if !p.HasSource() {
-		return true
-	}
-	raw, err := os.ReadFile(filepath.Join(p.Source, doctorConfig))
-	if err != nil {
-		return false
-	}
-	var config doctorConfigFile
-	if json.Unmarshal(raw, &config) != nil {
-		return false
-	}
-	for _, plugin := range config.Plugins {
-		if plugin == RulesPackage {
-			return true
-		}
-	}
-	return false
-}
-
-func (doctorConfigStep) Describe(project.Project) string {
-	return fmt.Sprintf("react-doctor does not compose, so this is a merge rather than a reference: the\npackage joins `plugins` and its %d rules join `rules`.", len(Rules))
-}
-
-// Delegated is always false: the merge doctorConfigStep performs has no case
-// where dharness cannot perform it itself.
-func (doctorConfigStep) Delegated(project.Project) (string, bool) { return "", false }
-
-func (doctorConfigStep) Apply(p project.Project, w *Writer) error {
-	path := filepath.Join(p.Source, doctorConfig)
-
-	config := doctorConfigFile{Rules: map[string]string{}}
-	if raw, err := os.ReadFile(path); err == nil {
-		if err := json.Unmarshal(raw, &config); err != nil {
-			return fmt.Errorf("%s is not readable as JSON, so it cannot be merged: %w", doctorConfig, err)
-		}
-		if config.Rules == nil {
-			config.Rules = map[string]string{}
-		}
-	}
-
-	config.Plugins = dedupe(append(config.Plugins, RulesPackage))
-	for _, id := range RuleIDs() {
-		if _, chosen := config.Rules[id]; !chosen {
-			config.Rules[id] = DefaultSeverity(p, id)
-		}
-	}
-	return w.WriteJSON(path, config)
-}
-
-type doctorConfigFile struct {
-	Plugins []string          `json:"plugins,omitempty"`
-	Rules   map[string]string `json:"rules,omitempty"`
 }
 
 // ------------------------------------------------ legacy lint config

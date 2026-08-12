@@ -1,7 +1,6 @@
 package setup
 
 import (
-	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -391,57 +390,466 @@ func TestUncheckableConfigNoteIsSilentWhenTheConfigCanBeRead(t *testing.T) {
 	}
 }
 
-// TestDefaultSeverityNeverCalledWhenProjectChoseIt proves the `!chosen`
-// guard (§05) is unchanged by the barrel probe: a project whose
-// doctor.config.json already declares a severity for folder-ownership must
-// never trigger the probe at all — the stub panics if it does, which is a
-// stronger pin than checking the written value merely still matches.
-func TestDefaultSeverityNeverCalledWhenProjectChoseIt(t *testing.T) {
-	root := t.TempDir()
-	chosen := `{"rules":{"dharness/folder-ownership":"warn"}}`
-	if err := os.WriteFile(filepath.Join(root, doctorConfig), []byte(chosen), 0o600); err != nil {
-		t.Fatal(err)
+// TestEslintExtendsStepDelegatedRefusalMatrix walks every eslint-config-splice
+// refusal-matrix cell in spec.md: ok == true only for a TypeScript config, a
+// legacy-only project, an unreadable file, an unrecognised call, an ERROR
+// node, or a malformed marker pair. No config at all, or a config
+// jsconfig.Analyze recognises with well-formed markers, must not delegate —
+// the write-if-absent and (later) splice/replace paths both start from
+// ok == false.
+func TestEslintExtendsStepDelegatedRefusalMatrix(t *testing.T) {
+	cases := []struct {
+		name       string
+		write      func(t *testing.T, source string)
+		wantOK     bool
+		wantWhyHas string
+	}{
+		{
+			name:       "no config at all",
+			write:      func(*testing.T, string) {},
+			wantOK:     false,
+			wantWhyHas: "",
+		},
+		{
+			name:       "TypeScript config always delegates",
+			write:      writeFixture("eslint.config.ts", "export default [];\n"),
+			wantOK:     true,
+			wantWhyHas: "TypeScript",
+		},
+		{
+			name:       "TypeScript .mts config always delegates",
+			write:      writeFixture("eslint.config.mts", "export default [];\n"),
+			wantOK:     true,
+			wantWhyHas: "TypeScript",
+		},
+		{
+			name:       "legacy .eslintrc.json-only delegates",
+			write:      writeFixture(".eslintrc.json", "{}"),
+			wantOK:     true,
+			wantWhyHas: "legacy",
+		},
+		{
+			name:   "plain array-literal export is not delegated",
+			write:  writeFixture("eslint.config.js", "export default [\n  { rules: {} },\n];\n"),
+			wantOK: false,
+		},
+		{
+			name:   "recognised defineConfig(...) is not delegated",
+			write:  writeFixture("eslint.config.js", "import { defineConfig } from \"eslint/config\";\nexport default defineConfig([\n  { rules: {} },\n]);\n"),
+			wantOK: false,
+		},
+		{
+			name:       "unrecognised call expression delegates",
+			write:      writeFixture("eslint.config.js", "export default tseslint.config(\n  { rules: {} },\n);\n"),
+			wantOK:     true,
+			wantWhyHas: "callee",
+		},
+		{
+			name:       "ERROR node delegates",
+			write:      writeFixture("eslint.config.js", "export default [\n  { a: 1 + },\n];\n"),
+			wantOK:     true,
+			wantWhyHas: "ERROR",
+		},
+		{
+			name:       "malformed dharness:eslint-import marker pair delegates",
+			write:      writeFixture("eslint.config.js", eslintImportBegin+"\nimport dharnessPlugin from \"dharness-eslint-plugin\";\nexport default [];\n"),
+			wantOK:     true,
+			wantWhyHas: "eslint-import",
+		},
+		{
+			name:       "malformed dharness:eslint-layer marker pair delegates",
+			write:      writeFixture("eslint.config.js", "export default [\n  "+eslintLayerBegin+"\n  ...dharnessLayer({ plugin: dharnessPlugin }),\n];\n"),
+			wantOK:     true,
+			wantWhyHas: "eslint-layer",
+		},
 	}
-	t.Cleanup(project.SetGitOutputForTest(func(string, ...string) ([]byte, error) {
-		panic("DefaultSeverity must not probe for barrels when the project already chose a severity")
-	}))
 
-	p := project.Project{Root: root, Source: root, InRepository: true}
-	if err := (doctorConfigStep{}).Apply(p, &Writer{}); err != nil {
-		t.Fatalf("Apply() = %v", err)
-	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			tc.write(t, root)
+			p := project.Project{Root: root, Source: root}
 
-	raw, err := os.ReadFile(filepath.Join(root, doctorConfig))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var config doctorConfigFile
-	if err := json.Unmarshal(raw, &config); err != nil {
-		t.Fatal(err)
-	}
-	if got := config.Rules[RulesPrefix+"/folder-ownership"]; got != "warn" {
-		t.Errorf("folder-ownership = %q, want the project's own choice \"warn\" preserved", got)
+			why, ok := (eslintExtendsStep{}).Delegated(p)
+			if ok != tc.wantOK {
+				t.Fatalf("Delegated() ok = %t, why = %q, want ok = %t", ok, why, tc.wantOK)
+			}
+			if tc.wantOK && why == "" {
+				t.Error("Delegated() why is empty on ok = true")
+			}
+			if tc.wantWhyHas != "" && !strings.Contains(why, tc.wantWhyHas) {
+				t.Errorf("Delegated() why = %q, want it to mention %q", why, tc.wantWhyHas)
+			}
+			if !tc.wantOK && why != "" {
+				t.Errorf("Delegated() why = %q, want empty on ok = false", why)
+			}
+		})
 	}
 }
 
-// TestAddingBarrelsAfterAdoptionDoesNotFlipSeverity pins the first-write-only
-// limit as a property, not a gap: doctorConfigStep.Satisfied is already true
-// once RulesPackage is in `plugins`, so a second sync never runs Apply
-// again — folder-ownership stays at its original value even after the
-// project later grows barrels. The gitOutput stub answers "barrels exist"
-// and is never asked, because Satisfied never reads it.
-func TestAddingBarrelsAfterAdoptionDoesNotFlipSeverity(t *testing.T) {
-	root := t.TempDir()
-	adopted := `{"plugins":["dharness-eslint-plugin"],"rules":{"dharness/folder-ownership":"off"}}`
-	if err := os.WriteFile(filepath.Join(root, doctorConfig), []byte(adopted), 0o600); err != nil {
+// TestEslintExtendsStepDelegatedWithoutASource pins the same guard every
+// other extends step already has: no JS project means nothing to inspect.
+func TestEslintExtendsStepDelegatedWithoutASource(t *testing.T) {
+	why, ok := (eslintExtendsStep{}).Delegated(project.Project{Root: t.TempDir()})
+	if ok {
+		t.Errorf("Delegated() ok = true with no source, why = %q", why)
+	}
+}
+
+func writeStepFixtureFile(t *testing.T, dir, name, contents string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(project.SetGitOutputForTest(func(string, ...string) ([]byte, error) {
-		return []byte("components/index.ts"), nil // barrels now exist
-	}))
+}
 
-	p := project.Project{Root: root, Source: root, InRepository: true}
-	if !(doctorConfigStep{}).Satisfied(p) {
-		t.Fatal("Satisfied() = false; the package is already in plugins, so a second sync must not run Apply again")
+// writeFixture builds the one-file setup every refusal-matrix case needs.
+//
+// The cases differ by a file name and its bytes and by nothing else, so
+// spelling the closure out per case repeated its signature once per row and
+// buried that difference in boilerplate. Returning the closure keeps the
+// table a table.
+func writeFixture(name, contents string) func(*testing.T, string) {
+	return func(t *testing.T, source string) {
+		t.Helper()
+		writeStepFixtureFile(t, source, name, contents)
+	}
+}
+
+// TestEslintExtendsStepApplyWritesAConfigWhenNoneExists pins the spec
+// scenario "a project with no ESLint config gets one written": Apply writes
+// a complete eslint.config.js importing and spreading the owned factory,
+// matching wireFallowExtends's write-if-absent shape.
+func TestEslintExtendsStepApplyWritesAConfigWhenNoneExists(t *testing.T) {
+	root := t.TempDir()
+	p := project.Project{Root: root, Source: root}
+
+	if err := (eslintExtendsStep{}).Apply(p, &Writer{}); err != nil {
+		t.Fatalf("Apply() = %v", err)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(root, eslintConfig))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(raw)
+
+	for _, want := range []string{
+		eslintImportBegin,
+		"import dharnessPlugin from \"dharness-eslint-plugin\";",
+		"import dharnessLayer from \".dharness/eslint.config.js\";",
+		eslintImportEnd,
+		"export default [",
+		eslintLayerBegin,
+		"...dharnessLayer({ plugin: dharnessPlugin }),",
+		eslintLayerEnd,
+		"];",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("Apply() wrote a file missing %q:\n%s", want, got)
+		}
+	}
+}
+
+// TestEslintExtendsStepApplyResolvesFromASplitLayout triangulates the case
+// above against the split-layout target ownedFrom already gives every other
+// project file.
+func TestEslintExtendsStepApplyResolvesFromASplitLayout(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "frontend")
+	if err := os.MkdirAll(source, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p := project.Project{Root: root, Source: source}
+
+	if err := (eslintExtendsStep{}).Apply(p, &Writer{}); err != nil {
+		t.Fatalf("Apply() = %v", err)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(source, eslintConfig))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "import dharnessLayer from \"../.dharness/eslint.config.js\";") {
+		t.Errorf("Apply() did not resolve the owned factory from the split layout:\n%s", raw)
+	}
+}
+
+// TestEslintExtendsStepApplyResultIsAlreadySatisfied triangulates
+// write-if-absent against Satisfied: once Apply has run, a fresh Satisfied
+// call over the same project must already report true — the same
+// idempotency shape every other extends step gives.
+func TestEslintExtendsStepApplyResultIsAlreadySatisfied(t *testing.T) {
+	root := t.TempDir()
+	p := project.Project{Root: root, Source: root}
+
+	if (eslintExtendsStep{}).Satisfied(p) {
+		t.Fatal("Satisfied() = true before Apply ever ran")
+	}
+	if err := (eslintExtendsStep{}).Apply(p, &Writer{}); err != nil {
+		t.Fatalf("Apply() = %v", err)
+	}
+	if !(eslintExtendsStep{}).Satisfied(p) {
+		t.Error("Satisfied() = false right after Apply wrote the file")
+	}
+}
+
+// TestEslintExtendsStepApplyInsertsBothRegionsIntoAnExistingArrayLiteral
+// pins slice 3b's insert path, exercised through the step rather than
+// jsconfig directly: the layer region lands before the project's own
+// element, the import region lands after the project's own import, and
+// nothing the project wrote is lost — the later offset splices first so it
+// does not shift the earlier one (design decision 6).
+func TestEslintExtendsStepApplyInsertsBothRegionsIntoAnExistingArrayLiteral(t *testing.T) {
+	root := t.TempDir()
+	original := "import next from \"eslint-config-next\";\n\nexport default [\n  ...next,\n];\n"
+	writeStepFixtureFile(t, root, eslintConfig, original)
+	p := project.Project{Root: root, Source: root}
+
+	if err := (eslintExtendsStep{}).Apply(p, &Writer{}); err != nil {
+		t.Fatalf("Apply() = %v", err)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(root, eslintConfig))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(raw)
+
+	if !strings.Contains(got, "import next from \"eslint-config-next\";") {
+		t.Errorf("Apply() lost the project's own import:\n%s", got)
+	}
+	if !strings.Contains(got, "  ...next,\n") {
+		t.Errorf("Apply() lost the project's own array element:\n%s", got)
+	}
+	if strings.Count(got, eslintImportBegin) != 1 || strings.Count(got, eslintImportEnd) != 1 {
+		t.Errorf("Apply() did not insert exactly one dharness:eslint-import region:\n%s", got)
+	}
+	if strings.Count(got, eslintLayerBegin) != 1 || strings.Count(got, eslintLayerEnd) != 1 {
+		t.Errorf("Apply() did not insert exactly one dharness:eslint-layer region:\n%s", got)
+	}
+
+	layerIdx, nextIdx := strings.Index(got, eslintLayerBegin), strings.Index(got, "...next,")
+	if layerIdx == -1 || nextIdx == -1 || layerIdx > nextIdx {
+		t.Errorf("Apply() did not insert dharness's layer before the project's own element:\n%s", got)
+	}
+
+	importIdx, projectImportIdx := strings.Index(got, eslintImportBegin), strings.Index(got, "import next from")
+	if importIdx == -1 || projectImportIdx == -1 || importIdx < projectImportIdx {
+		t.Errorf("Apply() did not insert the import region after the project's existing import:\n%s", got)
+	}
+}
+
+// TestPresentMarkersWithStaleBytesAreReplacedNotDuplicated pins slice 3b's
+// replace path (design decision 6): markers already present with bytes that
+// differ from what this run renders converge by rewriting the region in
+// place, not by inserting a second one — an implementation that could only
+// insert would leave two regions of one kind, which the candidate guard
+// must reject.
+func TestPresentMarkersWithStaleBytesAreReplacedNotDuplicated(t *testing.T) {
+	root := t.TempDir()
+	stale := eslintImportBegin + "\n" +
+		"import dharnessPlugin from \"dharness-eslint-plugin\";\n" +
+		"import dharnessLayer from \".dharness/eslint.config.js\";\n" +
+		eslintImportEnd + "\n" +
+		"\n" +
+		"export default [\n" +
+		"  " + eslintLayerBegin + "\n" +
+		"  ...dharnessLayer({ plugin: dharnessPlugin, stale: true }),\n" +
+		"  " + eslintLayerEnd + "\n" +
+		"  { rules: { semi: \"error\" } },\n" +
+		"];\n"
+	writeStepFixtureFile(t, root, eslintConfig, stale)
+	p := project.Project{Root: root, Source: root}
+
+	if err := (eslintExtendsStep{}).Apply(p, &Writer{}); err != nil {
+		t.Fatalf("Apply() = %v", err)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(root, eslintConfig))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(raw)
+
+	if strings.Count(got, eslintLayerBegin) != 1 || strings.Count(got, eslintLayerEnd) != 1 {
+		t.Fatalf("Apply() left more than one dharness:eslint-layer region — a second insertion, not a replacement:\n%s", got)
+	}
+	if strings.Count(got, eslintImportBegin) != 1 || strings.Count(got, eslintImportEnd) != 1 {
+		t.Fatalf("Apply() left more than one dharness:eslint-import region — a second insertion, not a replacement:\n%s", got)
+	}
+	if strings.Contains(got, "stale: true") {
+		t.Errorf("Apply() kept the stale bytes instead of replacing the region:\n%s", got)
+	}
+	if !strings.Contains(got, "...dharnessLayer({ plugin: dharnessPlugin }),") {
+		t.Errorf("Apply() did not render the current layer call:\n%s", got)
+	}
+	if !strings.Contains(got, "{ rules: { semi: \"error\" } },") {
+		t.Errorf("Apply() did not preserve the project's own array element outside the marked region:\n%s", got)
+	}
+}
+
+// TestSpliceGuardRollsBackAnUnparseableResult pins design decision 6's
+// candidate guard: a splice that, applied, would leave an ERROR node inside
+// the default export must never reach disk. The adversarial region is
+// injected through spliceEslintRegion — every real caller only ever
+// composes well-formed regions, so there is no way to reach this candidate
+// through the public rendering functions alone.
+func TestSpliceGuardRollsBackAnUnparseableResult(t *testing.T) {
+	root := t.TempDir()
+	original := "export default [\n  { rules: {} },\n];\n"
+	path := filepath.Join(root, eslintConfig)
+	writeStepFixtureFile(t, root, eslintConfig, original)
+	p := project.Project{Root: root, Source: root}
+
+	restore := SetEslintSpliceForTest(func(src []byte, at int, region string) []byte {
+		if strings.Contains(region, "eslint-layer") {
+			region = "  " + eslintLayerBegin + "\n  ...dharnessLayer({ a: 1 + }),\n  " + eslintLayerEnd + "\n"
+		}
+		out := make([]byte, 0, len(src)+len(region))
+		out = append(out, src[:at]...)
+		out = append(out, region...)
+		out = append(out, src[at:]...)
+		return out
+	})
+	defer restore()
+
+	if err := (eslintExtendsStep{}).Apply(p, &Writer{}); err == nil {
+		t.Fatal("Apply() = nil, want an error from the candidate guard")
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != original {
+		t.Errorf("Apply() modified the file despite the guard failing:\ngot  %q\nwant %q", raw, original)
+	}
+}
+
+// TestSecondSyncWritesNothing pins slice 3b's idempotency requirement:
+// Satisfied(p) is already true right after the first Apply, and even a
+// direct second Apply call renders byte-identical output — no drift on
+// repeat.
+func TestSecondSyncWritesNothing(t *testing.T) {
+	root := t.TempDir()
+	original := "import next from \"eslint-config-next\";\n\nexport default [\n  ...next,\n];\n"
+	writeStepFixtureFile(t, root, eslintConfig, original)
+	p := project.Project{Root: root, Source: root}
+
+	if err := (eslintExtendsStep{}).Apply(p, &Writer{}); err != nil {
+		t.Fatalf("first Apply() = %v", err)
+	}
+	if !(eslintExtendsStep{}).Satisfied(p) {
+		t.Fatal("Satisfied() = false right after the first Apply")
+	}
+
+	path := filepath.Join(root, eslintConfig)
+	afterFirst, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := (eslintExtendsStep{}).Apply(p, &Writer{}); err != nil {
+		t.Fatalf("second Apply() = %v", err)
+	}
+	afterSecond, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(afterSecond) != string(afterFirst) {
+		t.Errorf("second Apply() changed the file:\nfirst  %q\nsecond %q", afterFirst, afterSecond)
+	}
+}
+
+// TestEslintExtendsStepSatisfiedIsFalseWhenMarkedRegionsAreStale pins that
+// Satisfied is a byte comparison (design decision 6), not merely "do the
+// marker regions exist": a splice-eligible config whose regions are present
+// but stale must report unsatisfied, or applySteps never converges it.
+func TestEslintExtendsStepSatisfiedIsFalseWhenMarkedRegionsAreStale(t *testing.T) {
+	root := t.TempDir()
+	stale := "export default [\n  " + eslintLayerBegin + "\n  ...dharnessLayer({ stale: true }),\n  " + eslintLayerEnd + "\n];\n"
+	writeStepFixtureFile(t, root, eslintConfig, stale)
+	p := project.Project{Root: root, Source: root}
+
+	if (eslintExtendsStep{}).Satisfied(p) {
+		t.Error("Satisfied() = true for a config whose marker pairs are mixed/stale")
+	}
+}
+
+// TestEslintExtendsStepSatisfiedIsTrueForShapesThatAlwaysDelegate
+// triangulates the case above: a TypeScript config, a legacy-only project
+// and an unrecognised call expression all always delegate, so Satisfied
+// must still answer true for them even though no marker region was ever
+// written — Delegated already explains why nothing will be applied, and
+// Satisfied should not double-report the same state as pending. The
+// legacy-only case is asserted on its own, with no TypeScript config
+// present, so it exercises the "||" right-hand side independently of the
+// left.
+func TestEslintExtendsStepSatisfiedIsTrueForShapesThatAlwaysDelegate(t *testing.T) {
+	t.Run("TypeScript config", func(t *testing.T) {
+		root := t.TempDir()
+		writeStepFixtureFile(t, root, "eslint.config.ts", "export default [];\n")
+		p := project.Project{Root: root, Source: root}
+
+		if !(eslintExtendsStep{}).Satisfied(p) {
+			t.Error("Satisfied() = false for a TypeScript config, which always delegates")
+		}
+	})
+
+	t.Run("legacy-only config, no TypeScript config present", func(t *testing.T) {
+		root := t.TempDir()
+		writeStepFixtureFile(t, root, ".eslintrc.json", "{}")
+		p := project.Project{Root: root, Source: root}
+
+		if !(eslintExtendsStep{}).Satisfied(p) {
+			t.Error("Satisfied() = false for a legacy-only config, which always delegates")
+		}
+	})
+
+	t.Run("unrecognised call expression", func(t *testing.T) {
+		root := t.TempDir()
+		writeStepFixtureFile(t, root, eslintConfig, "export default tseslint.config(\n  { rules: {} },\n);\n")
+		p := project.Project{Root: root, Source: root}
+
+		if !(eslintExtendsStep{}).Satisfied(p) {
+			t.Error("Satisfied() = false for an unrecognised call expression, which always delegates")
+		}
+	})
+}
+
+// TestEslintExtendsStepApplyPreservesCRLFAndBOMThroughTheSplice replays
+// 1.9's constructed CRLF/BOM bytes (design decision 11) through the real
+// step: every pre-existing line keeps its CRLF, the newly inserted regions
+// adopt CRLF too, and the leading BOM survives.
+func TestEslintExtendsStepApplyPreservesCRLFAndBOMThroughTheSplice(t *testing.T) {
+	lf := "import next from \"eslint-config-next\";\n\nexport default [\n  ...next,\n];\n"
+	crlf := strings.ReplaceAll(lf, "\n", "\r\n")
+	bom := "\xEF\xBB\xBF" + crlf
+
+	root := t.TempDir()
+	writeStepFixtureFile(t, root, eslintConfig, bom)
+	p := project.Project{Root: root, Source: root}
+
+	if err := (eslintExtendsStep{}).Apply(p, &Writer{}); err != nil {
+		t.Fatalf("Apply() = %v", err)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(root, eslintConfig))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(raw)
+
+	if !strings.HasPrefix(got, "\xEF\xBB\xBF") {
+		t.Error("Apply() lost the BOM")
+	}
+	for i := 0; i < len(got); i++ {
+		if got[i] == '\n' && (i == 0 || got[i-1] != '\r') {
+			t.Fatalf("Apply() wrote a lone LF at byte %d — a line ending was normalised:\n%q", i, got)
+		}
+	}
+	if !strings.Contains(got, eslintLayerBegin+"\r\n") {
+		t.Errorf("Apply() did not adopt CRLF for the inserted layer region:\n%q", got)
 	}
 }

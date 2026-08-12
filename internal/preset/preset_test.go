@@ -212,6 +212,127 @@ func TestRealRegistryFactsAndSeedsValidate(t *testing.T) {
 	}
 }
 
+// TestLayersEnumeratesAcrossMatchesInOrder pins Layers' contract: it unions
+// every match's Layer contributions in the same Root-then-Source, registry
+// order Resolve already returns, so the generated import block and factory
+// signature are byte-stable across runs (design decision 7).
+func TestLayersEnumeratesAcrossMatchesInOrder(t *testing.T) {
+	rootMatch := Match{ID: "root-preset", Scope: Root, Manifest: Manifest{
+		Schema: Schema,
+		Layers: []Layer{{Package: "eslint-config-root", Binding: "dharnessRoot", Because: "root.json declares it"}},
+	}}
+	sourceMatch := Match{ID: "source-preset", Scope: Source, Manifest: Manifest{
+		Schema: Schema,
+		Layers: []Layer{{Package: "eslint-config-source", Binding: "dharnessSource", Because: "package.json dependency"}},
+	}}
+
+	got := Layers([]Match{rootMatch, sourceMatch})
+	if len(got) != 2 || got[0].Binding != "dharnessRoot" || got[1].Binding != "dharnessSource" {
+		t.Errorf("Layers() = %+v, want root's layer before source's, in match order", got)
+	}
+}
+
+// TestLayersIsEmptyWhenNoMatchContributesOne triangulates the union case
+// above: a manifest with no Layers must not contribute a zero-value entry.
+func TestLayersIsEmptyWhenNoMatchContributesOne(t *testing.T) {
+	m := Match{ID: "generic", Scope: Root, Manifest: Manifest{Schema: Schema}}
+	if got := Layers([]Match{m}); len(got) != 0 {
+		t.Errorf("Layers() = %+v, want empty for a manifest with no layers", got)
+	}
+}
+
+// TestLayerValidateRejectsAPinnedVersion pins the first of Decision 7's two
+// new rules: an "@" anywhere after position 0 pins a version, which the spec
+// forbids — dharness installs what the framework itself publishes and
+// versions. "@scope/name" keeps its own leading "@" legal.
+func TestLayerValidateRejectsAPinnedVersion(t *testing.T) {
+	m := Manifest{Schema: Schema, Layers: []Layer{{Package: "eslint-config-next@14.0.0", Binding: "dharnessNext", Because: "test"}}}
+	if err := m.Validate(); err == nil {
+		t.Error("Validate() = nil for a pinned package version, want an error")
+	}
+}
+
+// TestScopedPackageWithNoVersionValidates triangulates the rule above: the
+// leading "@" of a scoped package name is not itself a pin.
+func TestScopedPackageWithNoVersionValidates(t *testing.T) {
+	m := Manifest{Schema: Schema, Layers: []Layer{{Package: "@org/eslint-config", Binding: "dharnessOrg", Because: "test"}}}
+	if err := m.Validate(); err != nil {
+		t.Errorf("Validate() = %v for a scoped, unpinned package, want nil", err)
+	}
+}
+
+// TestSingleCharacterPackageNamePinIsCaught pins the exact boundary
+// "no @ after position 0" draws: a one-character package name pinned
+// immediately at position 1 ("x@1.2.3") must still be caught. A check that
+// starts scanning one byte too late (position 2 instead of 1) would miss
+// exactly this case while still catching every longer package name.
+func TestSingleCharacterPackageNamePinIsCaught(t *testing.T) {
+	m := Manifest{Schema: Schema, Layers: []Layer{{Package: "x@1.2.3", Binding: "dharnessX", Because: "test"}}}
+	if err := m.Validate(); err == nil {
+		t.Error("Validate() = nil for a single-character package name pinned at position 1, want an error")
+	}
+}
+
+// TestLayerValidateRejectsAnInvalidBinding pins Decision 7's second rule: a
+// binding that is not a valid JavaScript identifier would produce a config
+// that does not parse — an authoring bug caught at build time, exactly as
+// json.Marshal on Fact.Value already is.
+func TestLayerValidateRejectsAnInvalidBinding(t *testing.T) {
+	m := Manifest{Schema: Schema, Layers: []Layer{{Package: "eslint-config-next", Binding: "dharness-next", Because: "test"}}}
+	if err := m.Validate(); err == nil {
+		t.Error("Validate() = nil for a binding that is not a valid identifier, want an error")
+	}
+}
+
+// TestBareBindingIsRejectedAtBuildTime is spec.md's own scenario title: a
+// registry entry whose binding is the bare package name — a valid
+// identifier, but not namespaced to dharness — fails Validate() rather than
+// reaching a repository, where it would collide with a project's own import
+// of the same package under the same name (a SyntaxError).
+func TestBareBindingIsRejectedAtBuildTime(t *testing.T) {
+	m := Manifest{Schema: Schema, Layers: []Layer{{Package: "eslint-config-next", Binding: "next", Because: "test"}}}
+	if err := m.Validate(); err == nil {
+		t.Error("Validate() = nil for a bare, non-namespaced binding, want an error")
+	}
+}
+
+// TestLayerValidateRequiresEvidence is Layer's own form of
+// TestEveryFactCarriesEvidence — the same evidence-required rule (§17),
+// over the third contribution kind.
+func TestLayerValidateRequiresEvidence(t *testing.T) {
+	m := Manifest{Schema: Schema, Layers: []Layer{{Package: "eslint-config-next", Binding: "dharnessNext", Because: ""}}}
+	if err := m.Validate(); err == nil {
+		t.Error("Validate() = nil for a layer with no evidence, want an error")
+	}
+}
+
+// TestNoBindingIsContributedTwice is TestNoScalarKeyIsContributedTwice's
+// (internal/setup/owned_test.go) counterpart for Layer.Binding: unlike a
+// scalar Fact, no rule picks a winner when two matches contribute the same
+// binding — the design's argument is that the collision is unreachable with
+// today's registry (nextjs and expo contribute one each, under different
+// bindings), and this test is what keeps that true rather than assumed. A
+// future fifth preset that collides here must fail loudly instead of
+// silently emitting a duplicate `const` into the generated import region.
+func TestNoBindingIsContributedTwice(t *testing.T) {
+	root := t.TempDir()
+	writeWailsFixtureFile(t, root, "package.json", `{"dependencies":{"next":"^14.0.0","expo":"~51.0.0"}}`)
+
+	matches := Resolve(project.At(root, root))
+	layers := Layers(matches)
+	if len(layers) != 2 {
+		t.Fatalf("Layers() = %+v, want exactly the nextjs and expo layers", layers)
+	}
+
+	seen := map[string]string{}
+	for _, layer := range layers {
+		if owner, ok := seen[layer.Binding]; ok {
+			t.Fatalf("Layers() contributed binding %q twice, from %q and %q — a future preset must degrade visibly instead", layer.Binding, owner, layer.Package)
+		}
+		seen[layer.Binding] = layer.Package
+	}
+}
+
 func containsKey(keys []string, want string) bool {
 	for _, key := range keys {
 		if key == want {
@@ -219,4 +340,37 @@ func containsKey(keys []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// assertLayerContribution pins the whole Layer contract for one framework
+// preset: exactly one layer, the package it names, the namespaced binding,
+// a non-empty Because, and a manifest that validates.
+//
+// The two framework presets differ by a dependency, a package and a binding
+// and by nothing else, so writing the assertions out twice meant a rule
+// tightened in one could silently not apply to the other.
+func assertLayerContribution(t *testing.T, detect func(project.Project) (Match, bool), dependency, wantPackage, wantBinding string) {
+	t.Helper()
+
+	root := t.TempDir()
+	writeWailsFixtureFile(t, root, "package.json", dependency)
+
+	match, _ := detect(project.At(root, root))
+	if len(match.Manifest.Layers) != 1 {
+		t.Fatalf("Manifest.Layers = %+v, want exactly one contributed layer", match.Manifest.Layers)
+	}
+
+	layer := match.Manifest.Layers[0]
+	if layer.Package != wantPackage {
+		t.Errorf("Layer.Package = %q, want %q", layer.Package, wantPackage)
+	}
+	if layer.Binding != wantBinding {
+		t.Errorf("Layer.Binding = %q, want the namespaced %q", layer.Binding, wantBinding)
+	}
+	if layer.Because == "" {
+		t.Error("Layer.Because is empty, want a checkable observable")
+	}
+	if err := match.Manifest.Validate(); err != nil {
+		t.Errorf("manifest fails Validate(): %v", err)
+	}
 }

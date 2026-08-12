@@ -5,7 +5,20 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Disble/dharness/internal/project"
 )
+
+// TestExtendsWiredIsFalseWithoutTheFile pins the other half of extendsWired's
+// contract: a config that does not exist yet is not wired, distinct from one
+// that exists and lacks the reference — both must answer false, but only a
+// fixture with no file at all exercises the read-error branch.
+func TestExtendsWiredIsFalseWithoutTheFile(t *testing.T) {
+	root := t.TempDir()
+	if extendsWired(root, "eslint.config.js", ".dharness/eslint.config.js") {
+		t.Error("extendsWired() = true for a config that does not exist")
+	}
+}
 
 func TestDeclaredKeysFindsAQuotedKey(t *testing.T) {
 	root := t.TempDir()
@@ -128,4 +141,285 @@ func TestDeclaredLineIsEmptyWhenTheKeyIsAbsent(t *testing.T) {
 	if got := declaredLine(path, "ignorePatterns"); got != "" {
 		t.Errorf("declaredLine() = %q, want \"\" for a key the file never declares", got)
 	}
+}
+
+// TestExistingAllowListGainsTheMissingEntry pins design decision 2's repair:
+// a repository adopted before this change carries the five-entry list, and
+// ensureShared must append the sixth rather than leaving it gitignored
+// forever.
+func TestExistingAllowListGainsTheMissingEntry(t *testing.T) {
+	p, path := allowListFixture(t, "*\n!.gitignore\n!lefthook.yml\n!fallow.jsonc\n!rules.json\n!evidence.json\n")
+
+	if err := ensureShared(p, &Writer{}, "eslint.config.js"); err != nil {
+		t.Fatalf("ensureShared() = %v", err)
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The exact suffix, not just Contains: the existing list already ends in
+	// a newline, so the entry must be appended directly after it — not
+	// behind a spurious blank line, which is what a mutant that appended
+	// unconditionally would produce.
+	if !strings.HasSuffix(string(raw), "!evidence.json\n!eslint.config.js\n") {
+		t.Errorf("ensureShared() = %q, want the entry appended right after the last existing line, no blank line between", raw)
+	}
+	if !strings.Contains(string(raw), "!lefthook.yml") {
+		t.Errorf("ensureShared() dropped an entry that was already there:\n%s", raw)
+	}
+}
+
+// TestEnsureSharedCreatesTheIgnoreFileWhenAbsent covers the case
+// appendHuskyGate's own "no script yet" test covers for its file: a
+// .dharness/.gitignore that does not exist yet at all is not a read error,
+// and the entry is written into a fresh file with no leading blank line.
+func TestEnsureSharedCreatesTheIgnoreFileWhenAbsent(t *testing.T) {
+	root := t.TempDir()
+	p := project.Project{Root: root}
+	if err := os.MkdirAll(filepath.Join(root, project.Dir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ensureShared(p, &Writer{}, "eslint.config.js"); err != nil {
+		t.Fatalf("ensureShared() = %v", err)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(root, project.Dir, ".gitignore"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != "!eslint.config.js\n" {
+		t.Errorf("ensureShared() = %q, want exactly the one entry with no leading blank line", raw)
+	}
+}
+
+// TestExistingAllowListWithoutATrailingNewlineGainsOne covers the branch
+// TestExistingAllowListGainsTheMissingEntry never reaches: existing content
+// that does not already end in "\n" must gain one before the new entry, or
+// the entry welds onto the previous line's last byte.
+func TestExistingAllowListWithoutATrailingNewlineGainsOne(t *testing.T) {
+	root := t.TempDir()
+	p := project.Project{Root: root}
+	if err := os.MkdirAll(filepath.Join(root, project.Dir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, project.Dir, ".gitignore")
+	if err := os.WriteFile(path, []byte("*\n!.gitignore"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ensureShared(p, &Writer{}, "eslint.config.js"); err != nil {
+		t.Fatalf("ensureShared() = %v", err)
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "*\n!.gitignore\n!eslint.config.js\n"; string(raw) != want {
+		t.Errorf("ensureShared() = %q, want %q", raw, want)
+	}
+}
+
+// TestAllowListRepairKeepsWhatTheProjectAdded is the no-clobber property
+// TestOwnedDirectoryKeepsAnExistingIgnoreFile already pins for EnsureDir,
+// applied to ensureShared: appending the sixth entry must not disturb
+// anything the project itself added to the file.
+func TestAllowListRepairKeepsWhatTheProjectAdded(t *testing.T) {
+	p, path := allowListFixture(t, "*\n!.gitignore\n!lefthook.yml\n# added by hand\n!notes.md\n")
+
+	if err := ensureShared(p, &Writer{}, "eslint.config.js"); err != nil {
+		t.Fatalf("ensureShared() = %v", err)
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "!notes.md") || !strings.Contains(string(raw), "# added by hand") {
+		t.Errorf("ensureShared() discarded what the project added by hand:\n%s", raw)
+	}
+}
+
+// TestEnsureSharedIsANoOpWhenTheEntryAlreadyExists triangulates the repair
+// path above: an already-current allow list gains no duplicate entry.
+func TestEnsureSharedIsANoOpWhenTheEntryAlreadyExists(t *testing.T) {
+	p, path := allowListFixture(t, "*\n!.gitignore\n!eslint.config.js\n")
+
+	if err := ensureShared(p, &Writer{}, "eslint.config.js"); err != nil {
+		t.Fatalf("ensureShared() = %v", err)
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(string(raw), "!eslint.config.js"); got != 1 {
+		t.Errorf("ensureShared() left %d occurrences of the entry, want exactly 1", got)
+	}
+}
+
+// TestEslintConfigDetectionOneFixturePerCase pins the four kinds
+// eslintExtendsStep tells apart: flat, TypeScript, legacy-only and absent —
+// each detector answers independently, so a project with more than one kind
+// present is not this test's concern.
+func TestEslintConfigDetectionOneFixturePerCase(t *testing.T) {
+	cases := []struct {
+		name   string
+		file   string
+		detect func(string) string
+	}{
+		{"flat .js", "eslint.config.js", eslintFlatConfig},
+		{"flat .mjs", "eslint.config.mjs", eslintFlatConfig},
+		{"flat .cjs", "eslint.config.cjs", eslintFlatConfig},
+		{"TypeScript .ts", "eslint.config.ts", eslintTypeScriptConfig},
+		{"TypeScript .mts", "eslint.config.mts", eslintTypeScriptConfig},
+		{"TypeScript .cts", "eslint.config.cts", eslintTypeScriptConfig},
+		{"legacy .eslintrc.json", ".eslintrc.json", eslintLegacyConfig},
+		{"legacy .eslintrc.js", ".eslintrc.js", eslintLegacyConfig},
+		{"legacy .eslintrc.cjs", ".eslintrc.cjs", eslintLegacyConfig},
+		{"legacy .eslintrc.yml", ".eslintrc.yml", eslintLegacyConfig},
+		{"legacy .eslintrc.yaml", ".eslintrc.yaml", eslintLegacyConfig},
+		{"legacy .eslintrc", ".eslintrc", eslintLegacyConfig},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			path := filepath.Join(root, tc.file)
+			if err := os.WriteFile(path, []byte("{}"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			if got := tc.detect(root); got != path {
+				t.Errorf("detect() = %q, want %q", got, path)
+			}
+		})
+	}
+}
+
+// TestEslintConfigDetectionIsEmptyWhenAbsent pins the fourth case none of
+// the three fixture-per-case detectors reach: nothing present at all.
+func TestEslintConfigDetectionIsEmptyWhenAbsent(t *testing.T) {
+	root := t.TempDir()
+
+	for name, detect := range map[string]func(string) string{
+		"flat":       eslintFlatConfig,
+		"TypeScript": eslintTypeScriptConfig,
+		"legacy":     eslintLegacyConfig,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := detect(root); got != "" {
+				t.Errorf("detect() = %q, want \"\" with nothing present", got)
+			}
+		})
+	}
+}
+
+// TestEslintFlatConfigPrefersJSOverMjsAndCjs pins the "which one responds"
+// order eslintFlatConfigNames fixes, the same shape fallowConfigCandidates
+// already establishes for fallow's own config.
+func TestEslintFlatConfigPrefersJSOverMjsAndCjs(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"eslint.config.mjs", "eslint.config.js"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("{}"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	want := filepath.Join(root, "eslint.config.js")
+	if got := eslintFlatConfig(root); got != want {
+		t.Errorf("eslintFlatConfig() = %q, want %q", got, want)
+	}
+}
+
+// TestSpliceEslintConfigRefusesAMixedMarkerState pins the branch
+// markerRegion cannot see on its own: one marker pair present and the other
+// absent is not "malformed" by markerRegion's own per-pair definition, but
+// dharness never writes one pair without the other, so spliceEslintConfig
+// refuses with an error rather than guess which path applies. Both
+// permutations are asserted — layer present with import absent, and import
+// present with layer absent — because each is the mutation guard for one of
+// the two switch cases: a case whose guard collapsed to ignore the other
+// pair's state would take that case's path for one of these two fixtures
+// and return a candidate instead of refusing.
+func TestSpliceEslintConfigRefusesAMixedMarkerState(t *testing.T) {
+	cases := map[string]string{
+		"layer present, import absent": "export default [\n  " + eslintLayerBegin + "\n  ...dharnessLayer({ plugin: dharnessPlugin }),\n  " + eslintLayerEnd + "\n];\n",
+		"import present, layer absent": eslintImportBegin + "\nimport dharnessPlugin from \"dharness-eslint-plugin\";\n" + eslintImportEnd + "\n\nexport default [\n  { rules: {} },\n];\n",
+	}
+
+	for name, raw := range cases {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			path := filepath.Join(root, eslintConfig)
+			if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			p := project.Project{Root: root, Source: root}
+
+			_, err := spliceEslintConfig(p, path, []byte(raw))
+			if err == nil {
+				t.Fatal("spliceEslintConfig() = nil error, want a refusal for a mixed marker state")
+			}
+			if !strings.Contains(err.Error(), "disagree") {
+				t.Errorf("spliceEslintConfig() error = %q, want it to name the disagreement", err)
+			}
+		})
+	}
+}
+
+// TestVerifyEslintCandidateCatchesEachInvariant pins verifyEslintCandidate's
+// two checks independently: an ERROR node inside the default export, and a
+// marker pair that is not exactly one well-formed region — the two
+// invariants the candidate guard asserts (design decision 6), with no
+// element-count assertion (design decision 1 cuts it).
+func TestVerifyEslintCandidateCatchesEachInvariant(t *testing.T) {
+	t.Run("an ERROR node inside the default export fails", func(t *testing.T) {
+		candidate := []byte("export default [\n  { a: 1 + },\n];\n")
+		if err := verifyEslintCandidate(candidate); err == nil {
+			t.Fatal("verifyEslintCandidate() = nil, want an error for an ERROR node")
+		}
+	})
+
+	t.Run("a duplicated marker pair fails", func(t *testing.T) {
+		candidate := []byte("export default [\n  " +
+			eslintLayerBegin + "\n  ...a,\n  " + eslintLayerEnd + "\n  " +
+			eslintLayerBegin + "\n  ...b,\n  " + eslintLayerEnd + "\n" +
+			eslintImportBegin + "\n" + eslintImportEnd + "\n];\n")
+		if err := verifyEslintCandidate(candidate); err == nil {
+			t.Fatal("verifyEslintCandidate() = nil, want an error for a duplicated marker pair")
+		}
+	})
+
+	t.Run("a well-formed candidate passes", func(t *testing.T) {
+		candidate := []byte(eslintImportBegin + "\n" +
+			"import dharnessPlugin from \"dharness-eslint-plugin\";\n" +
+			eslintImportEnd + "\n" +
+			"\nexport default [\n  " +
+			eslintLayerBegin + "\n  ...dharnessLayer({ plugin: dharnessPlugin }),\n  " + eslintLayerEnd + "\n];\n")
+		if err := verifyEslintCandidate(candidate); err != nil {
+			t.Errorf("verifyEslintCandidate() = %v, want nil for a well-formed candidate", err)
+		}
+	})
+}
+
+// allowListFixture builds an already-adopted .dharness/ whose ignore file
+// already has content, and hands back the project and that file's path.
+//
+// The three repair tests differ by the list they start from and by nothing
+// else. Spelling the same six-line setup out per test made the one line that
+// varies the hardest to find.
+func allowListFixture(t *testing.T, existing string) (project.Project, string) {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, project.Dir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, project.Dir, ".gitignore")
+	if err := os.WriteFile(path, []byte(existing), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return project.Project{Root: root}, path
 }

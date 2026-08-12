@@ -84,9 +84,11 @@ func ArchitecturePrompt(p project.Project) string {
 	b.WriteString("demanding the file it deleted — every split module would report forever.\n\n")
 	b.WriteString("So `folder-ownership` ships **off**. The other five rules are guardrails on\n")
 	b.WriteString("generated code and stay on; this one is the only one that takes a side.\n\n")
-	fmt.Fprintf(&b, "If this project does publish through barrels, turn it on in %s:\n\n", doctorPath(p))
-	b.WriteString("    \"rules\": {\n")
-	fmt.Fprintf(&b, "      %q: \"error\"\n", RulesPrefix+"/folder-ownership")
+	fmt.Fprintf(&b, "If this project does publish through barrels, turn it on in its own layer in\n%s — an object placed after dharness's spread, since flat config merges\nlast-wins per rule:\n\n", eslintOverridePath(p))
+	b.WriteString("    {\n")
+	b.WriteString("      rules: {\n")
+	fmt.Fprintf(&b, "        %q: \"error\",\n", RulesPrefix+"/folder-ownership")
+	b.WriteString("      },\n")
 	b.WriteString("    }\n\n")
 	b.WriteString("A severity written there survives every later run: dharness fills in only the\n")
 	b.WriteString("rules a project has not answered for itself.\n")
@@ -116,12 +118,15 @@ func renderSeeds(seeds []preset.Seed) string {
 	return b.String()
 }
 
-// doctorPath names react-doctor's config as the reader sees it from the
-// repository root, which is where the plan is read but not always where the
-// JS project lives.
-func doctorPath(p project.Project) string {
+// eslintOverridePath names the project's own eslint.config.js as the reader
+// sees it from the repository root — the same relative-path shape doctorPath
+// used before this file replaced it as the override destination. The six
+// severities live in .dharness/eslint.config.js, rewritten whole every run,
+// so nothing inside it survives a hand edit; the project's own layer, named
+// here, is where an override does.
+func eslintOverridePath(p project.Project) string {
 	if rel := p.SourceRel(); rel != "" {
-		return rel + "/" + doctorConfig
+		return rel + "/" + eslintConfig
 	}
-	return doctorConfig
+	return eslintConfig
 }
