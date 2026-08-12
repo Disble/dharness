@@ -82,13 +82,13 @@ byte-identical import from `frontend/` resolves. The factory shape stands and
 this slice is unblocked. Recorded in `docs/learning-log.md`.
 
 - [x] 2a.1 Run the probe; record the dated result in `docs/learning-log.md`.
-- [ ] 2a.2 `internal/preset/preset.go`: `Layer{Package, Binding, Because}`, `Manifest.Layers []Layer`, `func Layers(matches []Match) []Layer` returning empty (real contributions land in slice 5, per design's recommended ordering). Obs: `dharness.preset/v1` schema string unchanged; package builds.
-- [ ] 2a.3 `internal/setup/eslintconfig.go` (new): `ownedEslintConfig(p, layers)` renders the factory over `DefaultSeverity` per rule. Obs: unit test on a constructed `layers` slice — rendered parameter list matches the binding list byte-for-byte.
-- [ ] 2a.4 `internal/project/evidence.go`: `dirIgnore` gains `!eslint.config.js`; `evidence_test.go`'s shared-list assertion gains it. Obs: `TestOwnedEslintConfigIsDeclaredShared`.
-- [ ] 2a.5 `internal/setup/files.go`: `ensureShared(p, w, name)` appends a missing entry, never rewrites. Obs: `TestExistingAllowListGainsTheMissingEntry`, `TestAllowListRepairKeepsWhatTheProjectAdded`.
-- [ ] 2a.6 `ownedFilesStep.Satisfied` gains the repair clause. Obs: entry removed by hand → `Satisfied == false`.
-- [ ] 2a.7 Wire `ownedFilesStep.Apply` to call `ownedEslintConfig` + `ensureShared`. Obs: a fresh `.dharness/` after `Apply` holds `eslint.config.js` and an allow list naming it.
-- [ ] 2a.8 **Hand-authored golden edit — the first, and it is `== tree ==` only** (`testdata/golden/generic-conventional.txt`, `generic-split.txt`): `.dharness/eslint.config.js` added complete with its severities; `.dharness/.gitignore` gains `!eslint.config.js`. `== plan ==` is **unchanged** — this slice adds and removes no step. Never via `-update` — `TestGenericMechanismHasNoUpdatePath` (`internal/setup/golden_test.go:100`) forbids it. Obs: `go test ./internal/setup/...` green; that test itself unmodified and still passing.
+- [x] 2a.2 `internal/preset/preset.go`: `Layer{Package, Binding, Because}`, `Manifest.Layers []Layer`, `func Layers(matches []Match) []Layer` returning empty (real contributions land in slice 5, per design's recommended ordering). Obs: `dharness.preset/v1` schema string unchanged; package builds.
+- [x] 2a.3 `internal/setup/eslintconfig.go` (new): `ownedEslintConfig(p, layers)` renders the factory over `DefaultSeverity` per rule. Obs: unit test on a constructed `layers` slice — rendered parameter list matches the binding list byte-for-byte.
+- [x] 2a.4 `internal/project/evidence.go`: `dirIgnore` gains `!eslint.config.js`; `evidence_test.go`'s shared-list assertion gains it. Obs: `TestOwnedEslintConfigIsDeclaredShared`.
+- [x] 2a.5 `internal/setup/files.go`: `ensureShared(p, w, name)` appends a missing entry, never rewrites. Obs: `TestExistingAllowListGainsTheMissingEntry`, `TestAllowListRepairKeepsWhatTheProjectAdded`.
+- [x] 2a.6 `ownedFilesStep.Satisfied` gains the repair clause. Obs: entry removed by hand → `Satisfied == false`.
+- [x] 2a.7 Wire `ownedFilesStep.Apply` to call `ownedEslintConfig` + `ensureShared`. Obs: a fresh `.dharness/` after `Apply` holds `eslint.config.js` and an allow list naming it.
+- [x] 2a.8 **Hand-authored golden edit — the first, and it is `== tree ==` only** (`testdata/golden/generic-conventional.txt`, `generic-split.txt`): `.dharness/eslint.config.js` added complete with its severities; `.dharness/.gitignore` gains `!eslint.config.js`. `== plan ==` is **unchanged** — this slice adds and removes no step. Never via `-update` — `TestGenericMechanismHasNoUpdatePath` (`internal/setup/golden_test.go:100`) forbids it. Obs: `go test ./internal/setup/...` green; that test itself unmodified and still passing.
 
 Note for 2a's review, so it does not get "fixed": between 2a and 2b the six
 severities exist in **both** `.dharness/eslint.config.js` and

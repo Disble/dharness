@@ -5,7 +5,20 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Disble/dharness/internal/project"
 )
+
+// TestExtendsWiredIsFalseWithoutTheFile pins the other half of extendsWired's
+// contract: a config that does not exist yet is not wired, distinct from one
+// that exists and lacks the reference — both must answer false, but only a
+// fixture with no file at all exercises the read-error branch.
+func TestExtendsWiredIsFalseWithoutTheFile(t *testing.T) {
+	root := t.TempDir()
+	if extendsWired(root, "eslint.config.js", ".dharness/eslint.config.js") {
+		t.Error("extendsWired() = true for a config that does not exist")
+	}
+}
 
 func TestDeclaredKeysFindsAQuotedKey(t *testing.T) {
 	root := t.TempDir()
@@ -127,5 +140,149 @@ func TestDeclaredLineIsEmptyWhenTheKeyIsAbsent(t *testing.T) {
 
 	if got := declaredLine(path, "ignorePatterns"); got != "" {
 		t.Errorf("declaredLine() = %q, want \"\" for a key the file never declares", got)
+	}
+}
+
+// TestExistingAllowListGainsTheMissingEntry pins design decision 2's repair:
+// a repository adopted before this change carries the five-entry list, and
+// ensureShared must append the sixth rather than leaving it gitignored
+// forever.
+func TestExistingAllowListGainsTheMissingEntry(t *testing.T) {
+	root := t.TempDir()
+	p := project.Project{Root: root}
+	if err := os.MkdirAll(filepath.Join(root, project.Dir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, project.Dir, ".gitignore")
+	existing := "*\n!.gitignore\n!lefthook.yml\n!fallow.jsonc\n!rules.json\n!evidence.json\n"
+	if err := os.WriteFile(path, []byte(existing), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ensureShared(p, &Writer{}, "eslint.config.js"); err != nil {
+		t.Fatalf("ensureShared() = %v", err)
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The exact suffix, not just Contains: the existing list already ends in
+	// a newline, so the entry must be appended directly after it — not
+	// behind a spurious blank line, which is what a mutant that appended
+	// unconditionally would produce.
+	if !strings.HasSuffix(string(raw), "!evidence.json\n!eslint.config.js\n") {
+		t.Errorf("ensureShared() = %q, want the entry appended right after the last existing line, no blank line between", raw)
+	}
+	if !strings.Contains(string(raw), "!lefthook.yml") {
+		t.Errorf("ensureShared() dropped an entry that was already there:\n%s", raw)
+	}
+}
+
+// TestEnsureSharedCreatesTheIgnoreFileWhenAbsent covers the case
+// appendHuskyGate's own "no script yet" test covers for its file: a
+// .dharness/.gitignore that does not exist yet at all is not a read error,
+// and the entry is written into a fresh file with no leading blank line.
+func TestEnsureSharedCreatesTheIgnoreFileWhenAbsent(t *testing.T) {
+	root := t.TempDir()
+	p := project.Project{Root: root}
+	if err := os.MkdirAll(filepath.Join(root, project.Dir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ensureShared(p, &Writer{}, "eslint.config.js"); err != nil {
+		t.Fatalf("ensureShared() = %v", err)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(root, project.Dir, ".gitignore"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != "!eslint.config.js\n" {
+		t.Errorf("ensureShared() = %q, want exactly the one entry with no leading blank line", raw)
+	}
+}
+
+// TestExistingAllowListWithoutATrailingNewlineGainsOne covers the branch
+// TestExistingAllowListGainsTheMissingEntry never reaches: existing content
+// that does not already end in "\n" must gain one before the new entry, or
+// the entry welds onto the previous line's last byte.
+func TestExistingAllowListWithoutATrailingNewlineGainsOne(t *testing.T) {
+	root := t.TempDir()
+	p := project.Project{Root: root}
+	if err := os.MkdirAll(filepath.Join(root, project.Dir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, project.Dir, ".gitignore")
+	if err := os.WriteFile(path, []byte("*\n!.gitignore"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ensureShared(p, &Writer{}, "eslint.config.js"); err != nil {
+		t.Fatalf("ensureShared() = %v", err)
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "*\n!.gitignore\n!eslint.config.js\n"; string(raw) != want {
+		t.Errorf("ensureShared() = %q, want %q", raw, want)
+	}
+}
+
+// TestAllowListRepairKeepsWhatTheProjectAdded is the no-clobber property
+// TestOwnedDirectoryKeepsAnExistingIgnoreFile already pins for EnsureDir,
+// applied to ensureShared: appending the sixth entry must not disturb
+// anything the project itself added to the file.
+func TestAllowListRepairKeepsWhatTheProjectAdded(t *testing.T) {
+	root := t.TempDir()
+	p := project.Project{Root: root}
+	if err := os.MkdirAll(filepath.Join(root, project.Dir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, project.Dir, ".gitignore")
+	existing := "*\n!.gitignore\n!lefthook.yml\n# added by hand\n!notes.md\n"
+	if err := os.WriteFile(path, []byte(existing), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ensureShared(p, &Writer{}, "eslint.config.js"); err != nil {
+		t.Fatalf("ensureShared() = %v", err)
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "!notes.md") || !strings.Contains(string(raw), "# added by hand") {
+		t.Errorf("ensureShared() discarded what the project added by hand:\n%s", raw)
+	}
+}
+
+// TestEnsureSharedIsANoOpWhenTheEntryAlreadyExists triangulates the repair
+// path above: an already-current allow list gains no duplicate entry.
+func TestEnsureSharedIsANoOpWhenTheEntryAlreadyExists(t *testing.T) {
+	root := t.TempDir()
+	p := project.Project{Root: root}
+	if err := os.MkdirAll(filepath.Join(root, project.Dir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, project.Dir, ".gitignore")
+	existing := "*\n!.gitignore\n!eslint.config.js\n"
+	if err := os.WriteFile(path, []byte(existing), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ensureShared(p, &Writer{}, "eslint.config.js"); err != nil {
+		t.Fatalf("ensureShared() = %v", err)
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(string(raw), "!eslint.config.js"); got != 1 {
+		t.Errorf("ensureShared() left %d occurrences of the entry, want exactly 1", got)
 	}
 }

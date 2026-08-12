@@ -212,6 +212,35 @@ func TestRealRegistryFactsAndSeedsValidate(t *testing.T) {
 	}
 }
 
+// TestLayersEnumeratesAcrossMatchesInOrder pins Layers' contract: it unions
+// every match's Layer contributions in the same Root-then-Source, registry
+// order Resolve already returns, so the generated import block and factory
+// signature are byte-stable across runs (design decision 7).
+func TestLayersEnumeratesAcrossMatchesInOrder(t *testing.T) {
+	rootMatch := Match{ID: "root-preset", Scope: Root, Manifest: Manifest{
+		Schema: Schema,
+		Layers: []Layer{{Package: "eslint-config-root", Binding: "dharnessRoot", Because: "root.json declares it"}},
+	}}
+	sourceMatch := Match{ID: "source-preset", Scope: Source, Manifest: Manifest{
+		Schema: Schema,
+		Layers: []Layer{{Package: "eslint-config-source", Binding: "dharnessSource", Because: "package.json dependency"}},
+	}}
+
+	got := Layers([]Match{rootMatch, sourceMatch})
+	if len(got) != 2 || got[0].Binding != "dharnessRoot" || got[1].Binding != "dharnessSource" {
+		t.Errorf("Layers() = %+v, want root's layer before source's, in match order", got)
+	}
+}
+
+// TestLayersIsEmptyWhenNoMatchContributesOne triangulates the union case
+// above: a manifest with no Layers must not contribute a zero-value entry.
+func TestLayersIsEmptyWhenNoMatchContributesOne(t *testing.T) {
+	m := Match{ID: "generic", Scope: Root, Manifest: Manifest{Schema: Schema}}
+	if got := Layers([]Match{m}); len(got) != 0 {
+		t.Errorf("Layers() = %+v, want empty for a manifest with no layers", got)
+	}
+}
+
 func containsKey(keys []string, want string) bool {
 	for _, key := range keys {
 		if key == want {

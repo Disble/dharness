@@ -28,6 +28,7 @@ const dirIgnore = `# dharness — this directory is written by dharness.
 !fallow.jsonc
 !rules.json
 !evidence.json
+!eslint.config.js
 `
 
 // evidenceFile holds facts that cost something to obtain and cannot be derived

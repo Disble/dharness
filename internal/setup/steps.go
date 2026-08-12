@@ -111,11 +111,35 @@ func (ownedFilesStep) Satisfied(p project.Project) bool {
 		}
 	}
 
+	matches := preset.Resolve(p)
+
 	raw, err := os.ReadFile(filepath.Join(p.Root, project.Dir, ownedFallow))
 	if err != nil {
 		return false
 	}
-	return regionBytes(string(raw)) == presetRegion(preset.Resolve(p))
+	if regionBytes(string(raw)) != presetRegion(matches) {
+		return false
+	}
+
+	// Unlike fallow.jsonc, eslint.config.js carries no agent-editable block —
+	// dharness wrote every byte of it — so the whole file is compared, the
+	// same way the six severities converge on the next run rather than
+	// being written once (design decision 8). The read error is not checked
+	// separately: ownedEslintConfig never renders "", so a missing file
+	// (read back as empty bytes) can never equal it either way.
+	eslint, _ := os.ReadFile(filepath.Join(p.Root, project.Dir, ownedEslint))
+	if string(eslint) != ownedEslintConfig(p, preset.Layers(matches)) {
+		return false
+	}
+
+	// The allow list is repaired rather than written once (design decision
+	// 2): a repository adopted before this change predates the entry, and
+	// hand-removing it must bring the step back the same way any other
+	// derived state does (§15). Same reasoning as above: a missing
+	// .gitignore reads back as empty bytes, which never contains the
+	// non-empty entry string either.
+	ignore, _ := os.ReadFile(filepath.Join(p.Root, project.Dir, ".gitignore"))
+	return strings.Contains(string(ignore), "!"+ownedEslint)
 }
 
 func (ownedFilesStep) Describe(project.Project) string {
@@ -150,8 +174,17 @@ func (ownedFilesStep) Apply(p project.Project, w *Writer) error {
 	if existing, err := os.ReadFile(fallowPath); err == nil {
 		base = string(existing)
 	}
-	content := replaceRegion(base, presetRegion(preset.Resolve(p)))
+	matches := preset.Resolve(p)
+	content := replaceRegion(base, presetRegion(matches))
 	if err := w.Write(fallowPath, []byte(content)); err != nil {
+		return err
+	}
+
+	eslintPath := filepath.Join(p.Root, project.Dir, ownedEslint)
+	if err := w.Write(eslintPath, []byte(ownedEslintConfig(p, preset.Layers(matches)))); err != nil {
+		return err
+	}
+	if err := ensureShared(p, w, ownedEslint); err != nil {
 		return err
 	}
 

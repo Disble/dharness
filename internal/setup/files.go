@@ -15,6 +15,7 @@ const (
 	ownedLefthook = "lefthook.yml"
 	ownedFallow   = "fallow.jsonc"
 	ownedRules    = "rules.json"
+	ownedEslint   = "eslint.config.js"
 )
 
 // The files that belong to the project and gain at most one line.
@@ -164,6 +165,33 @@ func appendHuskyGate(p project.Project, w *Writer) error {
 		body += "\n"
 	}
 	return w.Write(path, []byte(body+gateCommand+"\n"))
+}
+
+// ensureShared appends an allow-list entry for name when .dharness/.gitignore
+// does not already name it. Append rather than rewrite: the ignore file is
+// written once, at adoption, and a repository adopted before this change
+// keeps a list that predates every file added since. Rewriting it would
+// discard whatever the project added to it, which is the one thing
+// TestOwnedDirectoryKeepsAnExistingIgnoreFile exists to forbid — the same
+// shape as appendHuskyGate, over a different file.
+func ensureShared(p project.Project, w *Writer, name string) error {
+	path := filepath.Join(p.Root, project.Dir, ".gitignore")
+
+	existing, err := os.ReadFile(path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("read %s: %w", path, err)
+	}
+
+	entry := "!" + name
+	if strings.Contains(string(existing), entry) {
+		return nil
+	}
+
+	body := string(existing)
+	if body != "" && !strings.HasSuffix(body, "\n") {
+		body += "\n"
+	}
+	return w.Write(path, []byte(body+entry+"\n"))
 }
 
 // extendsWired reports whether a config already points at a dharness file.

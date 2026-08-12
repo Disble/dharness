@@ -304,6 +304,136 @@ func TestOwnedFilesSatisfiedComparesRegionBytesOnly(t *testing.T) {
 	}
 }
 
+// TestApplyWritesTheOwnedEslintConfigAndDeclaresItShared is task 2a.7's
+// observable: a fresh .dharness/ after Apply holds eslint.config.js and an
+// allow list naming it, so the file is never gitignored by default.
+func TestApplyWritesTheOwnedEslintConfigAndDeclaresItShared(t *testing.T) {
+	root := t.TempDir()
+	p := project.At(root, root)
+	p.InRepository = true
+
+	w := &Writer{}
+	if err := (ownedFilesStep{}).Apply(p, w); err != nil {
+		t.Fatalf("Apply() = %v", err)
+	}
+
+	eslintPath := filepath.Join(root, project.Dir, ownedEslint)
+	raw, err := os.ReadFile(eslintPath)
+	if err != nil {
+		t.Fatalf("Apply() did not write %s: %v", ownedEslint, err)
+	}
+	if want := ownedEslintConfig(p, preset.Layers(preset.Resolve(p))); string(raw) != want {
+		t.Errorf("Apply() wrote %q, want %q", raw, want)
+	}
+
+	ignore, err := os.ReadFile(filepath.Join(root, project.Dir, ".gitignore"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(ignore), "!eslint.config.js") {
+		t.Errorf("Apply() left the allow list without eslint.config.js:\n%s", ignore)
+	}
+}
+
+// TestOwnedFilesSatisfiedRequiresTheEslintAllowListEntry pins task 2a.6's
+// repair clause: hand-removing the allow-list entry for eslint.config.js
+// must bring the step back, derived rather than recorded (§15) — the file
+// itself is left alone; only the declaration that it is shared is missing.
+func TestOwnedFilesSatisfiedRequiresTheEslintAllowListEntry(t *testing.T) {
+	root := t.TempDir()
+	p := project.At(root, root)
+	p.InRepository = true
+
+	if err := (ownedFilesStep{}).Apply(p, &Writer{}); err != nil {
+		t.Fatalf("Apply() = %v", err)
+	}
+	if !(ownedFilesStep{}).Satisfied(p) {
+		t.Fatal("Satisfied() = false immediately after Apply()")
+	}
+
+	ignorePath := filepath.Join(root, project.Dir, ".gitignore")
+	raw, err := os.ReadFile(ignorePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repaired := strings.ReplaceAll(string(raw), "!eslint.config.js\n", "")
+	if err := os.WriteFile(ignorePath, []byte(repaired), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if (ownedFilesStep{}).Satisfied(p) {
+		t.Error("Satisfied() = true after the allow-list entry was removed by hand, want false")
+	}
+}
+
+// TestOwnedFilesSatisfiedComparesTheEslintConfigBytes triangulates the
+// clause above with a different cause: the allow list stays intact but the
+// rendered config itself changed underneath it (a preset started
+// contributing, or the barrel default flipped) — the first-write-only limit
+// design decision 8 retires, proven directly against Satisfied rather than
+// by re-running Apply and hoping it converges.
+func TestOwnedFilesSatisfiedComparesTheEslintConfigBytes(t *testing.T) {
+	root := t.TempDir()
+	p := project.At(root, root)
+	p.InRepository = true
+
+	if err := (ownedFilesStep{}).Apply(p, &Writer{}); err != nil {
+		t.Fatalf("Apply() = %v", err)
+	}
+
+	eslintPath := filepath.Join(root, project.Dir, ownedEslint)
+	if err := os.WriteFile(eslintPath, []byte("stale bytes from an earlier run\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if (ownedFilesStep{}).Satisfied(p) {
+		t.Error("Satisfied() = true with a stale eslint.config.js, want false")
+	}
+}
+
+// TestOwnedFilesSatisfiedFalseWhenTheEslintConfigFileIsMissing distinguishes
+// "the file is stale" (TestOwnedFilesSatisfiedComparesTheEslintConfigBytes)
+// from "the file was never written at all" — the fallow.jsonc region already
+// matches (generic contributes nothing), so only the eslint.config.js read
+// failure can make Satisfied answer false here.
+func TestOwnedFilesSatisfiedFalseWhenTheEslintConfigFileIsMissing(t *testing.T) {
+	root := t.TempDir()
+	p := project.At(root, root)
+	p.InRepository = true
+
+	if err := (ownedFilesStep{}).Apply(p, &Writer{}); err != nil {
+		t.Fatalf("Apply() = %v", err)
+	}
+	if err := os.Remove(filepath.Join(root, project.Dir, ownedEslint)); err != nil {
+		t.Fatal(err)
+	}
+
+	if (ownedFilesStep{}).Satisfied(p) {
+		t.Error("Satisfied() = true with eslint.config.js missing entirely, want false")
+	}
+}
+
+// TestOwnedFilesSatisfiedFalseWhenTheGitignoreFileIsMissing is the same
+// distinction for the allow-list check: a .gitignore that does not exist at
+// all is not the same reachable state as one that is merely missing the
+// entry, but Satisfied must answer false for both.
+func TestOwnedFilesSatisfiedFalseWhenTheGitignoreFileIsMissing(t *testing.T) {
+	root := t.TempDir()
+	p := project.At(root, root)
+	p.InRepository = true
+
+	if err := (ownedFilesStep{}).Apply(p, &Writer{}); err != nil {
+		t.Fatalf("Apply() = %v", err)
+	}
+	if err := os.Remove(filepath.Join(root, project.Dir, ".gitignore")); err != nil {
+		t.Fatal(err)
+	}
+
+	if (ownedFilesStep{}).Satisfied(p) {
+		t.Error("Satisfied() = true with .gitignore missing entirely, want false")
+	}
+}
+
 // The unit tests above prove replaceRegion. This proves the wiring, which is a
 // different question: Apply must read the file that is already there rather
 // than rewriting the skeleton over it. If it did the latter, every test above

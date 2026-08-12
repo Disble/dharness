@@ -70,13 +70,33 @@ func TestOwnedDirectoryIgnoresItsOwnTransientFiles(t *testing.T) {
 	if !strings.Contains(ignore, "\n*\n") {
 		t.Errorf("the ignore file does not ignore by default:\n%s", ignore)
 	}
-	for _, shared := range []string{"!.gitignore", "!lefthook.yml", "!fallow.jsonc", "!rules.json", "!evidence.json"} {
+	for _, shared := range []string{"!.gitignore", "!lefthook.yml", "!fallow.jsonc", "!rules.json", "!evidence.json", "!eslint.config.js"} {
 		if !strings.Contains(ignore, shared) {
 			t.Errorf("the ignore file would hide %s, which describes the repository", shared)
 		}
 	}
 	if strings.Contains(ignore, "!stryker-incremental.json") {
 		t.Error("a machine-local file was declared shared")
+	}
+}
+
+// TestOwnedEslintConfigIsDeclaredShared pins design decision 2: the owned
+// ESLint config must be named in the directory's allow list from the moment
+// the directory is created, or it stays gitignored forever in every
+// already-adopted repository — EnsureDir writes the ignore file only when
+// it is absent.
+func TestOwnedEslintConfigIsDeclaredShared(t *testing.T) {
+	p := Project{Root: t.TempDir()}
+	if _, err := p.EnsureDir(""); err != nil {
+		t.Fatalf("EnsureDir() = %v", err)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(p.Root, Dir, ".gitignore"))
+	if err != nil {
+		t.Fatalf("the directory was created without its ignore rules: %v", err)
+	}
+	if !strings.Contains(string(raw), "!eslint.config.js") {
+		t.Errorf("a fresh .dharness/ does not declare eslint.config.js shared:\n%s", raw)
 	}
 }
 
