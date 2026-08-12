@@ -174,3 +174,51 @@ Two separate things worth doing, and they are not the same thing:
 
 Entry 1 is about scope losing *which file* an offset came from. This is the
 neighbouring problem: scope keeping code that no longer belongs to the change.
+
+**Third occurrence, 2026-08-12, and the hypothesis is now confirmed.** Slice 2
+of `structured-reports` staged five files together — the first change in this
+repository to partially edit several existing files at once, rather than adding
+new ones. The combined run reported **0.796875 (51/64)** and failed the 0.80
+floor. Isolating the file groups along the dependency boundary gave **0.91
+(10/11)** for the `ExitCode`-move pair and **0.94 (44/47)** for the setup
+cluster. Same code, same tests; only the grouping changed.
+
+The swept-in survivors were in `internal/app`'s `RunArgs` dispatch over
+`"sync"`/`"check"`/`"mutate"` — untouched by the slice, and the smallest staged
+file in the run. A byte offset legitimately changed in the much larger
+`internal/setup/setup.go` collides numerically with an unrelated offset inside
+`app.go`, which is exactly the mechanism entry 1 proposed as a hypothesis in
+August.
+
+What was still open in the hypothesis is now closed by reading the code rather
+than inferring from symptoms. `computeScope` (`tools/mutationstaged/main.go:127`)
+already computes per-file ranges correctly and already passes them per file to
+`mutation.AnalyzeSource`, so the **statistics** are right. The defect is one
+line later: `allOffsets` accumulates `offsetRange` values that carry `start` and
+`end` and **no file identity at all**, and `plan.encoded` is one flat
+`mergeOffsetRanges(allOffsets)` over the lot. The encoded scope handed to ooze
+therefore cannot distinguish which file a range came from, while ooze parses
+each file with its own `token.FileSet` and so produces offsets that are only
+meaningful per file.
+
+Why it went unnoticed for two days of work on this change: slice 1 added only
+brand-new files, where every offset is legitimately in scope whichever file it
+is attributed to. The defect needs a multi-file *partial* edit to show itself.
+
+Two things this occurrence also settled, both worth stating plainly:
+
+- **Nothing enforces the mutation floor automatically.** `.githooks/pre-commit`
+  runs gofmt, vet and tests; `.github/workflows/ci.yml` runs gofmt, vet,
+  `go test ./... -race` and `scripts/verify-gate.sh`. Neither invokes
+  `go run ./tools/mutationstaged`. The floor is real but it is enforced by an
+  author choosing to run it, which is why a failing combined score did not
+  block the commit.
+- **The failure mode is the expensive direction.** A collision inflates the
+  denominator with untested code from an unrelated file, so the score reads
+  *low*. An author trusting it writes tests for code their change never
+  touched — the same cost entry 1 named, now measured at 0.797 against a real
+  0.91/0.94.
+
+A fix needs the ranges keyed by file and the file identity carried through to
+the node comparison. Until then, a multi-file partial edit should be read per
+file group, and a combined score below the floor is not evidence on its own.
