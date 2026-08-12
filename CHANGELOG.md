@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.2.0](https://github.com/Disble/dharness/compare/v1.1.0...v1.2.0) (2026-08-12)
+
+
+### Features
+
+* **cli:** run ESLint in the gate, placed by measured cost not assumption ([e253aa6](https://github.com/Disble/dharness/commit/e253aa62f6b72a687cd3cbad726418a377507c36))
+* **cli:** run fallow dupes, because audit does not enforce the ceiling ([149b924](https://github.com/Disble/dharness/commit/149b924f1f6e0bcddadbd4d011bb5a46a53840bf))
+* **jsconfig:** parse eslint.config.js with a pure-Go tree-sitter parser ([546cf71](https://github.com/Disble/dharness/commit/546cf71048c37b90f6f26f8f228a5df9e95424f9))
+* **preset:** layer eslint-config-next and eslint-config-expo into the owned config ([90e22f6](https://github.com/Disble/dharness/commit/90e22f60369f2dd8911b95579aef2d50409a629f))
+* **preset:** opine on how fallow looks for duplication, not just how much ([0db3bca](https://github.com/Disble/dharness/commit/0db3bca06e8ba698f92e53c63a8cb7e2dc44a764))
+* **setup:** splice or replace eslint.config.js instead of only writing it ([7a40835](https://github.com/Disble/dharness/commit/7a408351a3784f246eb98373ce17db9561787ac8))
+* **setup:** write eslint.config.js when a project has none at all ([703f51d](https://github.com/Disble/dharness/commit/703f51d10781c06c04ef7284d9cf3ac2da77af6a))
+* **setup:** write the owned ESLint factory config and repair its allow-list entry ([7227829](https://github.com/Disble/dharness/commit/7227829760944b64f786adb4c59fe23f27b7e30a))
+
+
+### Bug Fixes
+
+* **setup:** name the residue entries the note found, not a disjunction ([d40b995](https://github.com/Disble/dharness/commit/d40b99599ab9a0ebe3f02535e2cd6a771e8da1bb))
+* **setup:** report doctor.config.json eslint residue instead of staying silent ([f28ee62](https://github.com/Disble/dharness/commit/f28ee62a83a5b5df4746052b472d85eb8aeea6bd))
+
 ## [1.1.0](https://github.com/Disble/dharness/compare/v1.0.2...v1.1.0) (2026-08-11)
 
 
