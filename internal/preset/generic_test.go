@@ -67,15 +67,30 @@ func TestGenericCarriesTheDuplicationCeiling(t *testing.T) {
 
 	value, ok := found.Value.(map[string]any)
 	if !ok {
-		t.Fatalf("duplicates value = %T, want an object carrying fallow's own threshold key", found.Value)
+		t.Fatalf("duplicates value = %T, want an object carrying fallow's own keys", found.Value)
 	}
-	if value["threshold"] != 3 {
-		t.Errorf("threshold = %v, want 3", value["threshold"])
+
+	// Each of the three departs from a fallow default, verified against its
+	// schema: mode is "mild", minOccurrences is 2, threshold is 0.0 (no
+	// limit). A key that only restated a default would be noise to maintain
+	// in every adopting repository — the reason the nine-rule pin this
+	// originally shipped beside was dropped.
+	for _, want := range []struct {
+		key   string
+		value any
+	}{
+		{"mode", "semantic"},
+		{"minOccurrences", 3},
+		{"threshold", 3},
+	} {
+		if value[want.key] != want.value {
+			t.Errorf("%s = %v, want %v", want.key, value[want.key], want.value)
+		}
 	}
 
 	// The evidence must say the two measurements are not the same one, or the
 	// number reads as a ported gate rather than a companion signal.
-	for _, expected := range []string{"3", "different"} {
+	for _, expected := range []string{"semantic", "3", "different"} {
 		if !strings.Contains(found.Because, expected) {
 			t.Errorf("Because = %q, want it to carry %q", found.Because, expected)
 		}

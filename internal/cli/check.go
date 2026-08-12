@@ -65,7 +65,14 @@ func RunCheck(args []string, stdout io.Writer) error {
 	// fix: this is the first commit, which is exactly when adoption ends. The
 	// cheapest way to run something is not to run it when it cannot answer.
 	if project.HasCommits(p.Root) {
-		stages = append(stages, stage{tool.Fallow, tool.FallowAudit()})
+		// audit first, dupes second. audit is scoped to the changeset, so it
+		// answers the cheaper question and, failing, spares the second graph
+		// build entirely. dupes measures the whole repository against the
+		// ceiling dharness writes — a ceiling audit does not enforce, which is
+		// the only reason this is a separate invocation rather than a flag.
+		stages = append(stages,
+			stage{tool.Fallow, tool.FallowAudit()},
+			stage{tool.Fallow, tool.FallowDupes()})
 	} else {
 		defer fmt.Fprintf(stdout, "\n%s did not run: this repository has no commits yet, so there is\nno base to compare against. It runs from the next commit on.\n", tool.Fallow)
 	}

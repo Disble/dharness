@@ -132,6 +132,30 @@ func FallowAudit() []string {
 	return []string{"audit"}
 }
 
+// FallowDupes enforces the duplication ceiling, which audit does not.
+//
+// Measured against fallow 3.14.0: a repository at 80% duplication with
+// `duplicates.threshold` set to 3 passes `audit` with exit 0 and fails
+// `dupes` with exit 1. audit's verdict is scoped to what the changeset
+// introduces — its `--gate` default is new-only — and a percentage over the
+// whole repository is a different question, which `dupes` is the command
+// that asks.
+//
+// No `--threshold` flag. The number lives in the config dharness owns, where
+// the project can read it, argue with it and override it; a flag here would
+// be a ceiling nobody could find, and command-line arguments overrule the
+// config file, so it would also silently win over a project that had
+// disagreed on purpose.
+//
+// This is a wall rather than a ratchet, and deliberately so after being
+// weighed: a repository that inherits duplication above the ceiling is
+// blocked until it either refactors or raises the number in its own config.
+// `--changed-since` would scope it, but it resolves a commit range and a
+// staged change is not a commit — the same reason FallowAudit passes no base.
+func FallowDupes() []string {
+	return []string{"dupes"}
+}
+
 // runner returns the --testRunner argument, or nothing when the project's own
 // configuration already answers it.
 //
