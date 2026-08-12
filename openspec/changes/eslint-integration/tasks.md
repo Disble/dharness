@@ -131,7 +131,8 @@ number, so no task here depends on it.
 - [ ] 3a.3 `eslintExtendsStep.Delegated(p)`: `ok == true` only for `.ts`/`.mts`/`.cts`, an unrecognised call, an ERROR node, or a malformed marker pair. Obs: table-driven test over every `eslint-config-splice` refusal-matrix cell in spec.md.
 - [ ] 3a.4 `eslintExtendsStep.Apply` write-if-absent path, matching `wireFallowExtends`'s shape. Obs: spec scenario "a project with no ESLint config gets one written".
 - [ ] 3a.5 Legacy `.eslintrc.*`-only delegation, matching `legacyLintConfigStep`'s wording. Obs: spec scenario "a project with only `.eslintrc.json` delegates".
-- [ ] 3a.6 **Hand-authored golden edit — the third** — `== plan ==`: `eslintExtendsStep`'s row added (ten → eleven); `== tree ==`: `eslint.config.js` added at `<root>`/`<source>`. Never via `-update`. Obs: `go test ./internal/setup/...` green; `TestGenericMechanismHasNoUpdatePath` unmodified.
+- [ ] 3a.6 `internal/setup/prompt.go`: `ArchitecturePrompt` still sends the reader to `doctor.config.json` to turn the barrel rule on (`prompt.go:87`, via `doctorPath`). Slice 2b deleted that file, so the advice names something dharness no longer writes — and `TestArchitecturePromptSaysHowToTurnOnTheBarrelRule` currently pins the wrong string, which is a test defending a lie. Point it at the project's own `eslint.config.js` layer, which this slice is the first to make real, and retire `doctorPath`/`doctorConfig` with it. Obs: that test asserts the new destination; `rg doctorConfig internal/` returns nothing outside the golden fixtures' history.
+- [ ] 3a.7 **Hand-authored golden edit — the third** — `== plan ==`: `eslintExtendsStep`'s row added (ten → eleven); `== tree ==`: `eslint.config.js` added at `<root>`/`<source>`. Never via `-update`. Obs: `go test ./internal/setup/...` green; `TestGenericMechanismHasNoUpdatePath` unmodified.
 
 ## Slice 3b — insert/replace paths, re-parse guard (~420 lines, exceeds 400-line budget)
 
