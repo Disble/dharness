@@ -129,6 +129,24 @@ without touching the other region.
   pair and a spread element marked with the `dharness:eslint-layer` pair,
   each individually delimited
 
+#### Scenario: a `.cjs` config using CommonJS rather than ESM delegates
+
+- **GIVEN** an `eslint.config.cjs` whose config is assigned with
+  `module.exports = [...]` and which carries no `export default` at all
+- **WHEN** dharness inspects it
+- **THEN** it delegates, naming the absent default export — the extension
+  admits the file to this requirement, but only `export default` is a shape
+  the splice recognises
+
+The extension list above names which files dharness *looks at*; it is not a
+claim about the module system inside them. `.cjs` in particular may hold
+CommonJS, where the config is a `module.exports` assignment and there is no
+`export default` to anchor to. That refuses through the existing
+no-default-export path rather than a rule of its own, and this scenario
+exists so the behaviour is stated rather than inferred from the absence of a
+rule. Splicing an `import` statement into a CommonJS module would be wrong
+twice over — the wrong module system, and a file that then fails to load.
+
 #### Scenario: the two marker pairs are never merged into one
 
 - **GIVEN** a spliced config
