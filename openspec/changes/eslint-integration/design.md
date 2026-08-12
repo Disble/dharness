@@ -1129,6 +1129,14 @@ the reason in each case rather than silently:
       and spec both record. Nothing in this design depends on the number:
       `defineConfig` splices, everything else delegates, and both paths ship
       in 3a/3b regardless.
+- [x] **`Layer.Binding` collisions across two matched presets — closed in
+      slice 5.** `TestNoBindingIsContributedTwice` ships, and the shipped
+      bindings are `dharnessNext` and `dharnessExpo`. The namespacing rule
+      that arrived for a different reason — a bare binding collides with the
+      *project's* own import and produces a SyntaxError — makes the
+      cross-preset case harder to reach as a side effect, since every binding
+      now carries the same prefix and differs only in its tail. The original
+      note follows, unchanged, because its argument is what the test asserts:
 - [ ] **`Layer.Binding` collisions across two matched presets** are not
       possible today — `nextjs` and `expo` contribute one each, with different
       bindings, and both are Source scope so a repository matching both is a
