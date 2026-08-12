@@ -96,6 +96,18 @@ que falte; esa instalación pertenece a la misma transacción que los archivos y
 ante un fallo, desinstala exactamente lo agregado por esa ejecución y restaura
 byte por byte el manifiesto y el lockfile.
 
+*Enmendado el 12 de agosto de 2026.* ESLint es la excepción registrada a lo
+anterior: la fase del gate se resuelve con `p.LocalBinary("eslint")`, el
+binario que el propio proyecto instaló, nunca con el ejecutor remoto — porque
+el flat config del proyecto importa sus propios plugins y configuraciones de
+framework, algo que un entorno transitorio no puede resolver. La medición
+contra las otras tres fases (react-doctor, fallow audit, fallow dupes) sobre
+la misma lista explícita de archivos en stage, tres corridas cada una, la
+ubicó además como la más barata de las cuatro — no la más cara, como se había
+asumido de forma provisional — así que corre primero en el orden del gate, no
+al final; react-doctor y fallow conservan el orden relativo que ya tenían,
+que esta medición no revisó (`docs/learning-log.md`, 12 de agosto de 2026).
+
 ### 04. Un comando que no se puede nombrar está haciendo dos cosas
 
 El nombre no es presentación, es diagnóstico. Cuando ninguno encaja, casi siempre

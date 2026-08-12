@@ -154,19 +154,21 @@ Capability: `eslint-gate-stage` (all requirements). Why here: independent of
 3b — touches `internal/cli`, `internal/tool`, `internal/project` only; can
 move ahead of 3b if it overruns.
 
-**MERGE CONDITION — gates this slice.** The placement measurement: wall-clock
-per stage over the same explicit staged file list on the reference
-repository, three runs, median, recorded as a dated `docs/learning-log.md`
-line. **OPEN QUESTION — closes here.** Placement stays provisional (last,
-after `fallow dupes`) until this measurement; do not close by reasoning about
-ESLint's cost profile in isolation.
+**MERGE CONDITION — SATISFIED, 12 August 2026.** The placement measurement ran:
+wall-clock per stage over the same explicit staged file list (5 files) on a
+reference project, three runs, median, `docs/learning-log.md`. **OPEN
+QUESTION — closed here, against the provisional answer.** ESLint measured
+1008 ms — cheaper than fallow dupes (1398 ms), fallow audit (2102 ms), and
+react-doctor (2959 ms), the reverse of the "provisional last" assumption. It
+runs first in the gate, not last; react-doctor and fallow keep the relative
+order they already had.
 
-- [ ] 4.1 `internal/cli/check.go`: `stage{tool, command runner.Command, help runner.Command}` replaces `stage{tool, args}`; `remoteStage`/`localStage` build the two shapes; loop drops `RemoteLatest`, gains `stage.command`. Obs: existing `internal/cli/check_test.go` react-doctor/fallow cases pass with the new shape.
-- [ ] 4.2 `internal/project/git.go`: `StagedSourceFilesFromSource()` strips the prefix `StagedSourceFiles` already filtered on. Obs: `TestEslintStagePathsAreRelativeToSource` on a split fixture.
-- [ ] 4.3 `internal/tool/tool.go`: `const ESLint = "eslint"`, `func ESLintStaged(files []string) []string`, no `--cache`. Obs: argument-slice assertion — `--cache` absent.
-- [ ] 4.4 Stage resolves via `p.LocalBinary("eslint")`; absent → not built, named in output, exit unaffected. Obs: `TestEslintStageIsSkippedWithoutABinary`.
-- [ ] 4.5 Run the placement measurement (merge condition above); place the stage per its result, citing the learning-log line in the commit.
-- [ ] 4.6 `docs/design-principles.md`: record the ESLint local-resolution exception beside the existing 10 August 2026 §03 amendment (`docs/design-principles.md:80`). Obs: spec scenario "the exception is named where the general rule is recorded".
+- [x] 4.1 `internal/cli/check.go`: `stage{tool, command runner.Command, help runner.Command}` replaces `stage{tool, args}`; `remoteStage`/`localStage` build the two shapes; loop drops `RemoteLatest`, gains `stage.command`. Obs: existing `internal/cli/check_test.go` react-doctor/fallow cases pass with the new shape.
+- [x] 4.2 `internal/project/git.go`: `StagedSourceFilesFromSource()` strips the prefix `StagedSourceFiles` already filtered on. Obs: `TestEslintStagePathsAreRelativeToSource` on a split fixture.
+- [x] 4.3 `internal/tool/tool.go`: `const ESLint = "eslint"`, `func ESLintStaged(files []string) []string`, no `--cache`. Obs: argument-slice assertion — `--cache` absent.
+- [x] 4.4 Stage resolves via `p.LocalBinary("eslint")`; absent → not built, named in output, exit unaffected. Obs: `TestEslintStageIsSkippedWithoutABinary`.
+- [x] 4.5 Run the placement measurement (merge condition above); place the stage per its result, citing the learning-log line in the commit. **Result: ESLint measured cheapest of the four (1008 ms median), not most expensive — it now runs first, not last as the provisional placement assumed.** `docs/learning-log.md`, 12 August 2026.
+- [x] 4.6 `docs/design-principles.md`: record the ESLint local-resolution exception beside the existing 10 August 2026 §03 amendment (`docs/design-principles.md:80`). Obs: spec scenario "the exception is named where the general rule is recorded".
 
 ## Slice 5 — preset layer contribution (~260 lines)
 
