@@ -49,10 +49,9 @@ func ownedEslintConfig(p project.Project, layers []preset.Layer) string {
 	return body.String()
 }
 
-// sortedRuleIDs is RuleIDs() in the same alphabetical order doctorConfigStep
-// already renders its rules in — that ordering falls out there from
-// json.Marshal on a Go map, which this function reproduces explicitly since
-// the owned config is JavaScript, not JSON.
+// sortedRuleIDs is RuleIDs() sorted alphabetically, made explicit here since
+// the owned config is JavaScript rather than JSON — there is no map-marshal
+// order to inherit.
 func sortedRuleIDs() []string {
 	ids := RuleIDs()
 	sort.Strings(ids)

@@ -732,68 +732,6 @@ func TestAppendHuskyGateFailsOnAHookItCannotRead(t *testing.T) {
 	}
 }
 
-// Five of the six rules are guardrails on generated code and arrive at
-// "error". folder-ownership is not one: it requires that a split module
-// publish an index.ts, which a project that deliberately has no barrel files
-// cannot satisfy. dharness writes it "off" and the architecture prompt says
-// how to turn it on.
-func TestDoctorConfigLeavesTheArchitecturalRuleOff(t *testing.T) {
-	root := t.TempDir()
-	p := project.Project{Root: root, Source: root, PackageManager: "bun"}
-
-	if err := (doctorConfigStep{}).Apply(p, &Writer{}); err != nil {
-		t.Fatalf("Apply() = %v", err)
-	}
-
-	var config doctorConfigFile
-	raw, err := os.ReadFile(filepath.Join(root, doctorConfig))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := json.Unmarshal(raw, &config); err != nil {
-		t.Fatal(err)
-	}
-
-	if got := config.Rules[RulesPrefix+"/folder-ownership"]; got != "off" {
-		t.Errorf("folder-ownership = %q, want \"off\": it requires an index.ts this project may forbid", got)
-	}
-	for _, rule := range []string{"max-file-lines", "require-jsdoc", "require-variable-jsdoc", "role-file-shape", "pure-index-barrel"} {
-		id := RulesPrefix + "/" + rule
-		if got := config.Rules[id]; got != "error" {
-			t.Errorf("%s = %q, want \"error\"", id, got)
-		}
-	}
-}
-
-// pure-index-barrel stays at "error" on purpose and is not an exception to
-// the rule above: it constrains a barrel that exists rather than requiring
-// one, so a project without barrels never sees it fire.
-func TestDoctorConfigKeepsASeverityTheProjectAlreadyChose(t *testing.T) {
-	root := t.TempDir()
-	p := project.Project{Root: root, Source: root, PackageManager: "bun"}
-	writeFile := filepath.Join(root, doctorConfig)
-	chosen := `{"rules":{"dharness/folder-ownership":"error","dharness/require-jsdoc":"warn"}}`
-	if err := os.WriteFile(writeFile, []byte(chosen), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := (doctorConfigStep{}).Apply(p, &Writer{}); err != nil {
-		t.Fatalf("Apply() = %v", err)
-	}
-
-	var config doctorConfigFile
-	raw, _ := os.ReadFile(writeFile)
-	if err := json.Unmarshal(raw, &config); err != nil {
-		t.Fatal(err)
-	}
-	if got := config.Rules[RulesPrefix+"/folder-ownership"]; got != "error" {
-		t.Errorf("folder-ownership = %q; a severity the project chose must survive sync", got)
-	}
-	if got := config.Rules[RulesPrefix+"/require-jsdoc"]; got != "warn" {
-		t.Errorf("require-jsdoc = %q; a severity the project chose must survive sync", got)
-	}
-}
-
 // A rule dharness turns off has to say so where the decision is made, or it
 // is a silent default. The architecture prompt names the rule, the file and
 // the exact edit.

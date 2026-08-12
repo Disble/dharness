@@ -55,21 +55,14 @@
      Make .eslintrc.json parse, or delete it. Either answer is fine; a file that is present
      and unreadable is not, because the gate cannot tell you which rules it stopped
      running.
-7  declare the rules react-doctor should run
-   satisfied=false delegated=false
-   why |
-     
-   describe |
-     react-doctor does not compose, so this is a merge rather than a reference: the
-     package joins `plugins` and its 6 rules join `rules`.
-8  give the agent fallow's own tools
+7  give the agent fallow's own tools
    satisfied=false delegated=false
    why |
      
    describe |
      fallow ships an MCP server with the analysis an agent would otherwise ask a
      wrapper to invent: boundaries, traces, impact, health.
-9  wire the gate into git
+8  wire the gate into git
    satisfied=false delegated=true
    why |
      nothing answers: there is no lefthook config, no .husky/ and no lefthook
@@ -83,7 +76,7 @@
      lefthook writes its own git hook once configured and installed; husky keeps
      a shell script that needs one appended line. Either way, the step is
      satisfied once "dharness check" runs on commit.
-10  install react-doctor's agent skill
+9  install react-doctor's agent skill
    satisfied=false delegated=true
    why |
      its only non-interactive form installs five things: skills for every agent it
@@ -93,7 +86,7 @@
          npx --yes react-doctor@latest install
      
      Choose the skill and decline the rest.
-11  decide this project's architecture
+10  decide this project's architecture
    satisfied=false delegated=true
    why |
      architecture boundaries say what the code is meant to be, and no tool can
@@ -256,22 +249,6 @@ frontend/.fallowrc.json
 ---
 {
   "extends": ["../.dharness/fallow.jsonc"]
-}
----
-frontend/doctor.config.json
----
-{
-  "plugins": [
-    "dharness-eslint-plugin"
-  ],
-  "rules": {
-    "dharness/folder-ownership": "off",
-    "dharness/max-file-lines": "error",
-    "dharness/pure-index-barrel": "error",
-    "dharness/require-jsdoc": "error",
-    "dharness/require-variable-jsdoc": "error",
-    "dharness/role-file-shape": "error"
-  }
 }
 ---
 frontend/package-lock.json

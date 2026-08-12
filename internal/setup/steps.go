@@ -482,67 +482,6 @@ func (boundariesOwnerStep) Apply(project.Project, *Writer) error {
 	return fmt.Errorf("%s is delegated and must not be applied", boundariesOwnerStep{}.ID())
 }
 
-// -------------------------------------------------------- doctor config
-
-type doctorConfigStep struct{}
-
-func (doctorConfigStep) ID() string { return "declare the rules react-doctor should run" }
-
-func (doctorConfigStep) Satisfied(p project.Project) bool {
-	if !p.HasSource() {
-		return true
-	}
-	raw, err := os.ReadFile(filepath.Join(p.Source, doctorConfig))
-	if err != nil {
-		return false
-	}
-	var config doctorConfigFile
-	if json.Unmarshal(raw, &config) != nil {
-		return false
-	}
-	for _, plugin := range config.Plugins {
-		if plugin == RulesPackage {
-			return true
-		}
-	}
-	return false
-}
-
-func (doctorConfigStep) Describe(project.Project) string {
-	return fmt.Sprintf("react-doctor does not compose, so this is a merge rather than a reference: the\npackage joins `plugins` and its %d rules join `rules`.", len(Rules))
-}
-
-// Delegated is always false: the merge doctorConfigStep performs has no case
-// where dharness cannot perform it itself.
-func (doctorConfigStep) Delegated(project.Project) (string, bool) { return "", false }
-
-func (doctorConfigStep) Apply(p project.Project, w *Writer) error {
-	path := filepath.Join(p.Source, doctorConfig)
-
-	config := doctorConfigFile{Rules: map[string]string{}}
-	if raw, err := os.ReadFile(path); err == nil {
-		if err := json.Unmarshal(raw, &config); err != nil {
-			return fmt.Errorf("%s is not readable as JSON, so it cannot be merged: %w", doctorConfig, err)
-		}
-		if config.Rules == nil {
-			config.Rules = map[string]string{}
-		}
-	}
-
-	config.Plugins = dedupe(append(config.Plugins, RulesPackage))
-	for _, id := range RuleIDs() {
-		if _, chosen := config.Rules[id]; !chosen {
-			config.Rules[id] = DefaultSeverity(p, id)
-		}
-	}
-	return w.WriteJSON(path, config)
-}
-
-type doctorConfigFile struct {
-	Plugins []string          `json:"plugins,omitempty"`
-	Rules   map[string]string `json:"rules,omitempty"`
-}
-
 // ------------------------------------------------ legacy lint config
 //
 // dharness does not run ESLint and does not want to. This step exists because

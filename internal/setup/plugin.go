@@ -77,8 +77,7 @@ func RuleIDs() []string {
 
 // DefaultSeverity is what dharness writes for a rule the project has not
 // chosen a severity for itself (§05) — its sole caller is
-// doctorConfigStep.Apply, and only inside the `!chosen` branch, so a
-// severity the project already wrote is never reconsidered here. It accepts
+// ownedEslintConfig, which calls it for every rule on every run: it accepts
 // either the bare name or the scoped id.
 //
 // folder-ownership requires that a split module publish an `index.ts`, so a
@@ -91,13 +90,17 @@ func RuleIDs() []string {
 // (asked of git) instead of a global constant: dharness writes "error"
 // where the tree has at least one barrel, "off" where it has none.
 //
-// The derived value is a first-write default only. doctorConfigStep.
-// Satisfied returns true as soon as RulesPackage appears in `plugins`, so
-// this function runs once per project, at first adoption — a project that
-// grows barrels afterward is not switched on by a later `sync`, because
-// dharness cannot tell "the project chose off" from "dharness wrote off",
-// and re-deriving would risk overwriting a deliberate choice (§05). This is
-// a stated limit, not a gap.
+// This runs on every sync now, not once at first adoption. The
+// first-write-only limit this function used to carry was never a property
+// of the derivation above — it was a property of writing into
+// doctor.config.json, a file the project also edited, where dharness could
+// not tell "the project chose off" from "dharness wrote off" (§05), so
+// re-deriving risked overwriting a deliberate choice. That file is gone;
+// .dharness/eslint.config.js is dharness's alone, regenerated whole by this
+// function every run, so there is nothing inside it left for a project to
+// have "chosen" — a project that wants a different severity states it in
+// its own eslint.config.js, which is not dharness's to overwrite. The limit
+// retired with the file it was a property of, not with this function.
 //
 // pure-index-barrel stays "error" unconditionally: it constrains a barrel
 // that exists rather than requiring one, so in a project without barrels it

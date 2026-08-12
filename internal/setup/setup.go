@@ -53,7 +53,6 @@ func Plan() []Step {
 		boundariesOwnerStep{},
 		lefthookExtendsStep{},
 		legacyLintConfigStep{},
-		doctorConfigStep{},
 		mcpStep{},
 		hookInstallStep{},
 		agentSkillStep{},
