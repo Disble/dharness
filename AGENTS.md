@@ -286,4 +286,19 @@ Repo-owned. Silence is drift; a stated deviation is a decision.
   invocations do not import them. The trade buys systematic staged-line mutation
   coverage and an executable silent-no-op guard that the standard library does
   not provide.
+- `deviates: stdlib-only product — internal/jsconfig depends on
+  github.com/odvcencio/gotreesitter.` The product's first non-development
+  dependency: `cmd/dharness` imports it, transitively, through
+  `internal/jsconfig`. It exists to parse `eslint.config.js` well enough to
+  splice dharness's layer into it without running a Node process to do so
+  (`CLAUDE.md`'s second rule). It is a pure-Go tree-sitter reimplementation,
+  chosen specifically because the official `tree-sitter/go-tree-sitter`
+  bindings need cgo — `CGO_ENABLED=0 go build ./...` MUST keep succeeding
+  for all six of `.goreleaser.yaml`'s release targets whenever this
+  dependency changes, or the single-binary cross-compile this repository
+  ships breaks. If the dependency stops being viable, the recorded fallback
+  is cgo with the official bindings, which costs the single-binary
+  cross-compile — accepted because `internal/jsconfig` is the sole importer
+  of any tree-sitter type, so the fallback is a one-package rewrite, not a
+  change to the product.
 
