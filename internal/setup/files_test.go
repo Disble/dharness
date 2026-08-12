@@ -360,3 +360,74 @@ func TestEslintFlatConfigPrefersJSOverMjsAndCjs(t *testing.T) {
 		t.Errorf("eslintFlatConfig() = %q, want %q", got, want)
 	}
 }
+
+// TestSpliceEslintConfigRefusesAMixedMarkerState pins the branch
+// markerRegion cannot see on its own: one marker pair present and the other
+// absent is not "malformed" by markerRegion's own per-pair definition, but
+// dharness never writes one pair without the other, so spliceEslintConfig
+// refuses with an error rather than guess which path applies. Both
+// permutations are asserted — layer present with import absent, and import
+// present with layer absent — because each is the mutation guard for one of
+// the two switch cases: a case whose guard collapsed to ignore the other
+// pair's state would take that case's path for one of these two fixtures
+// and return a candidate instead of refusing.
+func TestSpliceEslintConfigRefusesAMixedMarkerState(t *testing.T) {
+	cases := map[string]string{
+		"layer present, import absent": "export default [\n  " + eslintLayerBegin + "\n  ...dharnessLayer({ plugin: dharnessPlugin }),\n  " + eslintLayerEnd + "\n];\n",
+		"import present, layer absent": eslintImportBegin + "\nimport dharnessPlugin from \"dharness-eslint-plugin\";\n" + eslintImportEnd + "\n\nexport default [\n  { rules: {} },\n];\n",
+	}
+
+	for name, raw := range cases {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			path := filepath.Join(root, eslintConfig)
+			if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			p := project.Project{Root: root, Source: root}
+
+			_, err := spliceEslintConfig(p, path, []byte(raw))
+			if err == nil {
+				t.Fatal("spliceEslintConfig() = nil error, want a refusal for a mixed marker state")
+			}
+			if !strings.Contains(err.Error(), "disagree") {
+				t.Errorf("spliceEslintConfig() error = %q, want it to name the disagreement", err)
+			}
+		})
+	}
+}
+
+// TestVerifyEslintCandidateCatchesEachInvariant pins verifyEslintCandidate's
+// two checks independently: an ERROR node inside the default export, and a
+// marker pair that is not exactly one well-formed region — the two
+// invariants the candidate guard asserts (design decision 6), with no
+// element-count assertion (design decision 1 cuts it).
+func TestVerifyEslintCandidateCatchesEachInvariant(t *testing.T) {
+	t.Run("an ERROR node inside the default export fails", func(t *testing.T) {
+		candidate := []byte("export default [\n  { a: 1 + },\n];\n")
+		if err := verifyEslintCandidate(candidate); err == nil {
+			t.Fatal("verifyEslintCandidate() = nil, want an error for an ERROR node")
+		}
+	})
+
+	t.Run("a duplicated marker pair fails", func(t *testing.T) {
+		candidate := []byte("export default [\n  " +
+			eslintLayerBegin + "\n  ...a,\n  " + eslintLayerEnd + "\n  " +
+			eslintLayerBegin + "\n  ...b,\n  " + eslintLayerEnd + "\n" +
+			eslintImportBegin + "\n" + eslintImportEnd + "\n];\n")
+		if err := verifyEslintCandidate(candidate); err == nil {
+			t.Fatal("verifyEslintCandidate() = nil, want an error for a duplicated marker pair")
+		}
+	})
+
+	t.Run("a well-formed candidate passes", func(t *testing.T) {
+		candidate := []byte(eslintImportBegin + "\n" +
+			"import dharnessPlugin from \"dharness-eslint-plugin\";\n" +
+			eslintImportEnd + "\n" +
+			"\nexport default [\n  " +
+			eslintLayerBegin + "\n  ...dharnessLayer({ plugin: dharnessPlugin }),\n  " + eslintLayerEnd + "\n];\n")
+		if err := verifyEslintCandidate(candidate); err != nil {
+			t.Errorf("verifyEslintCandidate() = %v, want nil for a well-formed candidate", err)
+		}
+	})
+}

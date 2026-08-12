@@ -1,6 +1,7 @@
 package setup
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -281,13 +282,15 @@ func (lefthookExtendsStep) Apply(p project.Project, w *Writer) error {
 // Unlike the other two, presence alone does not delegate (the MODIFIED
 // step-delegation requirement in spec.md): where the existing config is
 // something dharness understands well enough to edit, Delegated answers
-// ok == false and Apply edits it directly. This slice builds only the
-// refusal matrix and the write-if-absent path; splicing into an existing,
-// understood config is a later slice's write path. Satisfied here answers
-// only "does some ESLint config already exist" — narrower than the full
-// byte comparison a later slice adds once there is something to compare
-// against — so an existing, splice-eligible config never reaches Apply in
-// this slice: Satisfied already reports it done.
+// ok == false and Apply edits it directly — inserting the two marked regions
+// when neither exists yet, replacing them in place when they already do
+// (design decision 6). Satisfied is a byte comparison, the same rule
+// ownedFilesStep.Satisfied already applies to a file dharness owns: true
+// when the marked regions are absent for a reason that always delegates (no
+// flat config splice is eligible for), or when they are present and equal to
+// what this run would render. A config spliced before a preset started
+// contributing a layer converges by replacement on the next run instead of
+// drifting.
 
 type eslintExtendsStep struct{}
 
@@ -295,13 +298,43 @@ func (eslintExtendsStep) ID() string {
 	return fmt.Sprintf("point %s at the file dharness owns", eslintConfig)
 }
 
+// Satisfied answers a byte comparison for a splice-eligible flat config
+// (design decision 6, ownedFilesStep.Satisfied's rule applied to a file
+// dharness does not own): true only when the candidate this run would
+// produce is byte-identical to what is already on disk. Every other
+// existing-config shape — TypeScript, legacy-only, unreadable, a malformed
+// marker pair, or anything jsconfig.Analyze itself refuses — always
+// delegates (Delegated answers ok == true for all of them), so there is
+// nothing for this step to ever converge there; reporting it satisfied keeps
+// it out of sync's pending list rather than double-reporting what Delegated
+// already explains.
 func (eslintExtendsStep) Satisfied(p project.Project) bool {
 	if !p.HasSource() {
 		return true
 	}
-	return eslintFlatConfig(p.Source) != "" ||
-		eslintTypeScriptConfig(p.Source) != "" ||
-		eslintLegacyConfig(p.Source) != ""
+
+	path := eslintFlatConfig(p.Source)
+	if path == "" {
+		return eslintTypeScriptConfig(p.Source) != "" || eslintLegacyConfig(p.Source) != ""
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return true
+	}
+	if _, malformed := malformedEslintMarkerPair(string(raw)); malformed {
+		return true
+	}
+	if _, why, ok := jsconfig.Analyze(raw); !ok {
+		_ = why
+		return true
+	}
+
+	candidate, err := spliceEslintConfig(p, path, raw)
+	if err != nil {
+		return false
+	}
+	return bytes.Equal(candidate, raw)
 }
 
 func (eslintExtendsStep) Describe(p project.Project) string {
@@ -376,8 +409,32 @@ func malformedEslintMarkerPair(raw string) (why string, malformed bool) {
 	return "", false
 }
 
+// Apply writes the config that has none yet (unchanged from slice 3a), or
+// splices an existing one: insert when neither marked region exists,
+// replace in place when both already do. The candidate is verified — no
+// ERROR node, exactly one well-formed region of each marker kind — before
+// anything is written, so an unparseable result never reaches disk at all
+// (design decision 6); Writer.Undo remains the backstop for steps that ran
+// earlier in this same applySteps call, not for this file.
 func (eslintExtendsStep) Apply(p project.Project, w *Writer) error {
-	return wireEslintExtends(p, w)
+	path := eslintFlatConfig(p.Source)
+	if path == "" {
+		return wireEslintExtends(p, w)
+	}
+
+	src, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read %s before splicing: %w", filepath.Base(path), err)
+	}
+
+	candidate, err := spliceEslintConfig(p, path, src)
+	if err != nil {
+		return err
+	}
+	if err := verifyEslintCandidate(candidate); err != nil {
+		return fmt.Errorf("%s: %w", filepath.Base(path), err)
+	}
+	return w.Write(path, candidate)
 }
 
 // --------------------------------------------------- boundaries owner

@@ -69,3 +69,44 @@ func markerRegion(raw, begin, end string) (from, to int, state markerState) {
 	}
 	return lineStart, lineEnd, markersPresent
 }
+
+// regionIndent returns the leading spaces and tabs on the line starting at
+// from — markerRegion's own from is already the start of that line, so a
+// replace re-renders at the indent the earlier run wrote, without needing to
+// re-run jsconfig.Analyze's position rule to rediscover it.
+func regionIndent(raw string, from int) string {
+	i := from
+	for i < len(raw) && (raw[i] == ' ' || raw[i] == '\t') {
+		i++
+	}
+	return raw[from:i]
+}
+
+// regionLineEnding reports "\r\n" or "\n", read off the region's own first
+// line break — the convention the earlier run wrote, preserved rather than
+// reselected.
+func regionLineEnding(raw string, from int) string {
+	i := strings.IndexByte(raw[from:], '\n')
+	if i == -1 {
+		return "\n"
+	}
+	nl := from + i
+	if nl > 0 && raw[nl-1] == '\r' {
+		return "\r\n"
+	}
+	return "\n"
+}
+
+// replaceRange returns src with the bytes between from and to replaced by
+// region. owned.go's replaceRegion does the same job for a file dharness
+// owns outright, at bounds a single fixed marker pair locates; this is the
+// equivalent for the project's own file, where two independent regions each
+// carry their own bounds from a marker scan (design decision 4: same
+// grammar, no shared code).
+func replaceRange(src []byte, from, to int, region string) []byte {
+	out := make([]byte, 0, len(src)-(to-from)+len(region))
+	out = append(out, src[:from]...)
+	out = append(out, region...)
+	out = append(out, src[to:]...)
+	return out
+}

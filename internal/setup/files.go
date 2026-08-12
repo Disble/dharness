@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Disble/dharness/internal/jsconfig"
 	"github.com/Disble/dharness/internal/preset"
 	"github.com/Disble/dharness/internal/project"
 )
@@ -309,4 +310,102 @@ func wireEslintExtends(p project.Project, w *Writer) error {
 
 	path := filepath.Join(p.Source, eslintConfig)
 	return w.Write(path, []byte(b.String()))
+}
+
+// spliceEslintRegion is jsconfig.Splice, seamed only so a test can force an
+// adversarial region through the real insert path and prove the candidate
+// guard rolls the write back rather than let it through. Every real caller
+// composes regions from eslintImportRegion/eslintLayerRegion, both of which
+// always render well-formed JavaScript — there is no way to construct an
+// ERROR-producing candidate through the public rendering functions alone.
+var spliceEslintRegion = jsconfig.Splice
+
+// SetEslintSpliceForTest replaces spliceEslintRegion and returns a restore
+// function.
+func SetEslintSpliceForTest(replacement func(src []byte, at int, region string) []byte) func() {
+	previous := spliceEslintRegion
+	spliceEslintRegion = replacement
+	return func() { spliceEslintRegion = previous }
+}
+
+// spliceEslintConfig computes the candidate bytes for an eslint.config.js
+// dharness has decided to edit directly — Delegated already answered
+// ok == false for path, so this only ever sees a shape jsconfig.Analyze
+// recognises: the insert path when neither marked region exists yet, the
+// replace path when both already do. Both paths splice the later offset
+// first so it does not shift the earlier one (design decision 6): the
+// import region always precedes the layer region (Decision 5), so the layer
+// splice or replace runs before the import one.
+//
+// A malformed marker pair is unreachable — Delegated refuses those before
+// Apply or Satisfied ever call this. A mixed pair (one present, the other
+// absent) is not malformed by markerRegion's own definition, but dharness
+// never writes one marker pair without the other, so it can only mean a
+// hand edit removed one region by itself; that is refused with an error
+// rather than guessed at, the same reasoning the malformed case already
+// uses.
+//
+// Shared by Satisfied, which compares the result against what is already on
+// disk, and Apply, which verifies it and writes it — the two must never
+// compute the render differently.
+func spliceEslintConfig(p project.Project, path string, src []byte) ([]byte, error) {
+	layers := preset.Layers(preset.Resolve(p))
+	dir := filepath.Dir(path)
+	raw := string(src)
+
+	importFrom, importTo, importState := markerRegion(raw, eslintImportBegin, eslintImportEnd)
+	layerFrom, layerTo, layerState := markerRegion(raw, eslintLayerBegin, eslintLayerEnd)
+
+	switch {
+	case importState == markersAbsent && layerState == markersAbsent:
+		anchor, why, ok := jsconfig.Analyze(src)
+		if !ok {
+			return nil, fmt.Errorf("%s: %s", filepath.Base(path), why)
+		}
+		importRegion := eslintImportRegion(p, dir, layers, "", anchor.LineEnding)
+		layerRegion := eslintLayerRegion(layers, anchor.Indent, anchor.LineEnding)
+
+		candidate := spliceEslintRegion(src, anchor.LayerAt, layerRegion)
+		candidate = spliceEslintRegion(candidate, anchor.ImportAt, importRegion)
+		return candidate, nil
+
+	case importState == markersPresent && layerState == markersPresent:
+		importRegion := eslintImportRegion(p, dir, layers, regionIndent(raw, importFrom), regionLineEnding(raw, importFrom))
+		layerRegion := eslintLayerRegion(layers, regionIndent(raw, layerFrom), regionLineEnding(raw, layerFrom))
+
+		candidate := replaceRange(src, layerFrom, layerTo, layerRegion)
+		candidate = replaceRange(candidate, importFrom, importTo, importRegion)
+		return candidate, nil
+
+	default:
+		return nil, fmt.Errorf(
+			"%s: the dharness:eslint-import and dharness:eslint-layer marker pairs disagree on whether they exist — one is present, the other is not, which dharness never writes and will not guess at",
+			filepath.Base(path))
+	}
+}
+
+// verifyEslintCandidate re-parses candidate the same way Analyze already
+// parsed the source it was built from, and asserts the two invariants a
+// splice must not break: no ERROR node anywhere in the default export, and
+// exactly one well-formed region of each marker kind. There is no
+// element-count assertion here — design decision 1 cuts it as redundant
+// with these two, and wrong on the replace path, where the array's element
+// count does not change.
+//
+// It runs against candidate, in memory, before anything is written: the
+// resulting bytes are the candidate, so the unparseable file never exists
+// on disk at all (design decision 6).
+func verifyEslintCandidate(candidate []byte) error {
+	if _, why, ok := jsconfig.Analyze(candidate); !ok {
+		return fmt.Errorf("the resulting config would not parse: %s", why)
+	}
+
+	raw := string(candidate)
+	if _, _, state := markerRegion(raw, eslintImportBegin, eslintImportEnd); state != markersPresent {
+		return fmt.Errorf("the resulting config's dharness:eslint-import marker pair is not exactly one well-formed region")
+	}
+	if _, _, state := markerRegion(raw, eslintLayerBegin, eslintLayerEnd); state != markersPresent {
+		return fmt.Errorf("the resulting config's dharness:eslint-layer marker pair is not exactly one well-formed region")
+	}
+	return nil
 }

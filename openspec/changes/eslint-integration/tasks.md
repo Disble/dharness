@@ -141,12 +141,12 @@ outside markers, verify-then-rollback, idempotency). Why here: the only slice
 with a destructive edit — it is the entire subject of its own review, and
 further splitting it would only hide that fact.
 
-- [ ] 3b.1 Insert path: `Analyze(src)` for the anchor; splice the layer region then the import region (later offset first — `ImportAt < LayerAt` always). Obs: `TestSpliceInsertsAndChangesNothingElse` exercised through the step.
-- [ ] 3b.2 Replace path: `markerState == present` and bytes differ → rewrite each region in place at the marker-scan bounds, never a second insertion. Obs: `TestPresentMarkersWithStaleBytesAreReplacedNotDuplicated`.
-- [ ] 3b.3 In-transaction re-parse guard on both paths: `Analyze(candidate)` + marker scan assert no ERROR node, exactly one region of each kind, correct element-count delta; failure → error → `Writer.Undo`. Obs: `TestSpliceGuardRollsBackAnUnparseableResult` — original bytes restored, step reported failed.
-- [ ] 3b.4 Idempotency. Obs: `TestSecondSyncWritesNothing` — `Satisfied` true, `Apply` not called, bytes equal.
-- [ ] 3b.5 CRLF/BOM preserved end-to-end through the step. Obs: 1.9's constructed bytes replayed through `eslintExtendsStep.Apply`.
-- [ ] 3b.6 Mutation guard: insert/replace branch on `markerState` — present-and-stale markers must end with exactly one region of each kind, or the "always insert" collapse survives. Obs: killed mutant in `go run ./tools/mutationstaged`.
+- [x] 3b.1 Insert path: `Analyze(src)` for the anchor; splice the layer region then the import region (later offset first — `ImportAt < LayerAt` always). Obs: `TestSpliceInsertsAndChangesNothingElse` exercised through the step.
+- [x] 3b.2 Replace path: `markerState == present` and bytes differ → rewrite each region in place at the marker-scan bounds, never a second insertion. Obs: `TestPresentMarkersWithStaleBytesAreReplacedNotDuplicated`.
+- [x] 3b.3 In-transaction re-parse guard on both paths: `Analyze(candidate)` + marker scan assert no ERROR node, exactly one region of each kind, correct element-count delta; failure → error → `Writer.Undo`. Obs: `TestSpliceGuardRollsBackAnUnparseableResult` — original bytes restored, step reported failed.
+- [x] 3b.4 Idempotency. Obs: `TestSecondSyncWritesNothing` — `Satisfied` true, `Apply` not called, bytes equal.
+- [x] 3b.5 CRLF/BOM preserved end-to-end through the step. Obs: 1.9's constructed bytes replayed through `eslintExtendsStep.Apply`.
+- [x] 3b.6 Mutation guard: insert/replace branch on `markerState` — present-and-stale markers must end with exactly one region of each kind, or the "always insert" collapse survives. Obs: killed mutant in `go run ./tools/mutationstaged`.
 
 ## Slice 4 — gate stage (~260 lines)
 
