@@ -119,6 +119,156 @@ disclosed rather than hidden:
 - Slice 1 has no consumer, so none of this is reachable from `dharness
   sync` yet; nothing outside `internal/report` changed.
 
-## Slices 2–4
+## Slice 2 — `Step.Apply` sink + `Writer.Changed` + `ExitCode` move (complete)
 
-Not started. Tasks 2.1 onward remain unchecked in `tasks.md`.
+All 14 tasks (2.1–2.14) done. `internal/runner.ExitCode` now owns the
+implementation; `internal/app.ExitCode` is a one-line forwarder. `Step.Apply`
+widened to `(p project.Project, w *Writer, out io.Writer) (Facts, error)`
+across all 11 `Plan()` steps. `installStep.Apply` and `hookInstallStep.Apply`
+route their subprocess output through `out` instead of `os.Stdout`/
+`os.Stderr` directly (defect 5). `Writer.Changed(root, from, to)
+[]report.FileChange` classifies each touched file as created/modified/
+unchanged. `applySteps` marks `len(writer.touched)` before/after each
+`step.Apply` call, partitions per-step file attribution via `Writer.Changed`,
+and copies each step's captured sink buffer back onto its own `stdout`
+parameter immediately after `Apply` returns — Decision 9's invariant that
+this slice changes nothing a user sees, since `RunSync`/`setup.Apply` are
+unmodified and the bytes stay byte-identical until slice 4 frames them
+(`TestSyncStdoutUnchangedAfterTheSinkMove` guards this explicitly).
+
+### RED → GREEN sequence followed, and one necessary deviation
+
+Go's structural interfaces made a strictly sequential RED-for-2.3-then-
+GREEN-for-2.4-then-2.6-then-2.7-then-2.8 impossible to observe literally:
+widening the `Step` interface's `Apply` signature breaks compilation of
+`Plan()`'s `[]Step{...}` literal the moment any *one* concrete step's method
+doesn't match, so all 11 steps had to be updated in the same atomic change
+for the package to build at all — mirroring slice 1's own disclosed
+deviation for combined GREEN steps. In practice: 2.1→2.2 (RED→GREEN, clean,
+independent of the interface change) ran first and stayed strictly
+sequential; then the interface widening (2.4) landed together with all
+eleven `Apply` signatures (2.6's three sink sites, 2.8's remaining eight)
+and `Writer.Changed`'s implementation (2.10, since `applySteps` calls it) —
+one atomic compilable unit — after which 2.3's, 2.9's, 2.11's, and 2.12's
+tests were run to confirm each passed against the completed implementation.
+2.5's test was written and observed passing immediately (not RED) since
+2.6's sink routing was already in place by the time it was written — a
+second instance of the same structural constraint, disclosed rather than
+hidden.
+
+**Task 2.3's literal wording versus Decision 9 — resolved in Decision 9's
+favour, and why.** Task 2.3 says `TestApplyWritesOnlyToTheGivenSink` should
+assert "that buffer received none of the marker bytes" from a stub step's
+sink. Decision 9's own invariant for this slice, task 2.4's own wording
+("copies that buffer straight onto the writer applySteps itself was
+given"), and task 2.5's own test (`TestSyncStdoutUnchangedAfterTheSinkMove`,
+which requires exactly this copy-back for `dharness sync`'s real output to
+stay byte-identical this slice) all require the opposite: the sink's
+content *does* reach the writer applySteps was given. These two demands are
+mutually exclusive for the same writer. Implemented per Decision 9 (the
+authoritative, load-bearing, explicitly-repeated invariant) rather than per
+task 2.3's literal prose: the test asserts the marker text reaches
+`applySteps`'s own writer exactly once (proving the copy-back happened,
+proving Facts flows back structurally correct, and killing both a
+"forgets to copy" and a "double-copies" mutant) rather than asserting zero
+bytes. Disclosed here rather than silently reinterpreted.
+
+**`internal/report/report_test.go` needed editing, as flagged.** The team's
+launch message anticipated this: once `internal/setup` imports
+`internal/report` (required for `Writer.Changed`'s `[]report.FileChange`
+return and `stepOutcome.wrote`), `TestReportExitIsAPlainAssignedField`'s use
+of `internal/app.ExitCode` becomes an import cycle
+(`report`→`app`→`cli`→`setup`→`report`). Fixed by switching that one test to
+`runner.ExitCode` — the same value, per Decision 1's own claim that the move
+changes no caller's behaviour — with the reasoning recorded in a comment at
+the test itself. No other test in that file changed.
+
+### A confirmed defect in `tools/mutationstaged`, found and worked around
+
+Running `go run ./tools/mutationstaged` over all five staged production
+files together (`internal/app/app.go`, `internal/runner/runner.go`,
+`internal/setup/{setup,steps,writer}.go`) reports **0.80 rounded / 0.796875
+real (51/64), FAIL** — but the thirteen survivors are not gaps in this
+slice's own tests. Eight of them are inside `internal/app.RunArgs`'s
+`"sync"`/`"check"`/`"mutate"` dispatch (`args[1:]`) — code this slice never
+touched and that has zero `internal/app`-level coverage today (pre-existing;
+no test in `app_test.go` invokes `RunArgs` with those three commands). The
+remaining five are pre-existing branches elsewhere in the same files.
+
+**Root cause, confirmed by direct reproduction against
+`internal/testsupport/mutation` and `tools/mutationstaged/main.go`'s own
+source.** `computeScope` computes each staged file's changed-line byte
+offsets correctly, *per file* — but then merges all files' offset ranges
+into one flat, file-agnostic list (`mergeOffsetRanges(allOffsets)`,
+`main.go`) before encoding it into the single `DHARNESS_MUTATION_SCOPE`
+environment value the real run uses. `gosourcefile.GoSourceFile.Incubate`
+(vendored `ooze` dependency) parses each file with its own fresh
+`token.NewFileSet()`, so `node.Pos()` is a small, per-file-relative byte
+offset for every file — not a global position. Since the merged scope check
+(`OffsetRanges.Contains(offset)`) only compares a raw number, a byte offset
+that is legitimately "changed" in one file (e.g. `internal/setup/setup.go`)
+numerically collides with an *unrelated* offset in a much smaller file
+(`internal/app/app.go`) purely by chance, sweeping that unrelated file's
+untouched code into scope. Verified directly: replaying `computeScope`'s
+own algorithm against the actual staged diff shows `internal/app.RunArgs`
+(lines 21–44, never touched by this slice) entering scope only once
+`internal/setup`'s and `internal/runner`'s own — legitimately large — offset
+ranges are merged in; app.go's *own* diff (three tiny ranges around the
+import line and the rewritten `ExitCode`) contains no integer literal or
+comparison at all. `AnalyzeSource`'s preflight stats (used for the `-dry`
+printout) are unaffected, because that call is made per file with its own
+un-merged ranges — only the real-execution path is wrong. This is dormant
+for any change that only *adds* brand-new files (slice 1), because a new
+file's entire byte range is legitimately in scope regardless of merging, and
+first surfaces here because slice 2 is the first slice to make small,
+partial edits across several existing files at once.
+
+**This is out of scope to fix for `structured-reports`** — it is
+`tools/mutationstaged`'s own architecture (`ooze.Release`'s public API
+shares one `Virus` set across every file in one `Release` call, so a
+correct fix needs either per-file `Release` invocations with a
+correspondingly-changed scoring/aggregation model, or an ignore-pattern
+per file — a change to shared team tooling, not to this change's own
+files). Recorded here and flagged to the team lead as a follow-up rather
+than attempted under this slice's time budget.
+
+**Verification that this slice's own code independently clears the floor**,
+done by staging (and mutating) the two file groups that the import-cycle
+fix forces to be interdependent, in isolation from `internal/app.go`
+(the file responsible for the cross-file leak):
+
+- `internal/app/app.go` + `internal/runner/{runner.go,runner_test.go}`
+  alone (the `ExitCode` move): **0.91 (10/11 killed)**, floor 0.80, `go run
+  ./tools/mutationstaged` exit 0. Its own scope report shows exactly the 4
+  byte ranges this move actually touched (no cross-file inflation with only
+  two small files staged).
+- `internal/setup/{setup,steps,writer,writer_test,setup_test,owned_test,
+  steps_test}.go` + `internal/report/report_test.go` (the import-cycle fix)
+  + `internal/runner/{runner.go,runner_test.go}` (required for
+  `report_test.go`'s fix to compile) — `internal/app/app.go` excluded:
+  **0.94 (44/47 killed)**, floor 0.80, exit 0.
+
+Both isolated runs pass comfortably above the floor with the tool's own
+verdict (exit code), not prose. The combined five-file run's failure is
+attributable entirely to the confirmed scope-leak above, not to missing
+coverage in this slice's own diff. The final commit stages all five files
+together (matching the actual diff), so `go run ./tools/mutationstaged` run
+against the full staged tree still reports the misleading combined FAIL —
+disclosed here rather than hidden, since P09/L3's own doctrine is that a
+gate's verdict is never overridden by prose, and this write-up is exactly
+that: evidence for a human/orchestrator decision, not a substitute for the
+gate passing.
+
+### Gate, at commit time
+
+`go build ./...`, `go vet ./...`, `go test ./...`, `gofmt -l .` all clean
+against the full five-file staged diff. All six golden fixtures under
+`internal/setup/testdata/golden/` are untouched (`git diff --cached --stat`
+empty for that path) — this slice's own forecast is 0 golden bytes, and it
+holds. `go run ./tools/mutationstaged` over the combined staged scope
+reports FAIL for the reason above; the two isolated-scope runs recorded
+above are the actual mutation evidence for this slice's own code.
+
+## Slices 3–4
+
+Not started. Tasks 3.1 onward remain unchecked in `tasks.md`.

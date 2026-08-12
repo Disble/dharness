@@ -191,19 +191,19 @@ onto a sink, but `RunSync` (unmodified until slice 4) still writes that
 sink's bytes straight back to its own stdout, so the bytes stay identical
 until slice 4 frames them.
 
-- [ ] **2.1** RED: `internal/runner/runner_test.go` —
+- [x] **2.1** RED: `internal/runner/runner_test.go` —
       `TestExitCodeMapsNilZeroPropagatesToolCode`: `ExitCode(nil) == 0`;
       `ExitCode(&ExitError{Code: 2}) == 2`; `ExitCode(&ExitError{Code: 0})
       == 1` (falls back, matching today's `app.ExitCode`). `internal/runner`
       has no `ExitCode` yet — this fails to compile.
-- [ ] **2.2** GREEN: `internal/runner/runner.go` — move `ExitCode(err
+- [x] **2.2** GREEN: `internal/runner/runner.go` — move `ExitCode(err
       error) int` here verbatim from `internal/app/app.go:64`, beside
       `ExitError`. `internal/app/app.go` — `ExitCode` becomes a one-line
       forwarder: `func ExitCode(err error) int { return
       runner.ExitCode(err) }`. Obs: 2.1 passes; `internal/app`'s existing
       `ExitCode` test, unmoved, still passes against the forwarder — no
       caller moves (Decision 1).
-- [ ] **2.3** RED: `internal/setup/setup_test.go` —
+- [x] **2.3** RED: `internal/setup/setup_test.go` —
       `TestApplyWritesOnlyToTheGivenSink`: a stub `Step` whose `Apply(p, w,
       out)` writes a marker string to `out` and returns `Facts{Installed:
       []string{"pkg"}}`, `nil`; drive it through `applySteps` with a
@@ -213,21 +213,21 @@ until slice 4 frames them.
       separates subprocess bytes from the process's own stream, and
       `Facts` carries structured data a byte stream cannot (defect 5;
       spec `step-outcome`, first two requirements).
-- [ ] **2.4** GREEN: `internal/setup/setup.go` — widen `Step.Apply` to
+- [x] **2.4** GREEN: `internal/setup/setup.go` — widen `Step.Apply` to
       `(p project.Project, w *Writer, out io.Writer) (Facts, error)`; add
       `type Facts struct { Installed []string }`; `applySteps` gives each
       step a `bytes.Buffer` as `out`, then copies that buffer straight
       onto the writer `applySteps` itself was given, immediately after
       `Apply` returns — preserving today's interleaving and byte content
       per this slice's invariant. Obs: 2.3 passes.
-- [ ] **2.5** RED: `internal/cli/sync_test.go` —
+- [x] **2.5** RED: `internal/cli/sync_test.go` —
       `TestSyncStdoutUnchangedAfterTheSinkMove`: run `RunSync` (unmodified
       this slice) with a stubbed `runner.Run` producing known,
       recognisable subprocess output for `installStep`; assert that output
       still appears inline, in the same position it does today. The
       explicit guard for Decision 9's "slice 2 changes nothing a user
       sees."
-- [ ] **2.6** GREEN: `internal/setup/steps.go` — the three sink sites
+- [x] **2.6** GREEN: `internal/setup/steps.go` — the three sink sites
       (`installStep.Apply:80`, its rollback compensation at `:82`,
       `hookInstallStep.Apply:863`) stop writing `os.Stdout`/`os.Stderr`
       directly and route through the given `out`:
@@ -236,14 +236,14 @@ until slice 4 frames them.
       `Facts{Installed: integrationPackages(p)}` on success. Obs: 2.3 and
       2.5 both pass; `rg "os.Stdout|os.Stderr" internal/setup/steps.go`
       returns nothing inside an `Apply` body.
-- [ ] **2.7** RED: table-driven, over the ten concrete `Step` `Apply`
+- [x] **2.7** RED: table-driven, over the ten concrete `Step` `Apply`
       implementations design.md Decision 2 counts (nine of ten change
       only their return statement; the remaining one, `installStep`,
       is 2.6's): each recompiles against the widened signature and every
       existing error path returns `Facts{}, err` with no other behaviour
       change. Obs: each step's existing `*_test.go` recompiles and passes
       unmodified in assertions — signature-only change.
-- [ ] **2.8** GREEN: `internal/setup/steps.go` — update the remaining nine
+- [x] **2.8** GREEN: `internal/setup/steps.go` — update the remaining nine
       `Apply` signatures (`ownedFilesStep`, `fallowExtendsStep`,
       `boundariesOwnerStep`, `lefthookExtendsStep`, `eslintExtendsStep`,
       `legacyLintConfigStep`, `mcpStep`, `hookInstallStep`,
@@ -251,7 +251,7 @@ until slice 4 frames them.
       contract-assertion bodies for `boundariesOwnerStep` and
       `legacyLintConfigStep` return `Facts{}, err` too). Obs: 2.7 passes;
       `go build ./...` succeeds.
-- [ ] **2.9** RED: `internal/setup/writer_test.go` —
+- [x] **2.9** RED: `internal/setup/writer_test.go` —
       `TestChangedClassifiesCreatedModifiedUnchanged`: `t.TempDir()` with
       three real files — one written where none existed (`created`), one
       pre-existing rewritten to different bytes (`modified`), one
@@ -261,7 +261,7 @@ until slice 4 frames them.
       and `FileChange.Path` is root-relative and names its directory
       (defect 9). Pins the classification requirement's three scenarios
       and the file-attribution requirement's directory scenario.
-- [ ] **2.10** GREEN: `internal/setup/writer.go` — `func (w *Writer)
+- [x] **2.10** GREEN: `internal/setup/writer.go` — `func (w *Writer)
       Changed(root string, from, to int) []report.FileChange`: for
       `touched[from:to]`, `!existed` → `created` with no read; `existed` →
       read back from disk and compare to the stored pre-write bytes —
@@ -269,26 +269,26 @@ until slice 4 frames them.
       → `modified` (Decision 3: claiming `unchanged` from a failed read is
       the fabrication §09 forbids). Paths are expressed relative to
       `root`. Obs: 2.9 passes.
-- [ ] **2.11** Mutation guard:
+- [x] **2.11** Mutation guard:
       `TestChangedUnreadableExistingFileReportsModifiedNotUnchanged` — an
       existing file snapshotted, then removed before `Changed` reads it
       back; assert `Kind == modified`, never `unchanged`. Kills the mutant
       that treats a failed read as "no change" — design.md's Mutation
       coverage table, "`Changed`'s `existed` arm." Obs: killed mutant in
       `go run ./tools/mutationstaged`, not merely covered.
-- [ ] **2.12** RED: `internal/setup/setup_test.go` —
+- [x] **2.12** RED: `internal/setup/setup_test.go` —
       `TestPerStepFileAttributionIsPartitioned`: two stub steps in one
       `applySteps` run — step A writes one file, step B (running later)
       writes two different files; assert step A's attributed files are
       exactly its one and step B's are exactly its two, with no overlap.
       Pins "two steps that both write files are attributed
       independently."
-- [ ] **2.13** GREEN: `internal/setup/setup.go` — `applySteps` records
+- [x] **2.13** GREEN: `internal/setup/setup.go` — `applySteps` records
       `before := len(writer.touched)` / `after := len(writer.touched)`
       around each `step.Apply` call and computes that step's touched-file
       set as `writer.Changed(p.Root, before, after)`, held on a per-step
       result value for slice 4 to consume. Obs: 2.12 passes.
-- [ ] **2.14** MUTATE + REFACTOR: `go run ./tools/mutationstaged` over
+- [x] **2.14** MUTATE + REFACTOR: `go run ./tools/mutationstaged` over
       `internal/setup`, `internal/runner`, `internal/app` (floor 0.80);
       `go build ./...`, `go vet ./...`, `go test ./...`, `gofmt -l .`
       clean; confirm all six golden fixtures remain byte-identical (this
@@ -525,6 +525,33 @@ shape; its test rewrite is inseparable from it (design.md Decision 9).
 - [ ] **4.11** Mutation guard: 4.10's test, verified as a killed mutant in
       `go run ./tools/mutationstaged` — design.md names this branch as
       easy to leave unkilled (Mutation coverage table, 3rd item).
+
+- [ ] **4.11a** RED: `internal/report/human_test.go` —
+      `TestFailureVariantRendersEveryNonTerminalStatus`: a `Report` whose
+      steps carry `Failed`, `NotReached` and `Retracted`; assert each is
+      rendered with its own line, that the retracted step is named in the
+      closing block as included in the rollback, and that the tally sums
+      to the plan's length. Pins the six-value status enumeration
+      (`spec.md`, amended) and `project-sync`'s added retraction
+      requirement.
+- [ ] **4.11b** GREEN: `internal/report/human.go` — render the
+      `Failed`/`NotReached`/`Retracted` per-step lines and the failure
+      variant's closing block.
+
+      **Added by the orchestrator after slice 1, from its apply report.**
+      Slice 1 implemented `WriteHuman`'s five blocks and closing tally for
+      `Applied`/`Delegated`/`Satisfied`/`Notes` only, exactly as its own
+      task list specified — the failure variant was never assigned to a
+      slice. Without this task slice 4 would have to make an undocumented
+      `human.go` edit, or ship a report that cannot render the one case
+      `project-sync`'s retraction requirement exists for. Counted inside
+      slice 4's existing 280–420 forecast; the rendering is three status
+      arms and one closing block over a model that already carries every
+      field (`report.Rollback`, `Summary.Retracted`).
+- [ ] **4.11c** Mutation guard: 4.11a's test over `internal/report`,
+      verified killed. Status-arm branches are the same shape as the
+      decorative-literal survivors slice 1 had to chase down; prefer
+      simplifying the arm to pinning its text.
 - [ ] **4.12** RED + rewrite rule: `internal/cli/sync_test.go` — coordinated
       rewrite of all 16 existing test functions
       (`TestSyncSpeaksTheProjectsOwnPackageManager`,
