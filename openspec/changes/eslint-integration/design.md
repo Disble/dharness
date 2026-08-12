@@ -746,7 +746,7 @@ slice:
 
 | Slice | `== plan ==` | `== tree ==` |
 |---|---|---|
-| 2a | unchanged — no step is added or removed | `.dharness/eslint.config.js` added, complete with its severities; `.dharness/.gitignore` gains `!eslint.config.js` |
+| 2a | unchanged — no step is added or removed | `.dharness/eslint.config.js` added, complete with its severities; `.dharness/.gitignore` gains `!eslint.config.js`. **The three framework fixtures take the same tree delta**, regenerated with `-update` |
 | 2b | `doctorConfigStep`'s row removed (eleven steps → ten) | `doctor.config.json` removed entirely |
 | 3a | `eslintExtendsStep`'s row added (ten → eleven) | `eslint.config.js` added at `<root>` (conventional) / `<source>` (split) |
 | 3b | unchanged | unchanged — the splice never fires on a fixture with no config |
@@ -764,6 +764,16 @@ lands in `== tree ==` in the slice that wires its write into
 definition, and it has to be: a 2a that built the render and repair functions
 without wiring them would have no observable behaviour at all, which is the
 dead-code failure that merged slices 1a and 1b back together.
+
+**And it lands in every fixture, not only the two under scrutiny.**
+`renderGolden` runs the whole plan for each fixture in the suite, so wiring a
+write in `ownedFilesStep.Apply` changes `nextjs.txt`, `wails.txt` and
+`wails-nextjs.txt` in the same slice as the generic pair. Those three have an
+`-update` path — framework-presets Decision 7 made them living fixtures — so
+they regenerate rather than being hand-edited, and only the generic pair is
+authored by hand. Measured during 2a: all five gained the identical
+23-line block and nothing else. A reviewer expecting a two-file diff should
+expect five.
 
 So the severities are rendered into the owned file in **2a**, and for the
 span between 2a and 2b they exist in both `.dharness/eslint.config.js` and
