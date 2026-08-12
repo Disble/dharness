@@ -65,26 +65,8 @@ func TestNextjsContributesNoIgnorePatterns(t *testing.T) {
 // it cannot collide with a project's own "import next from ...", verified
 // against Next.js's own ESLint documentation rather than invented.
 func TestNextjsContributesESLintConfigLayer(t *testing.T) {
-	root := t.TempDir()
-	writeWailsFixtureFile(t, root, "package.json", `{"dependencies":{"next":"^14.0.0"}}`)
-
-	match, _ := nextjs{}.Detect(project.At(root, root))
-	if len(match.Manifest.Layers) != 1 {
-		t.Fatalf("Manifest.Layers = %+v, want exactly one contributed layer", match.Manifest.Layers)
-	}
-	layer := match.Manifest.Layers[0]
-	if layer.Package != "eslint-config-next" {
-		t.Errorf("Layer.Package = %q, want %q", layer.Package, "eslint-config-next")
-	}
-	if layer.Binding != "dharnessNext" {
-		t.Errorf("Layer.Binding = %q, want the namespaced %q", layer.Binding, "dharnessNext")
-	}
-	if layer.Because == "" {
-		t.Error("Layer.Because is empty, want a checkable observable")
-	}
-	if err := match.Manifest.Validate(); err != nil {
-		t.Errorf("nextjs' manifest fails Validate(): %v", err)
-	}
+	assertLayerContribution(t, nextjs{}.Detect,
+		`{"dependencies":{"next":"^14.0.0"}}`, "eslint-config-next", "dharnessNext")
 }
 
 // TestNextjsSeedsNameStructureNotZones pins §21's framing: a seed offers

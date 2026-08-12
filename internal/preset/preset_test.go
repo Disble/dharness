@@ -341,3 +341,36 @@ func containsKey(keys []string, want string) bool {
 	}
 	return false
 }
+
+// assertLayerContribution pins the whole Layer contract for one framework
+// preset: exactly one layer, the package it names, the namespaced binding,
+// a non-empty Because, and a manifest that validates.
+//
+// The two framework presets differ by a dependency, a package and a binding
+// and by nothing else, so writing the assertions out twice meant a rule
+// tightened in one could silently not apply to the other.
+func assertLayerContribution(t *testing.T, detect func(project.Project) (Match, bool), dependency, wantPackage, wantBinding string) {
+	t.Helper()
+
+	root := t.TempDir()
+	writeWailsFixtureFile(t, root, "package.json", dependency)
+
+	match, _ := detect(project.At(root, root))
+	if len(match.Manifest.Layers) != 1 {
+		t.Fatalf("Manifest.Layers = %+v, want exactly one contributed layer", match.Manifest.Layers)
+	}
+
+	layer := match.Manifest.Layers[0]
+	if layer.Package != wantPackage {
+		t.Errorf("Layer.Package = %q, want %q", layer.Package, wantPackage)
+	}
+	if layer.Binding != wantBinding {
+		t.Errorf("Layer.Binding = %q, want the namespaced %q", layer.Binding, wantBinding)
+	}
+	if layer.Because == "" {
+		t.Error("Layer.Because is empty, want a checkable observable")
+	}
+	if err := match.Manifest.Validate(); err != nil {
+		t.Errorf("manifest fails Validate(): %v", err)
+	}
+}

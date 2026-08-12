@@ -148,16 +148,7 @@ func TestDeclaredLineIsEmptyWhenTheKeyIsAbsent(t *testing.T) {
 // ensureShared must append the sixth rather than leaving it gitignored
 // forever.
 func TestExistingAllowListGainsTheMissingEntry(t *testing.T) {
-	root := t.TempDir()
-	p := project.Project{Root: root}
-	if err := os.MkdirAll(filepath.Join(root, project.Dir), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(root, project.Dir, ".gitignore")
-	existing := "*\n!.gitignore\n!lefthook.yml\n!fallow.jsonc\n!rules.json\n!evidence.json\n"
-	if err := os.WriteFile(path, []byte(existing), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	p, path := allowListFixture(t, "*\n!.gitignore\n!lefthook.yml\n!fallow.jsonc\n!rules.json\n!evidence.json\n")
 
 	if err := ensureShared(p, &Writer{}, "eslint.config.js"); err != nil {
 		t.Fatalf("ensureShared() = %v", err)
@@ -236,16 +227,7 @@ func TestExistingAllowListWithoutATrailingNewlineGainsOne(t *testing.T) {
 // applied to ensureShared: appending the sixth entry must not disturb
 // anything the project itself added to the file.
 func TestAllowListRepairKeepsWhatTheProjectAdded(t *testing.T) {
-	root := t.TempDir()
-	p := project.Project{Root: root}
-	if err := os.MkdirAll(filepath.Join(root, project.Dir), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(root, project.Dir, ".gitignore")
-	existing := "*\n!.gitignore\n!lefthook.yml\n# added by hand\n!notes.md\n"
-	if err := os.WriteFile(path, []byte(existing), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	p, path := allowListFixture(t, "*\n!.gitignore\n!lefthook.yml\n# added by hand\n!notes.md\n")
 
 	if err := ensureShared(p, &Writer{}, "eslint.config.js"); err != nil {
 		t.Fatalf("ensureShared() = %v", err)
@@ -263,16 +245,7 @@ func TestAllowListRepairKeepsWhatTheProjectAdded(t *testing.T) {
 // TestEnsureSharedIsANoOpWhenTheEntryAlreadyExists triangulates the repair
 // path above: an already-current allow list gains no duplicate entry.
 func TestEnsureSharedIsANoOpWhenTheEntryAlreadyExists(t *testing.T) {
-	root := t.TempDir()
-	p := project.Project{Root: root}
-	if err := os.MkdirAll(filepath.Join(root, project.Dir), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(root, project.Dir, ".gitignore")
-	existing := "*\n!.gitignore\n!eslint.config.js\n"
-	if err := os.WriteFile(path, []byte(existing), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	p, path := allowListFixture(t, "*\n!.gitignore\n!eslint.config.js\n")
 
 	if err := ensureShared(p, &Writer{}, "eslint.config.js"); err != nil {
 		t.Fatalf("ensureShared() = %v", err)
@@ -430,4 +403,23 @@ func TestVerifyEslintCandidateCatchesEachInvariant(t *testing.T) {
 			t.Errorf("verifyEslintCandidate() = %v, want nil for a well-formed candidate", err)
 		}
 	})
+}
+
+// allowListFixture builds an already-adopted .dharness/ whose ignore file
+// already has content, and hands back the project and that file's path.
+//
+// The three repair tests differ by the list they start from and by nothing
+// else. Spelling the same six-line setup out per test made the one line that
+// varies the hardest to find.
+func allowListFixture(t *testing.T, existing string) (project.Project, string) {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, project.Dir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, project.Dir, ".gitignore")
+	if err := os.WriteFile(path, []byte(existing), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return project.Project{Root: root}, path
 }

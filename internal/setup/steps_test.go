@@ -411,75 +411,54 @@ func TestEslintExtendsStepDelegatedRefusalMatrix(t *testing.T) {
 			wantWhyHas: "",
 		},
 		{
-			name: "TypeScript config always delegates",
-			write: func(t *testing.T, source string) {
-				writeStepFixtureFile(t, source, "eslint.config.ts", "export default [];\n")
-			},
+			name:       "TypeScript config always delegates",
+			write:      writeFixture("eslint.config.ts", "export default [];\n"),
 			wantOK:     true,
 			wantWhyHas: "TypeScript",
 		},
 		{
-			name: "TypeScript .mts config always delegates",
-			write: func(t *testing.T, source string) {
-				writeStepFixtureFile(t, source, "eslint.config.mts", "export default [];\n")
-			},
+			name:       "TypeScript .mts config always delegates",
+			write:      writeFixture("eslint.config.mts", "export default [];\n"),
 			wantOK:     true,
 			wantWhyHas: "TypeScript",
 		},
 		{
-			name: "legacy .eslintrc.json-only delegates",
-			write: func(t *testing.T, source string) {
-				writeStepFixtureFile(t, source, ".eslintrc.json", "{}")
-			},
+			name:       "legacy .eslintrc.json-only delegates",
+			write:      writeFixture(".eslintrc.json", "{}"),
 			wantOK:     true,
 			wantWhyHas: "legacy",
 		},
 		{
-			name: "plain array-literal export is not delegated",
-			write: func(t *testing.T, source string) {
-				writeStepFixtureFile(t, source, "eslint.config.js", "export default [\n  { rules: {} },\n];\n")
-			},
+			name:   "plain array-literal export is not delegated",
+			write:  writeFixture("eslint.config.js", "export default [\n  { rules: {} },\n];\n"),
 			wantOK: false,
 		},
 		{
-			name: "recognised defineConfig(...) is not delegated",
-			write: func(t *testing.T, source string) {
-				writeStepFixtureFile(t, source, "eslint.config.js",
-					"import { defineConfig } from \"eslint/config\";\nexport default defineConfig([\n  { rules: {} },\n]);\n")
-			},
+			name:   "recognised defineConfig(...) is not delegated",
+			write:  writeFixture("eslint.config.js", "import { defineConfig } from \"eslint/config\";\nexport default defineConfig([\n  { rules: {} },\n]);\n"),
 			wantOK: false,
 		},
 		{
-			name: "unrecognised call expression delegates",
-			write: func(t *testing.T, source string) {
-				writeStepFixtureFile(t, source, "eslint.config.js", "export default tseslint.config(\n  { rules: {} },\n);\n")
-			},
+			name:       "unrecognised call expression delegates",
+			write:      writeFixture("eslint.config.js", "export default tseslint.config(\n  { rules: {} },\n);\n"),
 			wantOK:     true,
 			wantWhyHas: "callee",
 		},
 		{
-			name: "ERROR node delegates",
-			write: func(t *testing.T, source string) {
-				writeStepFixtureFile(t, source, "eslint.config.js", "export default [\n  { a: 1 + },\n];\n")
-			},
+			name:       "ERROR node delegates",
+			write:      writeFixture("eslint.config.js", "export default [\n  { a: 1 + },\n];\n"),
 			wantOK:     true,
 			wantWhyHas: "ERROR",
 		},
 		{
-			name: "malformed dharness:eslint-import marker pair delegates",
-			write: func(t *testing.T, source string) {
-				writeStepFixtureFile(t, source, "eslint.config.js",
-					eslintImportBegin+"\nimport dharnessPlugin from \"dharness-eslint-plugin\";\nexport default [];\n")
-			},
+			name:       "malformed dharness:eslint-import marker pair delegates",
+			write:      writeFixture("eslint.config.js", eslintImportBegin+"\nimport dharnessPlugin from \"dharness-eslint-plugin\";\nexport default [];\n"),
 			wantOK:     true,
 			wantWhyHas: "eslint-import",
 		},
 		{
-			name: "malformed dharness:eslint-layer marker pair delegates",
-			write: func(t *testing.T, source string) {
-				writeStepFixtureFile(t, source, "eslint.config.js",
-					"export default [\n  "+eslintLayerBegin+"\n  ...dharnessLayer({ plugin: dharnessPlugin }),\n];\n")
-			},
+			name:       "malformed dharness:eslint-layer marker pair delegates",
+			write:      writeFixture("eslint.config.js", "export default [\n  "+eslintLayerBegin+"\n  ...dharnessLayer({ plugin: dharnessPlugin }),\n];\n"),
 			wantOK:     true,
 			wantWhyHas: "eslint-layer",
 		},
@@ -521,6 +500,19 @@ func writeStepFixtureFile(t *testing.T, dir, name, contents string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, name), []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// writeFixture builds the one-file setup every refusal-matrix case needs.
+//
+// The cases differ by a file name and its bytes and by nothing else, so
+// spelling the closure out per case repeated its signature once per row and
+// buried that difference in boilerplate. Returning the closure keeps the
+// table a table.
+func writeFixture(name, contents string) func(*testing.T, string) {
+	return func(t *testing.T, source string) {
+		t.Helper()
+		writeStepFixtureFile(t, source, name, contents)
 	}
 }
 
