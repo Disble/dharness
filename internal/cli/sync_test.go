@@ -107,7 +107,6 @@ func satisfied(t *testing.T, root string) {
 
 	writeFile(t, filepath.Join(root, ".fallowrc.json"), `{"extends":[".dharness/fallow.jsonc"]}`)
 	writeFile(t, filepath.Join(root, "lefthook.yml"), "extends:\n  - .dharness/lefthook.yml\n")
-	writeFile(t, filepath.Join(root, "doctor.config.json"), `{"plugins":["`+setup.RulesPackage+`"]}`)
 	writeFile(t, filepath.Join(root, ".mcp.json"), `{"mcpServers":{"fallow":{"command":"bunx"}}}`)
 	writeFile(t, filepath.Join(root, ".git", "hooks", "pre-commit"), "lefthook run pre-commit\n")
 	writeFile(t, filepath.Join(root, ".claude", "skills", "react-doctor", "SKILL.md"), "# skill\n")
@@ -474,5 +473,58 @@ func TestSyncAssumesNothingWhenTheFrameworkConfigReads(t *testing.T) {
 
 	if out := runSyncIn(t, root); strings.Contains(out, "## Assumed") {
 		t.Errorf("sync reported an assumption it did not make:\n%s", out)
+	}
+}
+
+// Spec scenario "residue in an already-adopted repository is reported, never
+// removed": a repository adopted before this change still has the six
+// dharness/* severities and RulesPackage the retired mechanism wrote into
+// doctor.config.json. dharness cannot tell that earlier write apart from a
+// value the project set afterwards (§05), so the file is reported, not
+// touched — and the report says the residue is inert, since the gate's
+// react-doctor invocation runs with --staged, under which plugin rules do
+// not fire.
+func TestSyncReportsEslintResidueInAnAlreadyAdoptedRepository(t *testing.T) {
+	stubRunner(t)
+
+	root := t.TempDir()
+	gitProject(t, root, "bun.lock")
+	writeFile(t, filepath.Join(root, "package.json"), `{"devDependencies":{"vitest":"^4.0.0"}}`)
+	residue := `{"plugins":["` + setup.RulesPackage + `"],"rules":{"dharness/max-file-lines":"error"}}`
+	writeFile(t, filepath.Join(root, "doctor.config.json"), residue)
+
+	out := runSyncIn(t, root)
+
+	if !strings.Contains(out, "## Residue") {
+		t.Errorf("sync stayed silent about the residue left in doctor.config.json:\n%s", out)
+	}
+	if !strings.Contains(out, setup.RulesPackage) {
+		t.Errorf("the report does not name what it found in doctor.config.json:\n%s", out)
+	}
+	if !strings.Contains(out, "--staged") {
+		t.Errorf("the report does not say the residue is inert under the gate's --staged invocation:\n%s", out)
+	}
+
+	got, err := os.ReadFile(filepath.Join(root, "doctor.config.json"))
+	if err != nil {
+		t.Fatalf("doctor.config.json disappeared: %v", err)
+	}
+	if string(got) != residue {
+		t.Errorf("sync edited or rewrote residue it must only report:\ngot  %s\nwant %s", got, residue)
+	}
+}
+
+// And a project with no doctor.config.json at all — adopted after this
+// change, or one that never had the old mechanism run — gets no note, or the
+// heading becomes noise on every project.
+func TestSyncSaysNothingAboutEslintResidueWhenThereIsNone(t *testing.T) {
+	stubRunner(t)
+
+	out := syncOutput(t, func(root string) {
+		writeFile(t, filepath.Join(root, "package.json"), `{"devDependencies":{"vitest":"^4.0.0"}}`)
+	})
+
+	if strings.Contains(out, "## Residue") {
+		t.Errorf("sync reported residue it does not have:\n%s", out)
 	}
 }

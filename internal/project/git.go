@@ -143,8 +143,8 @@ func (p Project) StagedSourceFilesFromSource() ([]string, error) {
 // publishing, and requires at least one directory component to match.
 //
 // A method rather than a Project field: the probe costs a subprocess, and
-// only doctorConfigStep's first-write default needs the answer — Discover
-// runs for every command and never asks about barrels.
+// only DefaultSeverity's folder-ownership default needs the answer —
+// Discover runs for every command and never asks about barrels.
 func (p Project) PublishesBarrels() bool {
 	if !p.InRepository || !p.HasSource() {
 		return false

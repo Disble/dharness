@@ -62,6 +62,13 @@ func RunSync(args []string, stdout io.Writer) error {
 	// this is what it guessed from, not a step nothing can clear.
 	uncertain := setup.UncertainPresetNote(p)
 
+	// Read before applying for the same reason as uncheckable above, though
+	// nothing here writes doctor.config.json any more: consistency, not a
+	// dependency. A repository adopted before this version may still carry
+	// six dharness/* severities and RulesPackage in that file, which dharness
+	// leaves exactly as found (§05) but does not stay quiet about.
+	residue := setup.EslintResidueNote(p)
+
 	if pending := setup.Pending(p); hasApplicable(pending, p) {
 		fmt.Fprintln(stdout, "Applying:")
 		if err := setup.Apply(p, stdout); err != nil {
@@ -106,6 +113,17 @@ func RunSync(args []string, stdout io.Writer) error {
 	// section repeated.
 	if uncertain != "" {
 		fmt.Fprintf(stdout, "## Assumed\n\n%s\n\n", uncertain)
+	}
+
+	// A third heading, because this is neither of the other two: "Not
+	// checked" says a check did not run, and "Assumed" says a check ran on a
+	// default because the project's own answer could not be read. This one
+	// says the opposite of both — dharness read the file just fine and knows
+	// exactly what is in it. It is not pending work either (§15): there is no
+	// state the project reaches that clears it, since dharness will never
+	// remove what it finds.
+	if residue != "" {
+		fmt.Fprintf(stdout, "## Residue\n\n%s\n\n", residue)
 	}
 
 	if left == 0 {

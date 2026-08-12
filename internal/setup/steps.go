@@ -612,6 +612,36 @@ func uncertainNotes(matches []preset.Match) string {
 	return strings.Join(notes, "\n\n")
 }
 
+// EslintResidueNote reports the six dharness/* severities and the
+// RulesPackage plugin declaration a repository adopted before this change
+// still carries in doctor.config.json, left behind by the mechanism this
+// version retires (design decision 8) — or "" when there is nothing to
+// report, which is every project adopted under this version and any older
+// one hand-cleaned.
+//
+// It is a note beside the plan, not a step, for UncheckableConfigNote's exact
+// reason: dharness cannot tell its own earlier write apart from a value the
+// project set into the same file afterwards (§05), so there is no state the
+// project can reach that clears it — and a step with no completion state is
+// not pending work. Unlike UncheckableConfigNote's blind spot, this is not an
+// unknown: dharness can read the file fine and knows exactly what it holds,
+// so it names what it found rather than saying the answer is unknown.
+func EslintResidueNote(p project.Project) string {
+	if !p.HasSource() {
+		return ""
+	}
+
+	path := filepath.Join(p.Source, "doctor.config.json")
+	candidates := append([]string{RulesPackage}, RuleIDs()...)
+	if len(declaredKeys(path, candidates)) == 0 {
+		return ""
+	}
+
+	return fmt.Sprintf(
+		"doctor.config.json still declares %s under `plugins` and/or one of dharness's\nrule ids under `rules`, left behind by the mechanism this version retires.\ndharness does not edit or delete it — it cannot tell its own earlier write\napart from a value the project set into the same file afterwards (§05) —\nand those entries are inert now: the gate's react-doctor invocation runs\nwith `--staged`, and a plugin's rules do not fire under that flag (measured\nagainst react-doctor 0.5.7).",
+		RulesPackage)
+}
+
 // ownedValue names what dharness itself would write for key: the
 // architecture block the agent writes for "boundaries" — no preset may ever
 // contribute that key (framework-presets design decision 2's guard) — or a
