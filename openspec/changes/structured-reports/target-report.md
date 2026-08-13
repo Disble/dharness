@@ -87,7 +87,7 @@ dharness 1.2.0 · sync · D:\dev\disble\autoreas-sp\autoreas-bridge
                      { "minOccurrences": 3, "mode": "semantic",
                        "threshold": 3 }
            project   frontend/.fallowrc.json:12-16
-                     { "minOccurrences": 2, "mode": "exact",
+                     { "minOccurrences": 2, "mode": "weak",
                        "threshold": 5 }                  ← this one runs
 
          Pick one owner:
@@ -177,7 +177,7 @@ computation.
       "ours":   { "path": ".dharness/fallow.jsonc", "line": 8,
                   "value": { "minOccurrences": 3, "mode": "semantic", "threshold": 3 } },
       "theirs": { "path": "frontend/.fallowrc.json", "line": 12,
-                  "value": { "minOccurrences": 2, "mode": "exact", "threshold": 5 } },
+                  "value": { "minOccurrences": 2, "mode": "weak", "threshold": 5 } },
       "effective": "theirs",
       "resolutions": ["delete-theirs", "move-into-ours"] },
     { "n": 3, "id": "fallow-extends", "status": "satisfied",
