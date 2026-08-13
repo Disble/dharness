@@ -4,15 +4,16 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"strings"
 	"testing"
 
-	"github.com/gtramontina/ooze/viruses"
+	"github.com/Disble/ditto/viruses"
 )
 
 type alwaysInfects struct{ calls int }
 
-func (v *alwaysInfects) Incubate(ast.Node) []*viruses.Infection {
+func (v *alwaysInfects) Incubate(ast.Node, *types.Info) []*viruses.Infection {
 	v.calls++
 	return []*viruses.Infection{viruses.NewInfection("test", func() {}, func() {})}
 }
@@ -70,10 +71,10 @@ func TestLineScopedDelegatesOnlyInsideScope(t *testing.T) {
 	inner := &alwaysInfects{}
 	counter := &ScopeCounter{}
 	scoped := NewLineScoped(inner, OffsetRanges{{Start: 100, End: 200}}, counter)
-	if got := scoped.Incubate(&ast.Ident{NamePos: 151}); len(got) != 1 {
+	if got := scoped.Incubate(&ast.Ident{NamePos: 151}, nil); len(got) != 1 {
 		t.Fatalf("inside infections = %d", len(got))
 	}
-	if got := scoped.Incubate(&ast.Ident{NamePos: 251}); len(got) != 0 {
+	if got := scoped.Incubate(&ast.Ident{NamePos: 251}, nil); len(got) != 0 {
 		t.Fatalf("outside infections = %d", len(got))
 	}
 	if inner.calls != 1 || counter.Kept() != 1 || counter.Dropped() != 1 {
@@ -85,7 +86,7 @@ func TestLineScopedFailsOpenWithoutRanges(t *testing.T) {
 	t.Parallel()
 
 	inner := &alwaysInfects{}
-	if got := NewLineScoped(inner, nil, &ScopeCounter{}).Incubate(&ast.Ident{NamePos: 999}); len(got) != 1 {
+	if got := NewLineScoped(inner, nil, &ScopeCounter{}).Incubate(&ast.Ident{NamePos: 999}, nil); len(got) != 1 {
 		t.Fatalf("unscoped infections = %d", len(got))
 	}
 }
@@ -95,10 +96,10 @@ func TestLineScopedHandlesNilAndNoPosition(t *testing.T) {
 
 	inner := &alwaysInfects{}
 	scoped := NewLineScoped(inner, OffsetRanges{{Start: 100, End: 200}}, &ScopeCounter{})
-	if got := scoped.Incubate(nil); len(got) != 1 {
+	if got := scoped.Incubate(nil, nil); len(got) != 1 {
 		t.Fatalf("nil infections = %d", len(got))
 	}
-	if got := scoped.Incubate(&ast.Ident{NamePos: token.NoPos}); len(got) != 1 {
+	if got := scoped.Incubate(&ast.Ident{NamePos: token.NoPos}, nil); len(got) != 1 {
 		t.Fatalf("NoPos infections = %d", len(got))
 	}
 }
@@ -130,7 +131,7 @@ func TestAnalyzeSourceExposesSilentNoOp(t *testing.T) {
 	}
 }
 
-func TestDefaultVirusesPinsOozeMutatorSet(t *testing.T) {
+func TestDefaultVirusesPinsDittoMutatorSet(t *testing.T) {
 	t.Parallel()
 
 	if got := len(DefaultViruses()); got != 14 {

@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/gtramontina/ooze"
+	"github.com/Disble/ditto"
 )
 
 const (
@@ -28,24 +28,24 @@ func TestStagedMutation(t *testing.T) {
 		t.Fatalf("%s is malformed: %v", envScope, err)
 	}
 
-	options := []ooze.Option{
-		ooze.WithRepositoryRoot(os.Getenv(envRepositoryDir)),
-		ooze.WithTestCommand(testCommand),
-		ooze.WithMinimumThreshold(thresholdFromEnv(t)),
+	options := []ditto.Option{
+		ditto.WithRepositoryRoot(os.Getenv(envRepositoryDir)),
+		ditto.WithTestCommand(testCommand),
+		ditto.WithMinimumThreshold(thresholdFromEnv(t)),
 	}
 	if ignore := os.Getenv(envIgnorePattern); ignore != "" {
-		options = append(options, ooze.IgnoreSourceFiles(ignore))
+		options = append(options, ditto.IgnoreSourceFiles(ignore))
 	}
 	if len(ranges) > 0 {
 		counter := &ScopeCounter{}
 		scoped := ScopeAll(DefaultViruses(), ranges, counter)
-		options = append(options, ooze.WithViruses(scoped[0], scoped[1:]...))
+		options = append(options, ditto.WithViruses(scoped[0], scoped[1:]...))
 	}
 
 	// Zero candidates were rejected by the wrapper's reachable preflight before
-	// this call. A guard after Release cannot provide that guarantee: ooze can
+	// this call. A guard after Release cannot provide that guarantee: ditto can
 	// call t.Fatal internally and make following statements unreachable.
-	ooze.Release(t, options...)
+	ditto.Release(t, options...)
 }
 
 func thresholdFromEnv(t *testing.T) float32 {

@@ -1,24 +1,24 @@
 package mutation
 
 import (
-	"github.com/gtramontina/ooze/viruses"
-	"github.com/gtramontina/ooze/viruses/arithmetic"
-	"github.com/gtramontina/ooze/viruses/arithmeticassignment"
-	"github.com/gtramontina/ooze/viruses/arithmeticassignmentinvert"
-	"github.com/gtramontina/ooze/viruses/bitwise"
-	"github.com/gtramontina/ooze/viruses/comparison"
-	"github.com/gtramontina/ooze/viruses/comparisoninvert"
-	"github.com/gtramontina/ooze/viruses/comparisonreplace"
-	"github.com/gtramontina/ooze/viruses/floatdecrement"
-	"github.com/gtramontina/ooze/viruses/floatincrement"
-	"github.com/gtramontina/ooze/viruses/integerdecrement"
-	"github.com/gtramontina/ooze/viruses/integerincrement"
-	"github.com/gtramontina/ooze/viruses/loopbreak"
-	"github.com/gtramontina/ooze/viruses/loopcondition"
-	"github.com/gtramontina/ooze/viruses/rangebreak"
+	"github.com/Disble/ditto/viruses"
+	"github.com/Disble/ditto/viruses/arithmetic"
+	"github.com/Disble/ditto/viruses/arithmeticassignment"
+	"github.com/Disble/ditto/viruses/arithmeticassignmentinvert"
+	"github.com/Disble/ditto/viruses/bitwise"
+	"github.com/Disble/ditto/viruses/comparison"
+	"github.com/Disble/ditto/viruses/comparisoninvert"
+	"github.com/Disble/ditto/viruses/comparisonreplace"
+	"github.com/Disble/ditto/viruses/floatdecrement"
+	"github.com/Disble/ditto/viruses/floatincrement"
+	"github.com/Disble/ditto/viruses/integerdecrement"
+	"github.com/Disble/ditto/viruses/integerincrement"
+	"github.com/Disble/ditto/viruses/loopbreak"
+	"github.com/Disble/ditto/viruses/loopcondition"
+	"github.com/Disble/ditto/viruses/rangebreak"
 )
 
-// DefaultViruses mirrors ooze v0.2.0's unexported default set. WithViruses
+// DefaultViruses mirrors ditto v0.1.0's unexported default set. WithViruses
 // replaces that set, so line scoping must name all fourteen mutators explicitly.
 func DefaultViruses() []viruses.Virus {
 	return []viruses.Virus{
