@@ -13,6 +13,7 @@ import (
 	"github.com/Disble/dharness/internal/jsconfig"
 	"github.com/Disble/dharness/internal/preset"
 	"github.com/Disble/dharness/internal/project"
+	"github.com/Disble/dharness/internal/report"
 	"github.com/Disble/dharness/internal/runner"
 	"github.com/Disble/dharness/internal/tool"
 )
@@ -473,7 +474,7 @@ func (eslintExtendsStep) Apply(p project.Project, w *Writer, _ io.Writer) (Facts
 type boundariesOwnerStep struct{}
 
 func (boundariesOwnerStep) ID() string {
-	return "resolve the two architectures this project declares"
+	return "resolve the keys this project and dharness both declare"
 }
 
 // collidingKeys is this step's whole rule: matches' contributed keys plus
@@ -511,6 +512,119 @@ func (boundariesOwnerStep) Satisfied(p project.Project) bool {
 	return len(colliding) == 0
 }
 
+// resolvedConfig asks fallow which value it actually runs for each key, or
+// reports that it could not be asked. Two outcomes and no third: a resolved
+// map, or nothing. Nothing is never an error this run reports — a missing
+// measurement is not a failed sync (§20).
+//
+// The probe runs first and its own exit code decides everything: --path
+// exits 3 on a project with no fallow config at all, and --format json
+// never exits non-zero even then — it prints defaults, so it is useless for
+// detecting absence (measured against the reference project, design.md
+// Decision 5). Any other exit from the probe collapses to the same absence,
+// and the resolve call never runs at all — the short circuit is on any
+// non-nil error, not only on code 3.
+//
+// Resolution is local-only and this is deliberate, not an oversight:
+// p.LocalBinary(tool.Fallow) is the only path in, with no remote-executor
+// fallback, per the resolved question round and the network rule
+// internal/tool/tool.go:101-103 already records for every routine path.
+func resolvedConfig(p project.Project) (map[string]json.RawMessage, bool) {
+	localBinary := p.LocalBinary(tool.Fallow)
+	if localBinary == "" {
+		return nil, false
+	}
+
+	probe := tool.Installed(tool.Fallow, localBinary, p.Source, tool.FallowConfigPath()...)
+	if err := runner.Run(probe, io.Discard, io.Discard); err != nil {
+		return nil, false
+	}
+
+	var stdout bytes.Buffer
+	resolve := tool.Installed(tool.Fallow, localBinary, p.Source, tool.FallowConfigJSON()...)
+	if err := runner.Run(resolve, &stdout, io.Discard); err != nil {
+		return nil, false
+	}
+
+	var resolved map[string]json.RawMessage
+	if err := json.Unmarshal(stdout.Bytes(), &resolved); err != nil {
+		return nil, false
+	}
+	return resolved, true
+}
+
+// Collisions computes each colliding key once: the value both the report's
+// collision block and boundariesOwnerStep.Delegated are meant to be
+// rendered from. Exported as a package function rather than reached through
+// the Step interface, matching UncheckableConfigNote/UncertainPresetNote/
+// EslintResidueNote at the same call site (internal/cli/sync.go) — so no
+// requirement about Delegated's (why string, ok bool) contract is reopened
+// and nothing type-asserts on a step.
+//
+// Slice 3 computes this value; describeBoundaries/delegateBoundaries are
+// wired to render from it, replacing their own walk, in slice 4
+// (design.md Decision 4's explicit ordering note — landing the two apart
+// would leave a window where a key renders twice). Nothing in the applied
+// product path calls this function yet.
+func Collisions(p project.Project) []report.Collision {
+	colliding, matches := boundaryCollision(p)
+	if len(colliding) == 0 {
+		return nil
+	}
+
+	resolved, ok := resolvedConfig(p)
+	path := fallowConfigPath(p.Source)
+
+	collisions := make([]report.Collision, 0, len(colliding))
+	for _, key := range colliding {
+		collision := report.Collision{
+			ID:   "sync:collision/" + key,
+			Key:  key,
+			Ours: ourDeclared(key, matches),
+			Theirs: report.Declared{
+				Path: filepath.ToSlash(path),
+				Line: declaredAt(path, key),
+			},
+		}
+
+		if ok {
+			if raw, present := resolved[key]; present {
+				theirsValue := json.RawMessage(raw)
+				collision.Theirs.Value = &theirsValue
+
+				effective := "theirs"
+				if bytes.Equal(bytes.TrimSpace(raw), bytes.TrimSpace(*collision.Ours.Value)) {
+					effective = "ours"
+				}
+				collision.Effective = &effective
+			}
+		}
+
+		collisions = append(collisions, collision)
+	}
+	return collisions
+}
+
+// ourDeclared reports dharness's own side of a collision: the value it
+// wrote, or is about to write, into the file it owns — reported whole, per
+// the "colliding value is reported whole or not at all" requirement. A
+// matched preset's composed fact already marshals to JSON through
+// ownedValue's own json.Marshal; boundaries' own case has no fixed value
+// yet — it is agent-authored — so ownedValue's prose is carried as a JSON
+// string instead of guessed at as structured data.
+//
+// json.Marshal of a Go string cannot fail — it has no channel, function or
+// cycle to reject — so there is no error branch here to check for one.
+func ourDeclared(key string, matches []preset.Match) report.Declared {
+	value := ownedValue(key, matches)
+	raw := json.RawMessage(value)
+	if !json.Valid(raw) {
+		encoded, _ := json.Marshal(value)
+		raw = json.RawMessage(encoded)
+	}
+	return report.Declared{Value: &raw}
+}
+
 // boundariesFallbackDescribe/Why are the single-key text this step always
 // produced before this slice widened it. They are the fallback the empty
 // intersection reaches, not a stale duplicate: the golden fixtures render
@@ -542,7 +656,7 @@ func describeBoundaries(p project.Project, colliding []string, matches []preset.
 	b.WriteString("Move each of these into the file dharness owns, or delete the project's own\nand keep dharness's. Either is a valid answer per key; having both is not,\nbecause fallow's `extends` replaces a key rather than merging it and the\nfile gives no sign of which value runs.\n")
 	for _, key := range colliding {
 		fmt.Fprintf(&b, "\n`%s` — dharness: %s\n%s declares: %s\n",
-			key, ownedValue(key, matches), fallowConfig, declaredValue(fallowConfigPath(p.Source), key))
+			key, ownedValue(key, matches), fallowConfig, declaredValueUnknown)
 	}
 	return b.String()
 }
@@ -566,7 +680,7 @@ func delegateBoundaries(p project.Project, colliding []string, matches []preset.
 	fmt.Fprintf(&b, "%s declares its own value for %s, and fallow's `extends` replaces each of\nthose keys rather than merging it — the project's value replaces dharness's\nentirely, without an error. Only one value per key is being enforced, and\nthe configuration does not say which:\n", fallowConfig, quotedKeys(colliding))
 	for _, key := range colliding {
 		fmt.Fprintf(&b, "\n`%s` — dharness: %s; %s: %s",
-			key, ownedValue(key, matches), fallowConfig, declaredValue(fallowConfigPath(p.Source), key))
+			key, ownedValue(key, matches), fallowConfig, declaredValueUnknown)
 	}
 	return b.String()
 }
@@ -672,16 +786,16 @@ func ownedValue(key string, matches []preset.Match) string {
 	return "its preset default"
 }
 
-// declaredValue is a best-effort display of what the project itself wrote,
-// falling back to a generic phrase when declaredLine finds no single line to
-// show (a value declaredKeys still detected but that spans lines it does not
-// follow).
-func declaredValue(path, key string) string {
-	if line := declaredLine(path, key); line != "" {
-		return line
-	}
-	return "a value of its own"
-}
+// declaredValueUnknown is what describeBoundaries/delegateBoundaries show
+// for the project's own side of a collision, in place of the single-line
+// textual fragment ("\"duplicates\": {") declaredValue used to show — defect
+// 8, and the reason declaredValue leaves the collision path entirely
+// (design.md Decision 5). The real fix, showing the value fallow actually
+// resolves, arrives with Collisions/renderCollisions in slice 4
+// (design.md Decision 4's explicit ordering note); until then this constant
+// is the honest interim answer — the same generic phrase declaredValue's own
+// no-match branch already used, now the only branch.
+const declaredValueUnknown = "a value of its own"
 
 // quotedKeys renders a list of keys the way this file already names fallow
 // keys elsewhere — backticked, not Go-quoted.

@@ -23,7 +23,7 @@
      Add this line to .fallowrc.json:
      
          "extends": [".dharness/fallow.jsonc"]
-4  resolve the two architectures this project declares
+4  resolve the keys this project and dharness both declare
    satisfied=true delegated=true
    why |
      .fallowrc.json declares its own `boundaries`, and fallow's `extends` replaces that key
