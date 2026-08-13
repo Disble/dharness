@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.0](https://github.com/Disble/dharness/compare/v1.2.0...v1.3.0) (2026-08-13)
+
+
+### Features
+
+* **sync:** make the report a result model, not a transcript ([#21](https://github.com/Disble/dharness/issues/21)) ([4f16015](https://github.com/Disble/dharness/commit/4f16015fa506217b9420c4fdc6f18e98dd495c90))
+
 ## [1.2.0](https://github.com/Disble/dharness/compare/v1.1.0...v1.2.0) (2026-08-12)
 
 
