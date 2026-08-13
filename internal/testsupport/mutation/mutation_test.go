@@ -23,7 +23,7 @@ func TestStagedMutation(t *testing.T) {
 	if testCommand == "" {
 		t.Skip("run through go run ./tools/mutationstaged")
 	}
-	ranges, err := ParseOffsetRanges(os.Getenv(envScope))
+	ranges, err := ParseFileRanges(os.Getenv(envScope))
 	if err != nil {
 		t.Fatalf("%s is malformed: %v", envScope, err)
 	}
@@ -37,9 +37,10 @@ func TestStagedMutation(t *testing.T) {
 		options = append(options, ditto.IgnoreSourceFiles(ignore))
 	}
 	if len(ranges) > 0 {
-		counter := &ScopeCounter{}
-		scoped := ScopeAll(DefaultViruses(), ranges, counter)
-		options = append(options, ditto.WithViruses(scoped[0], scoped[1:]...))
+		// The scope is ditto's now. It keeps each file's ranges beside that
+		// file, so a range measured in one file can no longer select nodes in
+		// another — which is what the wrapper's own flat scope used to do.
+		options = append(options, ditto.WithChangedRanges(ranges))
 	}
 
 	// Zero candidates were rejected by the wrapper's reachable preflight before

@@ -3,7 +3,7 @@ module github.com/Disble/dharness
 go 1.26
 
 require (
-	github.com/Disble/ditto v0.1.0
+	github.com/Disble/ditto v0.2.0
 	github.com/odvcencio/gotreesitter v0.49.0
 )
 

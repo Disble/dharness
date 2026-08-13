@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	mutation "github.com/Disble/dharness/internal/testsupport/mutation"
+	"github.com/Disble/ditto"
 )
 
 const (
@@ -34,6 +35,11 @@ type scopePlan struct {
 	derived bool
 	reason  string
 	stats   mutation.ScopeStats
+	// ranges is the scope kept the way it was measured: per file. The flat
+	// merge this replaced made every staged file answer to every other file's
+	// byte ranges, so a three-file change cost 36 mutants where 12 were
+	// justified and the extras landed in code no diff had touched.
+	ranges mutation.FileRanges
 }
 
 func main() {
@@ -129,8 +135,7 @@ func (tool *tool) rejectPartiallyStaged(staged []string) error {
 }
 
 func (tool *tool) computeScope(staged []string) (scopePlan, error) {
-	allOffsets := []offsetRange{}
-	plan := scopePlan{derived: true}
+	plan := scopePlan{derived: true, ranges: mutation.FileRanges{}}
 	for _, file := range staged {
 		diff, err := tool.git("-c", "core.quotePath=false", "diff", "--cached", "--no-ext-diff", "--no-renames", "-U0", "--", file)
 		if err != nil {
@@ -157,9 +162,13 @@ func (tool *tool) computeScope(staged []string) (scopePlan, error) {
 			return scopePlan{}, err
 		}
 		plan.stats = addStats(plan.stats, stats)
-		allOffsets = append(allOffsets, offsets...)
+		plan.ranges[file] = dittoRanges(offsets)
 	}
-	plan.encoded = encodeOffsetRanges(mergeOffsetRanges(allOffsets))
+	encoded, err := mutation.EncodeFileRanges(plan.ranges)
+	if err != nil {
+		return scopePlan{}, err
+	}
+	plan.encoded = encoded
 	return plan, nil
 }
 
@@ -177,6 +186,16 @@ func (tool *tool) wholeFileScope(staged []string, reason string) (scopePlan, err
 		plan.stats = addStats(plan.stats, stats)
 	}
 	return plan, nil
+}
+
+// dittoRanges converts to the type ditto scopes a release with. The conversion
+// is per file and stays per file: that is the whole correction.
+func dittoRanges(ranges []offsetRange) []ditto.Range {
+	converted := make([]ditto.Range, 0, len(ranges))
+	for _, span := range ranges {
+		converted = append(converted, ditto.Range{Start: span.start, End: span.end})
+	}
+	return converted
 }
 
 func mutationRanges(ranges []offsetRange) mutation.OffsetRanges {
@@ -199,7 +218,11 @@ func describeScope(plan scopePlan) string {
 	if !plan.derived {
 		return plan.reason
 	}
-	return fmt.Sprintf("%d staged byte range(s)", strings.Count(plan.encoded, ",")+1)
+	total := 0
+	for _, spans := range plan.ranges {
+		total += len(spans)
+	}
+	return fmt.Sprintf("%d staged byte range(s) across %d file(s)", total, len(plan.ranges))
 }
 
 func (tool *tool) runOoze(root, sandbox, ignore, testCommand, scope string) error {

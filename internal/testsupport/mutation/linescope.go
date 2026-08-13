@@ -1,6 +1,7 @@
 package mutation
 
 import (
+	"encoding/json"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"sync/atomic"
 
+	"github.com/Disble/ditto"
 	"github.com/Disble/ditto/viruses"
 )
 
@@ -26,6 +28,48 @@ type OffsetRanges []OffsetRange
 func (ranges OffsetRanges) Contains(offset int) bool {
 	index := sort.Search(len(ranges), func(i int) bool { return ranges[i].End > offset })
 	return index < len(ranges) && offset >= ranges[index].Start
+}
+
+// FileRanges is the staged scope, keyed by repository-relative path.
+//
+// Keyed by file because a byte offset only means something against the file it
+// was measured in. Merging every file's ranges into one flat set is what made a
+// three-file change cost thirty-six mutants where twelve were justified, and
+// the mutants it added landed in code no diff had touched.
+type FileRanges map[string][]ditto.Range
+
+// EncodeFileRanges renders the scope for the environment variable the harness
+// reads. JSON rather than a compact string so the file each range belongs to
+// cannot be dropped on the way through.
+func EncodeFileRanges(ranges FileRanges) (string, error) {
+	if len(ranges) == 0 {
+		return "", nil
+	}
+	encoded, err := json.Marshal(ranges)
+	if err != nil {
+		return "", fmt.Errorf("encode staged scope: %w", err)
+	}
+	return string(encoded), nil
+}
+
+// ParseFileRanges decodes what EncodeFileRanges wrote. Empty input means no
+// scope, which ditto reads as the whole repository.
+func ParseFileRanges(encoded string) (FileRanges, error) {
+	if strings.TrimSpace(encoded) == "" {
+		return nil, nil
+	}
+	var ranges FileRanges
+	if err := json.Unmarshal([]byte(encoded), &ranges); err != nil {
+		return nil, fmt.Errorf("decode staged scope %q: %w", encoded, err)
+	}
+	for file, spans := range ranges {
+		for _, span := range spans {
+			if span.Start < 0 || span.End <= span.Start {
+				return nil, fmt.Errorf("staged scope for %s has range %d-%d, want 0 <= start < end", file, span.Start, span.End)
+			}
+		}
+	}
+	return ranges, nil
 }
 
 // ParseOffsetRanges decodes start-end pairs. Empty input means whole-file scope.
