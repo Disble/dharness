@@ -132,8 +132,8 @@ referencia: el binario local corre en ~347/358/349 ms (`docs/learning-log.md`,
 
 *Enmendado el 13 de agosto de 2026.* Stryker es la tercera excepción, y la
 primera que **elimina** la ruta remota en lugar de convivir con ella. `mutate`
-instala `@stryker-mutator/core@latest` y su runner en el proyecto y ejecuta el
-binario local; si no puede, rehúsa nombrando el comando de instalación y nunca
+instala `@stryker-mutator/core` y su runner en el proyecto —con `@latest` solo
+cuando el proyecto no los declara, ver 05— y ejecuta el binario local; si no puede, rehúsa nombrando el comando de instalación y nunca
 cae al ejecutor remoto. La razón es la de ESLint otra vez, medida: el
 `TSConfigPreprocessor` de Stryker importa `typescript` desde su propia
 ubicación, así que un Core desempaquetado en un temporal de bunx no resuelve el
@@ -174,6 +174,17 @@ solo lo que le pertenece y se aparta del resto, aunque técnicamente pueda ganar
 configuración. Pasar `--testRunner` siempre dejaría que un error de detección
 pisara una decisión deliberada. La misma regla gobierna después `--break` y
 `--reporters`.
+
+*Enmendado el 13 de agosto de 2026.* El principio gobierna el manifiesto igual
+que un archivo de configuración, y dharness lo violó sin notarlo: instalar
+Stryker con `@latest` convirtió un `"9.6.1"` exacto en `"^9.6.1"` en un proyecto
+que lo había pinneado a propósito. En un motor de mutación eso no es cosmético
+— un minor entrando solo puede mover el veredicto sobre un árbol que nadie tocó,
+que es justo el ruido que el pin existía para evitar. Ahora `mutate` agrega con
+`@latest` únicamente lo que el proyecto no declara, y lo declarado se restaura
+con el `install` pelado, porque `add` reescribe el spec incluso sin tag.
+`--upgrade` es la salida explícita, y su ayuda nombra la consecuencia en lugar
+de esconderla.
 
 ### 06. La política de stack viaja; la topología del repositorio se queda
 

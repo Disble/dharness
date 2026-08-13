@@ -10,6 +10,7 @@ package project
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -153,7 +154,11 @@ func detectTestRunner(source string) string {
 	return ""
 }
 
-func detectTestRunners(source string) []string {
+// declaredPackages reads both dependency lists as one set of names.
+//
+// Which list a package sits in is not a question dharness has an opinion
+// about: it asks whether the project already decided on this package at all.
+func declaredPackages(source string) map[string]string {
 	if source == "" {
 		return nil
 	}
@@ -168,13 +173,32 @@ func detectTestRunners(source string) []string {
 	if json.Unmarshal(raw, &pkg) != nil {
 		return nil
 	}
+
+	all := make(map[string]string, len(pkg.Dependencies)+len(pkg.DevDependencies))
+	maps.Copy(all, pkg.Dependencies)
+	maps.Copy(all, pkg.DevDependencies)
+	return all
+}
+
+// Declares reports whether the project's manifest already names a package.
+//
+// It is the question §05 turns on. A project that declared a package chose its
+// version — an exact pin most deliberately of all — and installing that package
+// at @latest would rewrite that choice into a caret range. Measured against a
+// real repository on 2026-08-13: "9.6.1" came back as "^9.6.1", which in a
+// mutation engine can move the verdict over a tree nobody touched.
+func (p Project) Declares(name string) bool {
+	_, ok := declaredPackages(p.Source)[name]
+	return ok
+}
+
+func detectTestRunners(source string) []string {
+	packages := declaredPackages(source)
 	declared := func(name string) bool {
-		if _, ok := pkg.Dependencies[name]; ok {
-			return true
-		}
-		_, ok := pkg.DevDependencies[name]
+		_, ok := packages[name]
 		return ok
 	}
+
 	var runners []string
 	if declared("vitest") {
 		runners = append(runners, "vitest")

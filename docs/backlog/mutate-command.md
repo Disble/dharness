@@ -66,3 +66,29 @@ Two things stay unmeasured, and they are the ones that decide it:
 
 Until both are measured, the honest position is that ranges make the command
 *affordable* to run on a commit, not *correct* to run there.
+
+## 2. `evidence.json` has one slot and is committed
+
+**Reported 2026-08-13** by the frontend project running v1.4.0, and confirmed
+in the code the same day.
+
+`Evidence.ScopedMutation` is a single `*ScopedMutation` holding one
+`MeasuredPath` (`internal/project/evidence.go:55-63`), and
+`RecordScopedMutation` replaces it outright on every `mutate --dry-run`. The
+file is deliberately committed — `.dharness/.gitignore` whitelists it with
+`!evidence.json`, and the golden fixtures pin that.
+
+Measured there: `use-history-table.ts` was measured, then
+`download-folder.helpers.ts`, and only the second survived.
+
+So a tracked file is rewritten by whoever measured last. Two authors measuring
+different files produce a diff on every run and a conflict on every merge, over
+a file whose whole purpose (§08) is to be evidence nobody has to re-derive.
+
+The shape of the fix is not obvious and that is why this is an entry rather
+than a patch. Keying the record by path makes it a map that grows without
+bound and never expires — a measurement for a file that has since changed is
+worse than no measurement, because §08's own rule is that a reader must be able
+to tell whether it still describes the code in front of them. Recording only
+what `sync` needs to reach a terminal state may mean one slot is right and the
+defect is that `mutate --dry-run` writes to it at all.

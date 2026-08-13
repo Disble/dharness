@@ -30,12 +30,18 @@ newest version.
 
 What it does *not* settle, and these are the entry:
 
-- **What the pinned side resolves to.** For Stryker there is an obvious answer
-  now, and it costs nothing: the install already writes a range into
-  `package.json`, so not passing `@latest` simply lets that range hold. For
-  react-doctor and fallow there is no answer at all — they run through a remote
-  executor and dharness records no version anywhere, so the flag would have to
-  invent a place to write one. That asymmetry is the hard part, not the flag.
+- **What the pinned side resolves to.** ~~For Stryker there is an obvious answer
+  now~~ — **the Stryker half was closed on 2026-08-13 and is no longer part of
+  this entry.** A real repository showed the cost was not hypothetical:
+  installing at `@latest` rewrote its exact `"9.6.1"` into `"^9.6.1"`, so
+  `mutate` now adds at `@latest` only what the project does not declare and
+  restores the rest, with `--upgrade` as the explicit override (§05).
+
+  What remains open is the harder half, untouched: react-doctor and fallow run
+  through a remote executor and dharness records no version anywhere, so a flag
+  there would have to invent a place to write one. And unlike `mutate`, those
+  two run in the gate on every commit, where using whatever old copy a project
+  happens to have installed is its own hazard. Same words, different problem.
 - **Whether it is one switch or one per tool.** A repository might want its
   linters pinned and its mutation engine current, or the reverse.
 - **Where it lives.** A CLI flag is per-invocation and the gate is invoked by a

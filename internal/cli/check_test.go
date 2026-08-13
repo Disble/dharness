@@ -382,6 +382,69 @@ func TestMutateFailsWhenThereIsNoReportToRead(t *testing.T) {
 	}
 }
 
+// declaresStryker makes the project name Stryker itself, pinned exactly, which
+// is what a repository that cares about a reproducible verdict actually does.
+func declaresStryker(t *testing.T, root string) {
+	t.Helper()
+
+	manifest := `{"devDependencies":{"vitest":"^4.0.0","@stryker-mutator/core":"9.6.1","@stryker-mutator/vitest-runner":"9.6.1"}}`
+	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(manifest), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// §05: a declared version is a decision, and an exact pin is the most
+// deliberate one there is. Measured against a real repository on 2026-08-13,
+// installing at @latest rewrote "9.6.1" into "^9.6.1" — and in a mutation
+// engine a minor arriving on its own moves the verdict over untouched code.
+func TestMutateKeepsTheStrykerVersionTheProjectDeclared(t *testing.T) {
+	captured, root := stub(t, "")
+	mutable(t, root)
+	declaresStryker(t, root)
+
+	_ = RunMutate([]string{"src/a.ts"}, io.Discard)
+
+	install := commandFor(t, captured, "npm")
+	if !slices.Equal(install.Args, []string{"install"}) {
+		t.Errorf("install = %v, want a bare install that names no version", install.Args)
+	}
+	for _, arg := range install.Args {
+		if strings.Contains(arg, "@latest") {
+			t.Errorf("dharness rewrote a version the project pinned: %v", install.Args)
+		}
+	}
+}
+
+// The escape hatch, and it says what it costs: the project's declared version
+// is rewritten, on purpose, because someone asked.
+func TestMutateUpgradeRewritesTheDeclaredVersionOnPurpose(t *testing.T) {
+	captured, root := stub(t, "")
+	mutable(t, root)
+	declaresStryker(t, root)
+
+	_ = RunMutate([]string{"src/a.ts", "--upgrade"}, io.Discard)
+
+	install := strings.Join(commandFor(t, captured, "npm").Args, " ")
+	for _, want := range []string{"--save-dev", "@stryker-mutator/core@latest", "@stryker-mutator/vitest-runner@latest"} {
+		if !strings.Contains(install, want) {
+			t.Errorf("--upgrade did not ask for %s: %s", want, install)
+		}
+	}
+}
+
+// Nothing declared is nothing to overwrite, so the newest is the right answer.
+func TestMutateAddsStrykerAtLatestWhenTheProjectHasNone(t *testing.T) {
+	captured, root := stub(t, "")
+	mutable(t, root)
+
+	_ = RunMutate([]string{"src/a.ts"}, io.Discard)
+
+	install := strings.Join(commandFor(t, captured, "npm").Args, " ")
+	if !strings.Contains(install, "@stryker-mutator/core@latest") {
+		t.Errorf("an undeclared Stryker was not added at @latest: %s", install)
+	}
+}
+
 // A project that cannot be given a Stryker is told so, and told what to run.
 //
 // The refusal exists because the alternative was measured and is worse: the
