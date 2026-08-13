@@ -1798,7 +1798,7 @@ func TestWriteHumanCollisionNarrowsToDifferingKeys(t *testing.T) {
 	}
 
 	// And it says how many it left out, rather than silently shortening.
-	if !strings.Contains(out, "3 identical") {
+	if !strings.Contains(out, "3 key(s) hidden") {
 		t.Errorf("output hides 3 keys without saying so:\n%s", out)
 	}
 }
@@ -1997,7 +1997,92 @@ func TestWriteHumanCollisionComparesValuesNotTheirFormatting(t *testing.T) {
 	if strings.Contains(out, "threshold") {
 		t.Errorf("threshold is 3 on both sides and differs only in spacing, so it carries no decision:\n%s", out)
 	}
-	if !strings.Contains(out, "1 identical") {
+	if !strings.Contains(out, "1 key(s) hidden") {
 		t.Errorf("the whitespace-only difference was not recognised as agreement:\n%s", out)
+	}
+}
+
+// TestWriteHumanCollisionNoteDoesNotCallDefaultsIdentical pins the note's
+// accuracy. Two different reasons put a key in the hidden set — it is
+// identical on both sides, or only the resolved side declares it at all —
+// and calling the second kind "identical" is false. Verified live: all 13
+// keys hidden from a real fallow value were defaults dharness never
+// declared, so a note reading "13 identical" was wrong about every one.
+func TestWriteHumanCollisionNoteDoesNotCallDefaultsIdentical(t *testing.T) {
+	ours := jsonRaw(`{"mode":"semantic","shared":1}`)
+	theirs := jsonRaw(`{"mode":"weak","shared":1,"onlyTheirs":true}`)
+	r := Report{Steps: []StepResult{{
+		ID:     "resolve the keys this project and dharness both declare",
+		Status: Delegated,
+		Collisions: []Collision{{
+			ID:     "sync:collision/duplicates",
+			Key:    "duplicates",
+			Ours:   Declared{Path: ".dharness/fallow.jsonc", Value: &ours},
+			Theirs: Declared{Path: "frontend/.fallowrc.json", Value: &theirs},
+		}},
+	}}}
+
+	var buf bytes.Buffer
+	if err := WriteHuman(&buf, r); err != nil {
+		t.Fatalf("WriteHuman() = %v", err)
+	}
+	out := buf.String()
+
+	if strings.Contains(out, "2 identical") {
+		t.Errorf("the note calls a fallow-only default identical, which is false:\n%s", out)
+	}
+	if !strings.Contains(out, "2 key(s) hidden") {
+		t.Errorf("the note does not state how many keys it left out:\n%s", out)
+	}
+}
+
+// TestWriteJSONKeepsCollisionValuesWholeWhileHumanNarrows pins the split the
+// human view's narrowing depends on: only the rendering for a person drops
+// keys. The JSON twin is read by the model that ran the commit, which wants
+// the value that actually runs — not a diff computed for someone else's
+// eyes. Nothing pinned this before, and without it the narrowing could
+// quietly spread into the machine contract.
+func TestWriteJSONKeepsCollisionValuesWholeWhileHumanNarrows(t *testing.T) {
+	ours := jsonRaw(`{"mode":"semantic","shared":1}`)
+	theirs := jsonRaw(`{"mode":"weak","shared":1,"onlyTheirs":true}`)
+	r := Report{Steps: []StepResult{{
+		ID:     "resolve the keys this project and dharness both declare",
+		Status: Delegated,
+		Collisions: []Collision{{
+			ID:     "sync:collision/duplicates",
+			Key:    "duplicates",
+			Ours:   Declared{Path: ".dharness/fallow.jsonc", Value: &ours},
+			Theirs: Declared{Path: "frontend/.fallowrc.json", Value: &theirs},
+		}},
+	}}}
+
+	var human bytes.Buffer
+	if err := WriteHuman(&human, r); err != nil {
+		t.Fatalf("WriteHuman() = %v", err)
+	}
+	if strings.Contains(human.String(), "shared") {
+		t.Fatalf("fixture no longer exercises narrowing in the human view:\n%s", human.String())
+	}
+
+	var machine bytes.Buffer
+	if err := WriteJSON(&machine, r); err != nil {
+		t.Fatalf("WriteJSON() = %v", err)
+	}
+	var decoded Report
+	if err := json.Unmarshal(machine.Bytes(), &decoded); err != nil {
+		t.Fatalf("json.Unmarshal() = %v", err)
+	}
+	got := decoded.Steps[0].Collisions[0]
+	for name, side := range map[string]*json.RawMessage{"ours": got.Ours.Value, "theirs": got.Theirs.Value} {
+		if side == nil {
+			t.Fatalf("the JSON twin dropped %s's value entirely", name)
+		}
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(*side, &fields); err != nil {
+			t.Fatalf("json.Unmarshal(%s) = %v", name, err)
+		}
+		if _, whole := fields["shared"]; !whole {
+			t.Errorf("the JSON twin narrowed %s: %q — narrowing is the human view's rule alone", name, string(*side))
+		}
 	}
 }

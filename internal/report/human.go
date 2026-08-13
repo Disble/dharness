@@ -401,7 +401,13 @@ func writeCollision(b *strings.Builder, c Collision) {
 	writeDeclaredSide(b, "dharness", c.Ours, ours, effectiveMark(c, "ours"), false)
 	writeDeclaredSide(b, "project", c.Theirs, theirs, effectiveMark(c, "theirs"), true)
 	if hidden > 0 {
-		fmt.Fprintf(b, "%snote: %d identical key(s) hidden\n",
+		// Two different reasons put a key in this set — it holds the same
+		// value on both sides, or only the resolved side declares it at
+		// all — so the note names both rather than calling every hidden
+		// key identical. Measured live, all 13 keys hidden from a real
+		// fallow value were defaults dharness never declared, and a note
+		// reading "13 identical" was false about every one of them.
+		fmt.Fprintf(b, "%snote: %d key(s) hidden — same on both sides, or defaults only fallow sets\n",
 			strings.Repeat(" ", declaredSideIndent), hidden)
 	}
 	b.WriteString("\n")
