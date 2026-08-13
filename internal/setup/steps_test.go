@@ -351,6 +351,97 @@ func TestCollisionsComputesEachKeyOnce(t *testing.T) {
 	}
 }
 
+// TestCollisionsOursNamesTheOwnedFallowPath pins gap 10 from the team
+// lead's measured run: Collision.Ours.Path must name the file dharness owns
+// (.dharness/fallow.jsonc), never an empty string — a reader cannot act on
+// "dharness: <value>" with nowhere to look.
+func TestCollisionsOursNamesTheOwnedFallowPath(t *testing.T) {
+	root := t.TempDir()
+	writeProjectFallow(t, root, `{"boundaries":{"zones":[]}}`)
+	p := project.Project{Root: root, Source: root}
+
+	collisions := Collisions(p)
+	if len(collisions) != 1 {
+		t.Fatalf("Collisions() = %+v, want exactly 1", collisions)
+	}
+	want := filepath.ToSlash(filepath.Join(project.Dir, ownedFallow))
+	if collisions[0].Ours.Path != want {
+		t.Errorf("Ours.Path = %q, want %q", collisions[0].Ours.Path, want)
+	}
+}
+
+// TestCollisionsOursLineMeasuresTheOwnedFileWhenItExists triangulates the
+// case above once the owned file is actually on disk (as it is by the time
+// boundariesOwnerStep runs inside setup.Run, since ownedFilesStep applies
+// first in Plan() order): the line number must be measured from that real
+// file, not left at the zero sentinel declaredAt documents for "not found".
+func TestCollisionsOursLineMeasuresTheOwnedFileWhenItExists(t *testing.T) {
+	root := t.TempDir()
+	writeProjectFallow(t, root, `{"boundaries":{"zones":[]}}`)
+	ownedPath := filepath.Join(root, project.Dir, ownedFallow)
+	if err := os.MkdirAll(filepath.Dir(ownedPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ownedPath, []byte("{\n  \"boundaries\": []\n}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p := project.Project{Root: root, Source: root}
+
+	collisions := Collisions(p)
+	if len(collisions) != 1 {
+		t.Fatalf("Collisions() = %+v, want exactly 1", collisions)
+	}
+	if collisions[0].Ours.Line != 2 {
+		t.Errorf("Ours.Line = %d, want 2 (the line declaring \"boundaries\" in the owned file)", collisions[0].Ours.Line)
+	}
+}
+
+// TestCollisionsTheirsPathIsRootRelative pins a defect found while verifying
+// the human collision block against a real project: fallowConfigPath(p.Source)
+// is an absolute filesystem path, and Collisions used to store it verbatim —
+// the collision block ends up unreadable ("project
+// C:\Users\...\frontend\.fallowrc.json") instead of the short, root-relative
+// form Ours.Path already uses (.dharness/fallow.jsonc) and Report.Source
+// itself already uses (p.SourceRel()).
+func TestCollisionsTheirsPathIsRootRelative(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "frontend")
+	if err := os.MkdirAll(source, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeProjectFallow(t, source, `{"boundaries":{"zones":[]}}`)
+	p := project.Project{Root: root, Source: source}
+
+	collisions := Collisions(p)
+	if len(collisions) != 1 {
+		t.Fatalf("Collisions() = %+v, want exactly 1", collisions)
+	}
+	want := "frontend/" + fallowConfig
+	if collisions[0].Theirs.Path != want {
+		t.Errorf("Theirs.Path = %q, want %q (root-relative, matching Ours.Path's own convention)", collisions[0].Theirs.Path, want)
+	}
+}
+
+// TestCollisionsAlwaysCarriesTheTwoResolutions pins gap 11: Resolutions must
+// never be null — there is exactly one way to resolve any config collision
+// on a key dharness also owns (delete the project's own declaration, or move
+// it into the file dharness owns), whether or not effective was ever
+// measured.
+func TestCollisionsAlwaysCarriesTheTwoResolutions(t *testing.T) {
+	root := t.TempDir()
+	writeProjectFallow(t, root, `{"boundaries":{"zones":[]}}`)
+	p := project.Project{Root: root, Source: root}
+
+	collisions := Collisions(p)
+	if len(collisions) != 1 {
+		t.Fatalf("Collisions() = %+v, want exactly 1", collisions)
+	}
+	want := []string{"delete-theirs", "move-into-ours"}
+	if !slices.Equal(collisions[0].Resolutions, want) {
+		t.Errorf("Resolutions = %v, want %v", collisions[0].Resolutions, want)
+	}
+}
+
 // TestCollisionsSpawnsNoProcessWithNoCollidingKey pins design.md Decision
 // 5's "cheaper than the proposal's one cheap probe, and free (§13)": with
 // nothing colliding, Collisions must never call resolvedConfig at all, not

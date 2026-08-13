@@ -815,6 +815,35 @@ func TestScopedMutationEvidenceSurvivesBothViewsRegardless(t *testing.T) {
 	}
 }
 
+// TestSyncJSONCarriesProjectContextForTheHeaderBlock pins gap 7's model
+// wiring: the header block the human view needs (package manager, test
+// runner, presets, owned files, version) has to come from the same Report
+// the JSON twin renders, not a second computation — so it is asserted here
+// at the JSON layer, where a decoded value is unambiguous.
+func TestSyncJSONCarriesProjectContextForTheHeaderBlock(t *testing.T) {
+	previous := Version
+	Version = "9.9.9"
+	t.Cleanup(func() { Version = previous })
+
+	stubRunner(t)
+	jsonReport := syncJSON(t, func(root string) {
+		writeFile(t, filepath.Join(root, "package.json"), `{"devDependencies":{"vitest":"^4.0.0"}}`)
+	})
+
+	if jsonReport.Version != "9.9.9" {
+		t.Errorf("Version = %q, want %q", jsonReport.Version, "9.9.9")
+	}
+	if jsonReport.PackageManager != "bun" {
+		t.Errorf("PackageManager = %q, want %q", jsonReport.PackageManager, "bun")
+	}
+	if jsonReport.TestRunner != "vitest" {
+		t.Errorf("TestRunner = %q, want %q", jsonReport.TestRunner, "vitest")
+	}
+	if jsonReport.OwnedDir == "" {
+		t.Error("OwnedDir is empty, want the directory dharness owns")
+	}
+}
+
 // TestNoReportFileIsPersisted pins "no report is persisted to a file" at
 // the integration layer: every file that differs after a --format json run
 // is one report.Steps[].Wrote itself names — nothing else appeared,

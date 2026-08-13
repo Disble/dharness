@@ -18,6 +18,14 @@ const (
 	glyphApplied   = "✓"
 	glyphFailed    = "✗"
 	glyphSeparator = "·"
+
+	// glyphSatisfied marks an "Already in place" row. It is its own
+	// constant, distinct from glyphGutter, because the legend the Applied
+	// block prints assigns the gutter glyph to subprocess output alone —
+	// reusing it for a satisfied step's row collided the two meanings on
+	// the same character (measured gap: the team lead's real run rendered
+	// both under │).
+	glyphSatisfied = "="
 )
 
 // wrapWidth is fixed rather than queried from the terminal (design.md
@@ -97,6 +105,7 @@ func wrap(text string, width, indent int) []string {
 func WriteHuman(w io.Writer, r Report) error {
 	var b strings.Builder
 
+	writeHeaderBlock(&b, r)
 	writeSummaryLine(&b, r)
 	writeAppliedBlock(&b, r)
 	writeFailedBlock(&b, r)
@@ -123,6 +132,64 @@ func stepsWithStatus(steps []StepResult, status Status) []StepResult {
 		}
 	}
 	return matched
+}
+
+// writeHeaderBlock states the project context every per-step line silently
+// assumed, before any per-step detail (defect 12, gap 7): which directory
+// holds the JS project, which package manager and test runner were
+// detected, which presets matched, and where dharness's own files live.
+// Omitted entirely when Root is empty — a Report built to exercise one
+// block in isolation carries no project to describe, the same "nothing to
+// say" rule writeNotesBlock already follows for an empty Notes slice.
+//
+// This is a deliberately simplified single-column layout, not
+// target-report.md's two-column grid: target-report.md is a design
+// reference, not a byte contract, and the fact this block exists to carry
+// (defect 12) is the project context, not its exact grid position. The
+// approved report's "read" line (which config files this run opened) is not
+// reproduced here — there is no tracked concept of "files read this run" in
+// the model yet, and inventing one to fill a header line would be exactly
+// the fabrication §09 forbids.
+func writeHeaderBlock(b *strings.Builder, r Report) {
+	if r.Root == "" {
+		return
+	}
+
+	fmt.Fprintf(b, "dharness %s %s sync %s %s\n\n", r.Version, glyphSeparator, glyphSeparator, r.Root)
+
+	jsProject := r.Source
+	if jsProject == "" {
+		jsProject = "repository root"
+	}
+	presets := "none matched"
+	if len(r.Presets) > 0 {
+		presets = strings.Join(r.Presets, ", ")
+	}
+
+	fmt.Fprintf(b, "  js project       %s\n", jsProject)
+	fmt.Fprintf(b, "  package manager  %s\n", orNone(r.PackageManager))
+	fmt.Fprintf(b, "  test runner      %s\n", orNone(r.TestRunner))
+	fmt.Fprintf(b, "  presets          %s\n", presets)
+	if r.OwnedDir != "" {
+		fmt.Fprintf(b, "  owned files      %s/\n", r.OwnedDir)
+	}
+	b.WriteString("\n")
+}
+
+// orNone reports "none detected" for a field detection found nothing for,
+// rather than an empty gap in the header line that reads as a rendering bug
+// instead of an honestly measured absence.
+func orNone(s string) string {
+	if s == "" {
+		return "none detected"
+	}
+	return s
+}
+
+// stepLabel is the "n/total" position gap 6 asks for: the JSON twin already
+// carries StepResult.N, and the human view rendered nothing from it.
+func stepLabel(n, total int) string {
+	return fmt.Sprintf("%d/%d", n, total)
 }
 
 func writeSummaryLine(b *strings.Builder, r Report) {
@@ -165,13 +232,19 @@ func writeAppliedBlock(b *strings.Builder, r Report) {
 	fmt.Fprintf(b, "%s Applied (%d) %s\n\n", sectionRule, len(steps), sectionRule)
 	rows := make([][]string, len(steps))
 	for i, step := range steps {
-		rows[i] = []string{step.ID, formatMS(step.MS)}
+		rows[i] = []string{stepLabel(step.N, r.Summary.Steps), step.ID, formatMS(step.MS)}
 	}
 	w := widths(rows)
 	for i, row := range rows {
-		fmt.Fprintf(b, " %s %-*s  %s\n", glyphApplied, w[0], row[0], row[1])
-		if steps[i].Transcript != "" {
-			fmt.Fprintf(b, "         %s %s\n", glyphGutter, steps[i].Transcript)
+		fmt.Fprintf(b, " %s %-*s %-*s  %s\n", glyphApplied, w[0], row[0], w[1], row[1], row[2])
+		// Every line of a step's captured subprocess output is framed under
+		// its own gutter glyph, not only the transcript's first line — a
+		// single prefix over the whole blob left everything after the first
+		// line unframed (gap 2, defect 5 only half fixed).
+		if transcript := strings.TrimRight(steps[i].Transcript, "\n"); transcript != "" {
+			for _, line := range strings.Split(transcript, "\n") {
+				fmt.Fprintf(b, "         %s %s\n", glyphGutter, line)
+			}
 		}
 		for _, installed := range steps[i].Installed {
 			fmt.Fprintf(b, "         %s installed %s\n", glyphGutter, installed)
@@ -180,6 +253,12 @@ func writeAppliedBlock(b *strings.Builder, r Report) {
 			fmt.Fprintf(b, "         %s %s\n", changeGlyph(change.Kind), change.Path)
 		}
 	}
+	// The legend names every glyph this block itself uses (gap 8):
+	// created/modified/unchanged for a touched file, and the gutter for
+	// captured subprocess output — printed once here since this is the one
+	// block where all four can appear.
+	fmt.Fprintf(b, "\n         legend  %s created   %s modified   %s unchanged   %s subprocess\n",
+		changeGlyph(Created), changeGlyph(Modified), changeGlyph(Unchanged), glyphGutter)
 	b.WriteString("\n")
 }
 
@@ -196,11 +275,11 @@ func writeFailedBlock(b *strings.Builder, r Report) {
 	fmt.Fprintf(b, "%s Failed (%d) %s\n\n", sectionRule, len(steps), sectionRule)
 	rows := make([][]string, len(steps))
 	for i, step := range steps {
-		rows[i] = []string{step.ID, formatMS(step.MS)}
+		rows[i] = []string{stepLabel(step.N, r.Summary.Steps), step.ID, formatMS(step.MS)}
 	}
 	w := widths(rows)
 	for i, row := range rows {
-		fmt.Fprintf(b, " %s %-*s  %s\n", glyphFailed, w[0], row[0], row[1])
+		fmt.Fprintf(b, " %s %-*s %-*s  %s\n", glyphFailed, w[0], row[0], w[1], row[1], row[2])
 		if steps[i].Error != "" {
 			fmt.Fprintf(b, "         %s\n", steps[i].Error)
 		}
@@ -220,7 +299,7 @@ func writeRetractedBlock(b *strings.Builder, r Report) {
 
 	fmt.Fprintf(b, "%s Retracted (%d) %s\n\n", sectionRule, len(steps), sectionRule)
 	for _, step := range steps {
-		fmt.Fprintf(b, " %s %s   rolled back\n", glyphGutter, step.ID)
+		fmt.Fprintf(b, " %s %s   %s   rolled back\n", glyphGutter, stepLabel(step.N, r.Summary.Steps), step.ID)
 	}
 	b.WriteString("\n")
 }
@@ -237,7 +316,7 @@ func writeNotReachedBlock(b *strings.Builder, r Report) {
 
 	fmt.Fprintf(b, "%s Not reached (%d) %s\n\n", sectionRule, len(steps), sectionRule)
 	for _, step := range steps {
-		fmt.Fprintf(b, " %s %s\n", glyphSeparator, step.ID)
+		fmt.Fprintf(b, " %s %s   %s\n", glyphSeparator, stepLabel(step.N, r.Summary.Steps), step.ID)
 	}
 	b.WriteString("\n")
 }
@@ -250,11 +329,11 @@ func writeDelegatedBlock(b *strings.Builder, r Report) {
 
 	fmt.Fprintf(b, "%s Left to you (%d) %s\n\n", sectionRule, len(steps), sectionRule)
 	for _, step := range steps {
-		fmt.Fprintf(b, " ! %s\n", step.ID)
+		fmt.Fprintf(b, " ! %s   %s\n", stepLabel(step.N, r.Summary.Steps), step.ID)
 		switch {
 		case len(step.Collisions) > 0:
 			for _, collision := range step.Collisions {
-				fmt.Fprintf(b, "   `%s` needs a decision\n", collision.Key)
+				writeCollision(b, collision)
 			}
 		case step.Why != "":
 			for _, line := range wrap(step.Why, wrapWidth, 3) {
@@ -265,6 +344,84 @@ func writeDelegatedBlock(b *strings.Builder, r Report) {
 	b.WriteString("\n")
 }
 
+// collisionValueUnavailable is what a colliding value's own side states when
+// it could not be measured — never the truncated textual fragment defect 8
+// used to show, and never a guessed value (§09/§17, the same
+// absent-versus-fabricated rule config-collision's own requirement states
+// for effective).
+const collisionValueUnavailable = "could not be shown"
+
+// writeCollision renders one colliding key's full structured fact (gap 1):
+// dharness's own value and where it lives, the project's value and where it
+// lives, which one a measurement says actually runs, and the lettered ways
+// to resolve it — everything the JSON twin already carried that the human
+// view rendered nothing of beyond the bare key name.
+func writeCollision(b *strings.Builder, c Collision) {
+	fmt.Fprintf(b, "\n   `%s` has two owners        id  %s\n\n", c.Key, c.ID)
+
+	writeDeclaredSide(b, "dharness", c.Ours, effectiveMark(c, "ours"))
+	writeDeclaredSide(b, "project", c.Theirs, effectiveMark(c, "theirs"))
+	b.WriteString("\n")
+
+	if len(c.Resolutions) > 0 {
+		b.WriteString("   Pick one owner:\n")
+		for i, slug := range c.Resolutions {
+			fmt.Fprintf(b, "     %s  %s\n", resolutionLetter(i), collisionResolutionText(slug, c))
+		}
+		b.WriteString("\n")
+	}
+
+	b.WriteString("   Then re-run `dharness sync` to confirm.\n")
+}
+
+// writeDeclaredSide renders one side of a collision — its location (path,
+// and line when known) and its value, or collisionValueUnavailable when it
+// could not be measured, plus mark when a measurement says this is the side
+// that runs.
+func writeDeclaredSide(b *strings.Builder, label string, d Declared, mark string) {
+	location := d.Path
+	if d.Line > 0 {
+		location = fmt.Sprintf("%s:%d", d.Path, d.Line)
+	}
+	value := collisionValueUnavailable
+	if d.Value != nil {
+		value = string(*d.Value)
+	}
+	fmt.Fprintf(b, "     %-8s  %s\n               %s%s\n", label, location, value, mark)
+}
+
+// effectiveMark names which side a measurement says actually runs, or ""
+// when effective was never measured — an absent effective must never imply
+// either side (config-collision's own "absent, never fabricated" rule).
+func effectiveMark(c Collision, side string) string {
+	if c.Effective != nil && *c.Effective == side {
+		return "   ← this one runs"
+	}
+	return ""
+}
+
+// resolutionLetter names the nth resolution a, b, c... — there are never
+// more than two today (delete-theirs, move-into-ours), but the letters are
+// derived from position rather than hardcoded so a third resolution would
+// not need this function rewritten.
+func resolutionLetter(i int) string {
+	return string(rune('a' + i))
+}
+
+// collisionResolutionText renders one resolution slug as the sentence a
+// person acts on, naming the actual paths this collision found — not a
+// generic instruction that could belong to any collision.
+func collisionResolutionText(slug string, c Collision) string {
+	switch slug {
+	case "delete-theirs":
+		return fmt.Sprintf("delete `%s` from %s", c.Key, c.Theirs.Path)
+	case "move-into-ours":
+		return fmt.Sprintf("move your value into %s, delete the copy", c.Ours.Path)
+	default:
+		return slug
+	}
+}
+
 func writeSatisfiedBlock(b *strings.Builder, r Report) {
 	steps := stepsWithStatus(r.Steps, Satisfied)
 	if len(steps) == 0 {
@@ -272,13 +429,19 @@ func writeSatisfiedBlock(b *strings.Builder, r Report) {
 	}
 
 	fmt.Fprintf(b, "%s Already in place (%d) %s\n\n", sectionRule, len(steps), sectionRule)
-	rows := make([][]string, len(steps))
-	for i, step := range steps {
-		rows[i] = []string{step.ID, step.Evidence}
-	}
-	w := widths(rows)
-	for _, row := range rows {
-		fmt.Fprintf(b, " %s %-*s  %s\n", glyphGutter, w[0], row[0], row[1])
+	// Evidence renders on its own indented line beneath the step's ID rather
+	// than in a column aligned across every row: this product's step IDs are
+	// full sentences, and a real run measured what that column-alignment
+	// forces — a long ID anywhere in the block leaves almost no room for
+	// evidence in every row, so even a short fact wraps needlessly (gap 4's
+	// wrapping requirement, satisfied here without the side effect). The
+	// fixed 9-space indent matches the Applied block's own sub-detail lines
+	// (Transcript/Installed/Wrote), so both blocks read the same way.
+	for _, step := range steps {
+		fmt.Fprintf(b, " %s %s   %s\n", glyphSatisfied, stepLabel(step.N, r.Summary.Steps), step.ID)
+		for _, line := range wrap(step.Evidence, wrapWidth-9, 0) {
+			fmt.Fprintf(b, "         %s\n", line)
+		}
 	}
 	b.WriteString("\n")
 }
@@ -359,9 +522,18 @@ func writeFailureTally(b *strings.Builder, r Report) {
 // none remain. The closing block's next pointer, distinct from the earlier
 // per-step "Left to you" detail: a run with delegated work names it again
 // here so the closing tally is a complete answer on its own.
+//
+// A step carrying a collision names the collision's own addressable handle
+// (Collision.ID, e.g. "sync:collision/duplicates") rather than the step's
+// prose heading (gap 9) — the same distinction design.md Decision 1 draws
+// between StepResult.ID (a sentence) and Collision.ID (the one thing this
+// report points at).
 func firstDelegatedID(steps []StepResult) string {
 	for _, step := range steps {
 		if step.Status == Delegated {
+			if len(step.Collisions) > 0 {
+				return step.Collisions[0].ID
+			}
 			return step.ID
 		}
 	}

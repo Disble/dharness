@@ -93,7 +93,67 @@ func (installStep) Apply(p project.Project, w *Writer, out io.Writer) (Facts, er
 	if installErr != nil {
 		return Facts{}, installErr
 	}
-	return Facts{Installed: packages}, nil
+	return Facts{Installed: installedWithVersions(p, packages)}, nil
+}
+
+// installedWithVersions names each installed package the way a reader can
+// act on: "name@version", not the bare name Facts.Installed named before —
+// "installed dharness-eslint-plugin" says nothing about what actually
+// landed (gap 3, from the team lead's measured run). The version is read
+// back from package.json after the install this same call just ran, never
+// invented: a package this run added but package.json does not (yet)
+// resolve — an unreadable file, a manager that writes it differently, a
+// name this scan does not find — falls back to its bare name rather than a
+// fabricated version, matching the "reported whole or not at all" rule
+// config-collision's own requirement states for a colliding value.
+//
+// This is a disclosed, deliberate departure from design.md Decision 2
+// ("Facts.Installed names what dharness asked for, no version"): that
+// decision reasoned from what Apply could answer from its own inputs alone.
+// The measured gap shows a reader needs more than that, and package.json is
+// already read back after every install for exactly this purpose. The
+// caveat design.md's own reasoning correctly anticipated: package.json may
+// record a caret/tilde range rather than the exact resolved version,
+// depending on the project's own package-manager settings — this reports
+// whatever range or exact version package.json actually carries, stripped
+// of the range operator, never a version measured from a lockfile (which
+// differs by manager and is out of scope here per CLAUDE.md's "if the CLI
+// already does it, dharness does not do it").
+func installedWithVersions(p project.Project, packages []string) []string {
+	raw, err := os.ReadFile(filepath.Join(p.Source, "package.json"))
+	if err != nil {
+		return packages
+	}
+	var pkg struct {
+		Dependencies    map[string]string `json:"dependencies"`
+		DevDependencies map[string]string `json:"devDependencies"`
+	}
+	if json.Unmarshal(raw, &pkg) != nil {
+		return packages
+	}
+
+	versioned := make([]string, len(packages))
+	for i, name := range packages {
+		// !ok is a proven equivalent condition to version == "" here, not
+		// tested separately (mutation-tdd: disable only a proven
+		// equivalent mutant, at the narrowest location, with a written
+		// reason): Go's comma-ok map lookup always yields the zero value
+		// ("") for version when a lookup misses, on both the
+		// DevDependencies and (if that also misses) Dependencies try, so
+		// !ok can never be true while version is non-empty. The `!ok ||`
+		// term is kept for readability — "not found, or found empty" — not
+		// because it changes behaviour in any reachable state.
+		version, ok := pkg.DevDependencies[name]
+		if !ok {
+			version, ok = pkg.Dependencies[name]
+		}
+		if !ok || version == "" {
+			versioned[i] = name
+			continue
+		}
+		versioned[i] = name + "@" + strings.TrimLeft(version, "^~")
+	}
+	return versioned
 }
 
 // integrationPackages lists the packages dharness adds to p, as opposed to
@@ -573,17 +633,36 @@ func Collisions(p project.Project) []report.Collision {
 
 	resolved, ok := resolvedConfig(p)
 	path := fallowConfigPath(p.Source)
+	// Theirs.Path is rendered directly in the human collision block (gap 1),
+	// so it is stated the same root-relative way Ours.Path and
+	// Report.Source already are — fallowConfigPath itself returns an
+	// absolute filesystem path, which is unreadable there (measured against
+	// a real project during verification: "project
+	// C:\Users\...\frontend\.fallowrc.json"). declaredAt still reads from
+	// the real absolute path; only the displayed value is relativised.
+	displayPath := path
+	if rel, err := filepath.Rel(p.Root, path); err == nil {
+		displayPath = rel
+	}
 
 	collisions := make([]report.Collision, 0, len(colliding))
 	for _, key := range colliding {
 		collision := report.Collision{
 			ID:   "sync:collision/" + key,
 			Key:  key,
-			Ours: ourDeclared(key, matches),
+			Ours: ourDeclared(p, key, matches),
 			Theirs: report.Declared{
-				Path: filepath.ToSlash(path),
+				Path: filepath.ToSlash(displayPath),
 				Line: declaredAt(path, key),
 			},
+			// Resolutions is always the same pair, whether or not effective
+			// was ever measured: deleting the project's own declaration or
+			// moving it into the file dharness owns are the only two ways
+			// any collision on a key dharness also owns can be resolved —
+			// unlike effective, this fact needs no measurement to state
+			// (gap 11: the field existed on the model since slice 1 and was
+			// never populated here).
+			Resolutions: collisionResolutions,
 		}
 
 		if ok {
@@ -604,24 +683,45 @@ func Collisions(p project.Project) []report.Collision {
 	return collisions
 }
 
+// collisionResolutions are the two ways any config collision on a key
+// dharness also owns can be resolved. There is no third: both sides declare
+// the same key, and fallow's `extends` can only ever honour one of them.
+var collisionResolutions = []string{"delete-theirs", "move-into-ours"}
+
 // ourDeclared reports dharness's own side of a collision: the value it
 // wrote, or is about to write, into the file it owns — reported whole, per
-// the "colliding value is reported whole or not at all" requirement. A
-// matched preset's composed fact already marshals to JSON through
+// the "colliding value is reported whole or not at all" requirement — and
+// where that file is: the owned fallow.jsonc always, and the line inside it
+// that declares key when the file already exists on disk (gap 10 — Path was
+// left empty, so the human view's "dharness: <value>" had nowhere to point
+// a reader). By the time boundariesOwnerStep is evaluated inside setup.Run,
+// ownedFilesStep has already applied earlier in Plan() order and written
+// this same file, so the line is measured from the real file, not guessed
+// at; declaredAt's own documented sentinel (0, omitted by Declared.Line's
+// json tag) covers the case where it does not exist yet, matching Theirs'
+// own already-established absent-line behaviour.
+//
+// A matched preset's composed fact already marshals to JSON through
 // ownedValue's own json.Marshal; boundaries' own case has no fixed value
 // yet — it is agent-authored — so ownedValue's prose is carried as a JSON
 // string instead of guessed at as structured data.
 //
 // json.Marshal of a Go string cannot fail — it has no channel, function or
 // cycle to reject — so there is no error branch here to check for one.
-func ourDeclared(key string, matches []preset.Match) report.Declared {
+func ourDeclared(p project.Project, key string, matches []preset.Match) report.Declared {
 	value := ownedValue(key, matches)
 	raw := json.RawMessage(value)
 	if !json.Valid(raw) {
 		encoded, _ := json.Marshal(value)
 		raw = json.RawMessage(encoded)
 	}
-	return report.Declared{Value: &raw}
+
+	ownedPath := filepath.Join(p.Root, project.Dir, ownedFallow)
+	return report.Declared{
+		Path:  filepath.ToSlash(filepath.Join(project.Dir, ownedFallow)),
+		Line:  declaredAt(ownedPath, key),
+		Value: &raw,
+	}
 }
 
 // boundariesFallbackDescribe/Why are the single-key text this step always

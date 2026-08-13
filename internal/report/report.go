@@ -33,9 +33,23 @@ const (
 )
 
 type Report struct {
-	Version  string       `json:"version"`
-	Root     string       `json:"root"`
-	Source   string       `json:"source,omitempty"`
+	Version string `json:"version"`
+	Root    string `json:"root"`
+	Source  string `json:"source,omitempty"`
+
+	// PackageManager, TestRunner, Presets and OwnedDir are the project
+	// context the human view's header block states before any per-step
+	// detail (defect 12's "no header block" — a reader had no way to know
+	// which package manager or test runner a run's own steps assumed
+	// without reading Describe text meant for a different question).
+	// Omitted, not fabricated, when detection found nothing: PackageManager
+	// falls back to "npm" at detection time (internal/project/detect.go),
+	// so it is never empty for a real run; TestRunner and Presets can be.
+	PackageManager string   `json:"packageManager,omitempty"`
+	TestRunner     string   `json:"testRunner,omitempty"`
+	Presets        []string `json:"presets,omitempty"`
+	OwnedDir       string   `json:"ownedDir,omitempty"`
+
 	Summary  Summary      `json:"summary"`
 	Steps    []StepResult `json:"steps"`
 	Notes    []Note       `json:"notes,omitempty"`

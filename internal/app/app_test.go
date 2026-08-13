@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Disble/dharness/internal/cli"
 	"github.com/Disble/dharness/internal/runner"
 )
 
@@ -66,6 +67,25 @@ func TestRunArgsVersionPrintsResolvedVersion(t *testing.T) {
 	}
 	if got := strings.TrimSpace(out.String()); got != "dharness 9.9.9" {
 		t.Errorf("version output = %q", got)
+	}
+}
+
+// TestRunArgsPropagatesVersionToCLI pins the other half of gap 7/12:
+// internal/cli cannot import internal/app (app already imports cli), so the
+// only way RunSync's report can ever carry a real version is if RunArgs
+// forwards it through cli.Version before dispatch — for every command, not
+// only "sync", since the forwarding has to happen before RunArgs knows
+// which command was asked for.
+func TestRunArgsPropagatesVersionToCLI(t *testing.T) {
+	previousApp, previousCLI := Version, cli.Version
+	Version = "9.9.9"
+	t.Cleanup(func() { Version = previousApp; cli.Version = previousCLI })
+
+	if err := RunArgs([]string{"help"}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("RunArgs() = %v", err)
+	}
+	if cli.Version != "9.9.9" {
+		t.Errorf("cli.Version = %q, want %q", cli.Version, "9.9.9")
 	}
 }
 

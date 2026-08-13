@@ -22,6 +22,8 @@ func Run() error {
 }
 
 func RunArgs(args []string, stdout io.Writer) error {
+	cli.Version = Version
+
 	if len(args) == 0 {
 		printHelp(stdout, Version)
 		return nil

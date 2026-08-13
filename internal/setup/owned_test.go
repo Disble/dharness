@@ -281,6 +281,37 @@ func TestOwnedFilesSatisfiedRequiresEveryOwnedFileToExist(t *testing.T) {
 	}
 }
 
+// TestOwnedFilesSatisfiedRequiresRulesJSONAfterAFullApply is a mutation
+// guard for the ownedLefthook/ownedRules existence loop: unlike
+// TestOwnedFilesSatisfiedRequiresEveryOwnedFileToExist (whose fixture never
+// wrote eslint.config.js, so a mutant skipping this loop entirely would
+// still fail Satisfied() later, for the wrong reason, hiding the gap), this
+// runs a full Apply() first — every other check the function makes
+// afterwards (region bytes, eslint bytes, the gitignore entry) genuinely
+// passes — then removes only rules.json by hand. A mutant that breaks out
+// of the loop before ever checking either file's existence would let this
+// incorrectly report satisfied, since nothing downstream would catch it.
+func TestOwnedFilesSatisfiedRequiresRulesJSONAfterAFullApply(t *testing.T) {
+	root := t.TempDir()
+	p := project.At(root, root)
+	p.InRepository = true
+
+	if _, err := (ownedFilesStep{}).Apply(p, &Writer{}, io.Discard); err != nil {
+		t.Fatalf("Apply() = %v", err)
+	}
+	if !(ownedFilesStep{}).Satisfied(p) {
+		t.Fatal("Satisfied() = false immediately after Apply()")
+	}
+
+	if err := os.Remove(filepath.Join(root, project.Dir, ownedRules)); err != nil {
+		t.Fatal(err)
+	}
+
+	if (ownedFilesStep{}).Satisfied(p) {
+		t.Error("Satisfied() = true after rules.json was removed by hand, want false — the existence loop must not be skipped")
+	}
+}
+
 func TestOwnedFilesSatisfiedComparesRegionBytesOnly(t *testing.T) {
 	root := t.TempDir()
 	p := project.At(root, root)

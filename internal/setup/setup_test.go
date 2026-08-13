@@ -247,6 +247,25 @@ func TestRunReturnsAStepResultForEveryPlanStep(t *testing.T) {
 	}
 }
 
+// TestRunNumbersStepsFromOneInPlanOrder is a mutation guard for run's own
+// `n := i + 1`: N must be the step's 1-based position in Plan() order, not
+// merely non-zero — the human view's "n/total" numbering (gap 6) reads
+// directly from it, so an off-by-one here would misnumber every step.
+func TestRunNumbersStepsFromOneInPlanOrder(t *testing.T) {
+	steps, _, err := run([]Step{stubSatisfiedStep{}, stubSatisfiedStep{}, stubSatisfiedStep{}}, project.Project{})
+	if err != nil {
+		t.Fatalf("run() = %v", err)
+	}
+	if len(steps) != 3 {
+		t.Fatalf("run() returned %d steps, want 3", len(steps))
+	}
+	for i, step := range steps {
+		if want := i + 1; step.N != want {
+			t.Errorf("steps[%d].N = %d, want %d", i, step.N, want)
+		}
+	}
+}
+
 // TestRunReadsNotesBeforeAnyByteChanges pins design.md Decision 8: notes are
 // read first inside Run, before the loop touches anything. A stub step
 // whose Apply writes .fallowrc.json would, if UncheckableConfigNote were
@@ -356,9 +375,254 @@ func TestSatisfiedStepCarriesEvidenceNotBareStatus(t *testing.T) {
 	if steps[0].Evidence == "" {
 		t.Error("Evidence is empty for a satisfied step, want a status word plus a supporting fact")
 	}
-	if want := firstLine((fallowExtendsStep{}).Describe(p)); steps[0].Evidence != want {
+	// Gap 4 from the team lead's measured run: a satisfied step's evidence
+	// must be the detection fact that satisfied it, not Describe's first
+	// line — which for most steps is fix instructions for the unsatisfied
+	// case, actively wrong read as evidence nothing needs doing. spec.md's
+	// own scenario names this exact step and this exact fact
+	// ("`.fallowrc.json` already contains `extends →
+	// .dharness/fallow.jsonc`").
+	want := "extends → " + ownedFrom(p, p.Source, ownedFallow)
+	if steps[0].Evidence != want {
 		t.Errorf("Evidence = %q, want the step's own detection fact %q", steps[0].Evidence, want)
 	}
+}
+
+// TestSatisfiedStepsCarryTheirOwnDetectionFactNotDescribesFixInstructions
+// extends the guard above (gap 4) to every other step whose satisfied
+// evidence used to reuse Describe's first line — instructions for the
+// unsatisfied case, not a fact about why this run found nothing to do. The
+// team lead's measured example was legacyLintConfigStep, observed showing
+// "Make .eslintrc.json parse, or delete it..." as if that were evidence
+// nothing needed fixing.
+func TestSatisfiedStepsCarryTheirOwnDetectionFactNotDescribesFixInstructions(t *testing.T) {
+	t.Run("lefthookExtendsStep, wired", func(t *testing.T) {
+		root := t.TempDir()
+		p := project.Project{Root: root, Source: root}
+		writeStepFixtureFile(t, root, "lefthook.yml", "extends:\n  - .dharness/lefthook.yml\n")
+		if !(lefthookExtendsStep{}).Satisfied(p) {
+			t.Fatal("fixture is not satisfied; fix the test before trusting its assertion")
+		}
+		steps, _, err := run([]Step{lefthookExtendsStep{}}, p)
+		if err != nil || len(steps) != 1 {
+			t.Fatalf("run() = %+v, %v", steps, err)
+		}
+		if want := "extends → " + ownedFrom(p, p.Root, ownedLefthook); steps[0].Evidence != want {
+			t.Errorf("Evidence = %q, want %q", steps[0].Evidence, want)
+		}
+	})
+
+	t.Run("lefthookExtendsStep, no lefthook manager", func(t *testing.T) {
+		root := t.TempDir()
+		p := project.Project{Root: root, Source: root}
+		if !(lefthookExtendsStep{}).Satisfied(p) {
+			t.Fatal("fixture is not satisfied; fix the test before trusting its assertion")
+		}
+		steps, _, err := run([]Step{lefthookExtendsStep{}}, p)
+		if err != nil || len(steps) != 1 {
+			t.Fatalf("run() = %+v, %v", steps, err)
+		}
+		if steps[0].Evidence == "" {
+			t.Error("Evidence is empty")
+		}
+	})
+
+	t.Run("legacyLintConfigStep, file not present", func(t *testing.T) {
+		root := t.TempDir()
+		p := project.Project{Root: root, Source: root}
+		if !(legacyLintConfigStep{}).Satisfied(p) {
+			t.Fatal("fixture is not satisfied; fix the test before trusting its assertion")
+		}
+		steps, _, err := run([]Step{legacyLintConfigStep{}}, p)
+		if err != nil || len(steps) != 1 {
+			t.Fatalf("run() = %+v, %v", steps, err)
+		}
+		if steps[0].Evidence != "not present" {
+			t.Errorf("Evidence = %q, want %q", steps[0].Evidence, "not present")
+		}
+	})
+
+	t.Run("legacyLintConfigStep, file present and parses", func(t *testing.T) {
+		root := t.TempDir()
+		p := project.Project{Root: root, Source: root}
+		writeStepFixtureFile(t, root, legacyLintConfig, "{}")
+		if !(legacyLintConfigStep{}).Satisfied(p) {
+			t.Fatal("fixture is not satisfied; fix the test before trusting its assertion")
+		}
+		steps, _, err := run([]Step{legacyLintConfigStep{}}, p)
+		if err != nil || len(steps) != 1 {
+			t.Fatalf("run() = %+v, %v", steps, err)
+		}
+		if steps[0].Evidence != "parses" {
+			t.Errorf("Evidence = %q, want %q", steps[0].Evidence, "parses")
+		}
+		if strings.Contains(steps[0].Evidence, "Make") {
+			t.Errorf("Evidence = %q still reuses Describe's fix-instruction text", steps[0].Evidence)
+		}
+	})
+
+	t.Run("mcpStep", func(t *testing.T) {
+		root := t.TempDir()
+		p := project.Project{Root: root, Source: root}
+		writeStepFixtureFile(t, root, mcpConfig, `{"mcpServers":{"fallow":{"command":"bunx"}}}`)
+		if !(mcpStep{}).Satisfied(p) {
+			t.Fatal("fixture is not satisfied; fix the test before trusting its assertion")
+		}
+		steps, _, err := run([]Step{mcpStep{}}, p)
+		if err != nil || len(steps) != 1 {
+			t.Fatalf("run() = %+v, %v", steps, err)
+		}
+		if want := mcpConfig + " declares fallow"; steps[0].Evidence != want {
+			t.Errorf("Evidence = %q, want %q", steps[0].Evidence, want)
+		}
+	})
+
+	t.Run("hookInstallStep, lefthook", func(t *testing.T) {
+		root := t.TempDir()
+		p := project.Project{Root: root, Source: root}
+		if err := os.MkdirAll(filepath.Join(root, ".git", "hooks"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeStepFixtureFile(t, root, "lefthook.yml", "pre-commit:\n")
+		writeStepFixtureFile(t, filepath.Join(root, ".git", "hooks"), "pre-commit", "lefthook run pre-commit\n")
+		if !(hookInstallStep{}).Satisfied(p) {
+			t.Fatal("fixture is not satisfied; fix the test before trusting its assertion")
+		}
+		steps, _, err := run([]Step{hookInstallStep{}}, p)
+		if err != nil || len(steps) != 1 {
+			t.Fatalf("run() = %+v, %v", steps, err)
+		}
+		if want := filepath.ToSlash(filepath.Join(".git", "hooks", "pre-commit")); steps[0].Evidence != want {
+			t.Errorf("Evidence = %q, want %q", steps[0].Evidence, want)
+		}
+	})
+
+	t.Run("agentSkillStep", func(t *testing.T) {
+		root := t.TempDir()
+		p := project.Project{Root: root, Source: root}
+		skillDir := filepath.Join(root, ".claude", "skills", "react-doctor")
+		if err := os.MkdirAll(skillDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeStepFixtureFile(t, skillDir, "SKILL.md", "# skill\n")
+		if !(agentSkillStep{}).Satisfied(p) {
+			t.Fatal("fixture is not satisfied; fix the test before trusting its assertion")
+		}
+		steps, _, err := run([]Step{agentSkillStep{}}, p)
+		if err != nil || len(steps) != 1 {
+			t.Fatalf("run() = %+v, %v", steps, err)
+		}
+		// The exact candidate is asserted, not merely the word "present":
+		// a mutant inverting os.Stat's error check would skip the real
+		// (existing) candidate and fall through to a later, non-existent
+		// one — which also renders "<path> present", the wrong path.
+		want := filepath.ToSlash(filepath.Join(".claude", "skills", "react-doctor")) + " present"
+		if steps[0].Evidence != want {
+			t.Errorf("Evidence = %q, want %q", steps[0].Evidence, want)
+		}
+	})
+
+	t.Run("eslintExtendsStep, spliced regions already match", func(t *testing.T) {
+		root := t.TempDir()
+		p := project.Project{Root: root, Source: root}
+		if _, err := (eslintExtendsStep{}).Apply(p, &Writer{}, io.Discard); err != nil {
+			t.Fatalf("Apply() = %v", err)
+		}
+		if !(eslintExtendsStep{}).Satisfied(p) {
+			t.Fatal("fixture is not satisfied; fix the test before trusting its assertion")
+		}
+		steps, _, err := run([]Step{eslintExtendsStep{}}, p)
+		if err != nil || len(steps) != 1 {
+			t.Fatalf("run() = %+v, %v", steps, err)
+		}
+		if strings.Contains(steps[0].Evidence, "ESLint's flat config has no") {
+			t.Errorf("Evidence = %q still reuses Describe's truncated fix-instruction text (found live during verification, mirroring the team lead's legacyLintConfigStep example)", steps[0].Evidence)
+		}
+		if steps[0].Evidence == "" {
+			t.Error("Evidence is empty")
+		}
+	})
+
+	t.Run("eslintExtendsStep, TypeScript config always delegates but reports satisfied", func(t *testing.T) {
+		root := t.TempDir()
+		p := project.Project{Root: root, Source: root}
+		writeStepFixtureFile(t, root, "eslint.config.ts", "export default [];\n")
+		if !(eslintExtendsStep{}).Satisfied(p) {
+			t.Fatal("fixture is not satisfied; fix the test before trusting its assertion")
+		}
+		steps, _, err := run([]Step{eslintExtendsStep{}}, p)
+		if err != nil || len(steps) != 1 {
+			t.Fatalf("run() = %+v, %v", steps, err)
+		}
+		if !strings.Contains(steps[0].Evidence, "TypeScript") {
+			t.Errorf("Evidence = %q, want it to name the TypeScript config it found", steps[0].Evidence)
+		}
+	})
+
+	// TestSatisfiedStepsCarryTheirOwnDetectionFactNotDescribesFixInstructions/eslintExtendsStep,_legacy-only_config
+	// is the TypeScript case's sibling: a legacy-only project (no flat
+	// config, no TypeScript config, one legacy .eslintrc.json) also always
+	// delegates and reports satisfied — a mutant inverting
+	// eslintLegacyConfig(...) != "" would make this branch unreachable
+	// without breaking the TypeScript case above, since both branches
+	// share the same switch.
+	t.Run("eslintExtendsStep, legacy-only config", func(t *testing.T) {
+		root := t.TempDir()
+		p := project.Project{Root: root, Source: root}
+		writeStepFixtureFile(t, root, ".eslintrc.json", "{}")
+		if !(eslintExtendsStep{}).Satisfied(p) {
+			t.Fatal("fixture is not satisfied; fix the test before trusting its assertion")
+		}
+		steps, _, err := run([]Step{eslintExtendsStep{}}, p)
+		if err != nil || len(steps) != 1 {
+			t.Fatalf("run() = %+v, %v", steps, err)
+		}
+		if !strings.Contains(steps[0].Evidence, "legacy") {
+			t.Errorf("Evidence = %q, want it to name the legacy-only config it found", steps[0].Evidence)
+		}
+	})
+
+	// eslintExtendsStep, config could not be read is a mutation guard for
+	// the os.ReadFile error branch: a directory named eslint.config.js
+	// exists (so eslintFlatConfig finds it — os.Stat succeeds on a
+	// directory too) but cannot be read as a file, the portable way to
+	// force this branch without relying on filesystem permissions.
+	t.Run("eslintExtendsStep, config could not be read", func(t *testing.T) {
+		root := t.TempDir()
+		p := project.Project{Root: root, Source: root}
+		if err := os.MkdirAll(filepath.Join(root, eslintConfig), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if !(eslintExtendsStep{}).Satisfied(p) {
+			t.Fatal("fixture is not satisfied; fix the test before trusting its assertion")
+		}
+		steps, _, err := run([]Step{eslintExtendsStep{}}, p)
+		if err != nil || len(steps) != 1 {
+			t.Fatalf("run() = %+v, %v", steps, err)
+		}
+		if !strings.Contains(steps[0].Evidence, "could not be read") {
+			t.Errorf("Evidence = %q, want it to say the config could not be read", steps[0].Evidence)
+		}
+	})
+
+	t.Run("architectureStep", func(t *testing.T) {
+		root := t.TempDir()
+		p := project.Project{Root: root, Source: root}
+		if err := os.MkdirAll(filepath.Join(root, project.Dir), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeStepFixtureFile(t, filepath.Join(root, project.Dir), ownedFallow, `{"boundaries":[]}`)
+		if !(architectureStep{}).Satisfied(p) {
+			t.Fatal("fixture is not satisfied; fix the test before trusting its assertion")
+		}
+		steps, _, err := run([]Step{architectureStep{}}, p)
+		if err != nil || len(steps) != 1 {
+			t.Fatalf("run() = %+v, %v", steps, err)
+		}
+		if steps[0].Evidence != "boundaries declared" {
+			t.Errorf("Evidence = %q, want %q", steps[0].Evidence, "boundaries declared")
+		}
+	})
 }
 
 // TestSatisfiedBoundariesStepNeverReusesTheFallbackFixInstructions pins
@@ -605,6 +869,112 @@ func TestApplySuccessDoesNotCompensateIntegrationInstall(t *testing.T) {
 	want := []string{"install", "--save-dev", RulesPackage}
 	if commands[0].Name != "npm" || !slices.Equal(commands[0].Args, want) {
 		t.Errorf("install command = %s %v, want npm %v", commands[0].Name, commands[0].Args, want)
+	}
+}
+
+// TestInstallStepAppliesReportsTheResolvedVersion pins gap 3 from the team
+// lead's measured run: Facts.Installed must carry the version the package
+// manager actually resolved into package.json, not the bare package name —
+// "installed dharness-eslint-plugin" says nothing about what actually
+// landed. Measured, not fabricated: read back from package.json after the
+// (stubbed) install writes it, the same file installStep's own snapshot
+// already watches for rollback.
+func TestInstallStepAppliesReportsTheResolvedVersion(t *testing.T) {
+	p, _, _ := integrationProject(t)
+
+	t.Cleanup(runner.SetForTest(func(cmd runner.Command, _, _ io.Writer) error {
+		if !slices.Contains(cmd.Args, RulesPackage) {
+			return nil
+		}
+		var pkg map[string]any
+		raw, err := os.ReadFile(filepath.Join(p.Source, "package.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(raw, &pkg); err != nil {
+			t.Fatal(err)
+		}
+		devDeps, _ := pkg["devDependencies"].(map[string]any)
+		if devDeps == nil {
+			devDeps = map[string]any{}
+		}
+		devDeps[RulesPackage] = "^0.3.0"
+		pkg["devDependencies"] = devDeps
+		encoded, err := json.Marshal(pkg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return os.WriteFile(filepath.Join(p.Source, "package.json"), encoded, 0o600)
+	}))
+
+	facts, err := (installStep{}).Apply(p, &Writer{}, io.Discard)
+	if err != nil {
+		t.Fatalf("Apply() = %v", err)
+	}
+	want := RulesPackage + "@0.3.0"
+	if !slices.Contains(facts.Installed, want) {
+		t.Errorf("Installed = %v, want %q with its caret-free resolved version", facts.Installed, want)
+	}
+}
+
+// TestInstallStepAppliesFallsBackToTheBareNameWhenUnmeasured pins the other
+// half: when package.json cannot be read back (or never gained the entry —
+// a stubbed test double that never wrote it, matching an install that ran
+// against a package.json this step cannot re-read for any reason), Facts
+// still names the package by its bare name — never a fabricated version.
+func TestInstallStepAppliesFallsBackToTheBareNameWhenUnmeasured(t *testing.T) {
+	p, _, _ := integrationProject(t)
+	t.Cleanup(runner.SetForTest(func(runner.Command, io.Writer, io.Writer) error { return nil }))
+
+	facts, err := (installStep{}).Apply(p, &Writer{}, io.Discard)
+	if err != nil {
+		t.Fatalf("Apply() = %v", err)
+	}
+	if !slices.Contains(facts.Installed, RulesPackage) {
+		t.Errorf("Installed = %v, want the bare package name %q with no version measured", facts.Installed, RulesPackage)
+	}
+	for _, name := range facts.Installed {
+		if strings.Contains(name, "@") {
+			t.Errorf("Installed = %v carries a fabricated version for %q", facts.Installed, name)
+		}
+	}
+}
+
+// TestInstalledWithVersionsTreatsALiteralEmptyVersionAsUnmeasured is a
+// mutation guard for the `!ok || version == ""` check: package.json
+// declaring a package against a literal empty-string version (syntactically
+// possible, if nonsensical) must fall back to the bare name — not render
+// "name@" with nothing after the @, which `!ok || false` would produce
+// since the package IS present (ok == true).
+func TestInstalledWithVersionsTreatsALiteralEmptyVersionAsUnmeasured(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"devDependencies":{"`+RulesPackage+`":""}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p := project.Project{Root: root, Source: root}
+
+	got := installedWithVersions(p, []string{RulesPackage})
+	if !slices.Equal(got, []string{RulesPackage}) {
+		t.Errorf("installedWithVersions() = %v, want %v (empty version treated as unmeasured)", got, []string{RulesPackage})
+	}
+}
+
+// TestInstalledWithVersionsContinuesPastAnUnresolvedPackage is a mutation
+// guard for the loop's `continue` (not `break`): when an earlier package in
+// the list has no matching package.json entry, a later package in the same
+// list must still get its own resolved version — `break` would abandon the
+// rest of the slice, leaving every later package unresolved too.
+func TestInstalledWithVersionsContinuesPastAnUnresolvedPackage(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"devDependencies":{"second-package":"1.2.3"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p := project.Project{Root: root, Source: root}
+
+	got := installedWithVersions(p, []string{"first-package-not-in-package-json", "second-package"})
+	want := []string{"first-package-not-in-package-json", "second-package@1.2.3"}
+	if !slices.Equal(got, want) {
+		t.Errorf("installedWithVersions() = %v, want %v", got, want)
 	}
 }
 

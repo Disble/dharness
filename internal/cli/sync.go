@@ -5,6 +5,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/Disble/dharness/internal/preset"
 	"github.com/Disble/dharness/internal/project"
 	"github.com/Disble/dharness/internal/report"
 	"github.com/Disble/dharness/internal/runner"
@@ -62,12 +63,17 @@ func RunSync(args []string, stdout io.Writer) error {
 	ms := time.Since(start).Milliseconds()
 
 	rpt := report.Report{
-		Root:    p.Root,
-		Source:  p.SourceRel(),
-		Summary: summarizeSteps(steps, ms),
-		Steps:   steps,
-		Notes:   notes,
-		Exit:    runner.ExitCode(runErr),
+		Version:        Version,
+		Root:           p.Root,
+		Source:         p.SourceRel(),
+		PackageManager: p.PackageManager,
+		TestRunner:     p.TestRunner,
+		Presets:        matchedPresetIDs(preset.Resolve(p)),
+		OwnedDir:       project.Dir,
+		Summary:        summarizeSteps(steps, ms),
+		Steps:          steps,
+		Notes:          notes,
+		Exit:           runner.ExitCode(runErr),
 	}
 	if measured := p.ReadEvidence().ScopedMutation; measured != nil {
 		rpt.Evidence = &report.Evidence{RelatedTests: measured.RelatedTests, MeasuredPath: measured.MeasuredPath}
@@ -108,6 +114,21 @@ func summarizeSteps(steps []report.StepResult, ms int64) report.Summary {
 		}
 	}
 	return s
+}
+
+// matchedPresetIDs names every preset that actually contributed something,
+// for the human view's header block (gap 7). "generic" is preset.Resolve's
+// own always-present fallback for a project no framework preset recognises
+// — reporting it as a "matched preset" would tell a reader something
+// matched when nothing framework-specific did.
+func matchedPresetIDs(matches []preset.Match) []string {
+	var ids []string
+	for _, m := range matches {
+		if m.ID != "generic" {
+			ids = append(ids, m.ID)
+		}
+	}
+	return ids
 }
 
 // retractedStepNames names every step setup.Run marked retracted, which is

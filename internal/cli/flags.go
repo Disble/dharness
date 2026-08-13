@@ -72,6 +72,16 @@ func helpRequested(args []string) bool {
 // workingDirectory is swappable so commands can be tested against a fixture.
 var workingDirectory = os.Getwd
 
+// Version is set from internal/app before dispatch (app.RunArgs), the same
+// forwarding shape app.ExitCode already uses in the other direction:
+// internal/app imports internal/cli, so internal/cli cannot reach
+// app.Version directly, and a package-level variable set by the caller is
+// the established way this codebase threads a value across that boundary.
+// RunSync assigns it to the report's Version field (gap 7: the header block
+// the human view needed had nowhere to read a version from, since
+// report.Report.Version existed but nothing ever set it).
+var Version = "dev"
+
 // pointer tells the reader where to go next when the gate says no.
 //
 // dharness wraps three things — adoption, configuration and the gates — and

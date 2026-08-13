@@ -169,6 +169,45 @@ func TestReportExitIsAPlainAssignedField(t *testing.T) {
 	}
 }
 
+// TestReportProjectContextOmittedWhenEmptyPresentWhenSet pins the header
+// block's source fields (defect 12): a zero-valued Report carries none of
+// them in the JSON, matching the absent-versus-empty rule TestAbsentIsNotEmpty
+// pins for Collision; a Report with them set carries every one.
+func TestReportProjectContextOmittedWhenEmptyPresentWhenSet(t *testing.T) {
+	raw, err := json.Marshal(Report{})
+	if err != nil {
+		t.Fatalf("json.Marshal(Report{}) = %v", err)
+	}
+	var decoded map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("json.Unmarshal(Report{}) = %v", err)
+	}
+	for _, key := range []string{"packageManager", "testRunner", "presets", "ownedDir"} {
+		if _, present := decoded[key]; present {
+			t.Errorf("zero-valued Report carries %q: %s", key, raw)
+		}
+	}
+
+	full := Report{
+		PackageManager: "bun",
+		TestRunner:     "vitest",
+		Presets:        []string{"nextjs"},
+		OwnedDir:       ".dharness",
+	}
+	raw, err = json.Marshal(full)
+	if err != nil {
+		t.Fatalf("json.Marshal(full Report) = %v", err)
+	}
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("json.Unmarshal(full Report) = %v", err)
+	}
+	for _, key := range []string{"packageManager", "testRunner", "presets", "ownedDir"} {
+		if _, present := decoded[key]; !present {
+			t.Errorf("full Report is missing %q: %s", key, raw)
+		}
+	}
+}
+
 // TestFileChangeKindMarshalsToSpecWords pins step-outcome's three-value Kind
 // set, the same way TestStatusValuesMarshalToSpecWords pins Status.
 func TestFileChangeKindMarshalsToSpecWords(t *testing.T) {

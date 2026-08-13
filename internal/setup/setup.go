@@ -12,9 +12,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/Disble/dharness/internal/jsconfig"
 	"github.com/Disble/dharness/internal/project"
 	"github.com/Disble/dharness/internal/report"
 )
@@ -198,20 +201,108 @@ func delegatedResult(p project.Project, n int, step Step, why string) report.Ste
 // reader who was never shown the unsatisfied case (design.md Decision 8:
 // "satisfied with its Describe/detection evidence").
 //
-// boundariesOwnerStep is the one case Describe cannot answer this for:
-// its no-collision branch is boundariesFallbackDescribe, a fixed constant
-// this change must keep byte-identical for Decision 6's golden-fixture
-// guarantee (TestBoundariesFallbackConstantsStayByteIdentical) — and that
-// text is instructions for the unsatisfied case ("move the zones and rules
-// from... or delete the block..."), actively wrong read as evidence that
-// nothing needs moving. Every other step's Describe reads as a true
-// statement about the step either way, so firstLine(Describe(p)) stands for
-// them.
+// Describe's own text is fix instructions for the *unsatisfied* case — most
+// often actively wrong read as evidence that nothing needs doing (gap 4,
+// from the team lead's measured run: legacyLintConfigStep's satisfied row
+// showed "Make .eslintrc.json parse, or delete it..." as if that were a
+// fact about why the step was already done). Every step whose Satisfied
+// condition is a single checkable fact states that fact directly here,
+// rather than reusing Describe. Only the branches Satisfied itself cannot
+// distinguish from one another with a cheap, side-effect-free check keep
+// the firstLine(Describe(p)) fallback in the default case below.
 func satisfiedEvidence(p project.Project, step Step) string {
-	if _, isBoundaries := step.(boundariesOwnerStep); isBoundaries {
+	switch step.(type) {
+	case boundariesOwnerStep:
 		return "no colliding key declared"
+
+	case fallowExtendsStep:
+		if !p.HasSource() {
+			return firstLine(step.Describe(p))
+		}
+		return "extends → " + ownedFrom(p, p.Source, ownedFallow)
+
+	case lefthookExtendsStep:
+		if hookManager(p) != managerLefthook {
+			return "no lefthook config"
+		}
+		return "extends → " + ownedFrom(p, p.Root, ownedLefthook)
+
+	case legacyLintConfigStep:
+		if !p.HasSource() {
+			return firstLine(step.Describe(p))
+		}
+		if _, err := os.Stat(filepath.Join(p.Source, legacyLintConfig)); errors.Is(err, os.ErrNotExist) {
+			return "not present"
+		}
+		return "parses"
+
+	case mcpStep:
+		return mcpConfig + " declares fallow"
+
+	case hookInstallStep:
+		switch hookManager(p) {
+		case managerHusky:
+			return huskyHook
+		default:
+			return filepath.ToSlash(filepath.Join(".git", "hooks", "pre-commit"))
+		}
+
+	case agentSkillStep:
+		for _, candidate := range skillLocations {
+			if _, err := os.Stat(filepath.Join(p.Root, candidate)); err == nil {
+				return filepath.ToSlash(candidate) + " present"
+			}
+		}
+		return firstLine(step.Describe(p))
+
+	case architectureStep:
+		return "boundaries declared"
+
+	case ownedFilesStep:
+		return "owned files match"
+
+	case eslintExtendsStep:
+		return eslintExtendsSatisfiedEvidence(p, step)
+
+	default:
+		return firstLine(step.Describe(p))
 	}
-	return firstLine(step.Describe(p))
+}
+
+// eslintExtendsSatisfiedEvidence mirrors eslintExtendsStep.Satisfied's own
+// branches (steps.go), each reported as its own fact rather than the one
+// generic Describe fallback every branch used to share — found live during
+// verification against a real project, where the common "already spliced
+// and converged" case rendered the same truncated Describe fragment the
+// team lead's legacyLintConfigStep example already named (gap 4).
+func eslintExtendsSatisfiedEvidence(p project.Project, step Step) string {
+	if !p.HasSource() {
+		return firstLine(step.Describe(p))
+	}
+
+	path := eslintFlatConfig(p.Source)
+	if path == "" {
+		switch {
+		case eslintTypeScriptConfig(p.Source) != "":
+			return "TypeScript config present"
+		case eslintLegacyConfig(p.Source) != "":
+			return "legacy-only config present"
+		default:
+			return firstLine(step.Describe(p))
+		}
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "config could not be read"
+	}
+	if _, malformed := malformedEslintMarkerPair(string(raw)); malformed {
+		return "marker pair malformed"
+	}
+	if _, _, ok := jsconfig.Analyze(raw); !ok {
+		return "config shape not recognised"
+	}
+	return "spliced regions match"
 }
 
 // firstLine takes a satisfied step's evidence from its own Describe(p): the
