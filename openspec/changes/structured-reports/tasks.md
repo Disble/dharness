@@ -774,3 +774,71 @@ without an equivalent task.
 
 `go build ./...`, `go vet ./...`, `go test ./...`, `gofmt -l .`, `go run
 ./tools/mutationstaged` (floor 0.80).
+
+---
+
+## Slice 5 — collision narrowing (added after 4.22, ~130 lines, golden bytes: 0)
+
+Not in the original plan. It was implemented by hand at the user's explicit
+request after task 4.22's acceptance run showed the collision block was
+within width and still unreadable, and it is recorded here because
+`sdd-verify` found it had landed with no task, no design entry and no
+progress note — a finding this section closes. Capability:
+`config-collision` (the amended "reported whole" requirement). Design
+Decision 10.
+
+- [x] **5.1** RED: `TestWriteHumanCollisionNarrowsToDifferingKeys` — a
+      collision whose two sides share keys with equal and differing values
+      plus a key only the resolved side declares; assert the differing key
+      survives with both values, the rest are gone, and the count is
+      stated. Pins the amended requirement's human-view half.
+- [x] **5.2** GREEN: `narrowToDifferences`/`objectFields` in
+      `internal/report/human.go`; `writeDeclaredSide` takes the rendered
+      value rather than deriving it.
+- [x] **5.3** RED: `TestWriteHumanCollisionKeepsWholeValuesWhenItCannotNarrowHonestly`
+      — a side never measured, and a side that is not a JSON object; assert
+      the measured side renders whole and no omission is claimed.
+- [x] **5.4** RED: `TestWriteHumanCollisionSaysNothingWhenNoKeyIsIdentical` —
+      two objects sharing no identical key carry no note.
+- [x] **5.5** RED: `TestWriteHumanCollisionKeyOrderIsStableAcrossRuns` — the
+      same report rendered 25 times is byte-identical, and the differing
+      keys come out sorted. Go randomises map iteration deliberately, so
+      without an explicit sort the report would differ between runs and no
+      golden could ever be frozen.
+- [x] **5.6** RED: `TestWriteHumanCollisionComparesValuesNotTheirFormatting`
+      — one side indented, the other compact, same values; assert they are
+      recognised as agreement. dharness writes indented JSON and fallow
+      emits compact, so a text comparison would call every key a
+      disagreement.
+- [x] **5.7** RED: `TestWriteJSONKeepsCollisionValuesWholeWhileHumanNarrows`
+      — with narrowing active in the human view, both JSON values are still
+      whole. Pins the amended requirement's machine half and catches
+      narrowing drifting into the machine contract.
+- [x] **5.8** RED: `TestWriteHumanCollisionNoteDoesNotCallDefaultsIdentical`
+      — a hidden set holding one identical key and one resolved-side-only
+      key must not be described as all identical. `sdd-verify` found the
+      note factually wrong here: live, all thirteen hidden keys were
+      defaults dharness never declared.
+- [x] **5.9** RED: `TestWriteHumanDelegatedWhyStaysWithinReportWidth` — a
+      long delegated reason produces no line over the report width, and
+      loses no word. Absorbed from 4.22's disclosed follow-up: `wrap` was
+      handed the full width before the caller added its own three-space
+      prefix, rendering lines of 71 to 73 in a report whose every other
+      block holds 70. Nothing measured that block, so nothing caught it.
+- [x] **5.10** MUTATE: `go run ./tools/mutationstaged` over the range —
+      **0.80 exactly, 32/40, floor 0.80.** The weakest score in this change
+      and its own finding: see 5.11.
+- [ ] **5.11** FOLLOW-UP (not done): eight survivors remain unchased, two of
+      them inside `narrowToDifferences`, and none is documented as a proven
+      equivalent the way `widths`'s two are. A score sitting exactly on the
+      floor is a pass by the gate's own verdict and a weak one; either the
+      survivors are equivalent and say so at the narrowest location, or they
+      are real and the scenarios that own them need strengthening. Raised by
+      `sdd-verify` as CRITICAL-2 and left open deliberately rather than
+      marked done.
+- [x] **5.12** ACCEPTANCE (4.22's rule, applied to this slice): built the
+      binary and ran it against a throwaway repo with fallow 3.15.0
+      installed. The block renders three differing keys against three, the
+      measured `← this one runs`, and the hidden-key count; every line is
+      within 70 runes; `--format json` still parses and still carries all
+      16 keys on the project's side.

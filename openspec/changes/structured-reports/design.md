@@ -940,3 +940,55 @@ slice 3 restores the six fixture lines with it.
       *before* knowing there is anything to ask about, which is the
       unconditional cost §13 argues against. Recorded so the follow-up
       inherits the reason, not just the deferral.
+
+### Decision 10 — the collision narrows for a person and stays whole for a machine
+
+Added after `sdd-verify` raised the rendering as a spec violation, and after
+the amendment to `spec.md`'s "reported whole" requirement that this decision
+records the reasoning for. It was implemented by hand, outside the slice
+plan, at the user's explicit request; that it landed without a design entry
+was itself one of `sdd-verify`'s findings and this closes it.
+
+**The problem, measured.** A real run against a project with fallow 3.15.0
+installed: dharness's own value for `duplicates` carried 3 keys, fallow's
+resolved value for the same key carried 16, and all three shared keys
+differed. Rendered whole at the report's fixed width, the project's side
+became nine lines of compact JSON hard-split mid-token —
+`"mi` / `nOccurrences"` — and the single word the reader had to decide about
+(`semantic` against `weak`) was indistinguishable inside it. The block exists
+so a person can see how two values differ and pick one. It was not doing
+that.
+
+**The rule.** `narrowToDifferences` drops two classes of key from the human
+rendering and counts what it dropped:
+
+1. keys holding the same value on both sides, compared as JSON rather than as
+   text (dharness writes indented, fallow emits compact — a text comparison
+   would report every key as a disagreement);
+2. keys only the resolved side declares, which are fallow's own defaults: the
+   project never wrote them and dharness does not disagree with them.
+
+The second class is what makes the rule work at all. The first version dropped
+only class 1, and on the very case it was written for it hid nothing — all
+three shared keys differed — and fell back to the whole value. That was found
+by running the binary, not by the suite.
+
+**It applies to the human view alone.** The JSON twin keeps both values whole,
+pinned by `TestWriteJSONKeepsCollisionValuesWholeWhileHumanNarrows`. A machine
+reading `theirs` wants the value that runs; a diff computed for a person's
+eyes would be a worse contract, and narrowing spreading into the machine view
+is exactly the drift that test exists to catch.
+
+**Rejected: leave the value whole and rely on wrapping.** This is what shipped
+first and it is what the measurement above rejects. Wrapping bounds the
+layout; it does not make sixteen keys comparable against three.
+
+**Rejected: narrow, but say nothing.** Silent shortening is the failure mode
+§16 names — a report that quietly answers a different question than the one
+asked. The count and its reason are printed, in fallow's own idiom
+(`note: hid 8 clone groups below minOccurrences=3`).
+
+**A note this decision owes its own correction.** The count first read
+"N identical key(s) hidden", which was false for every key in class 2 — all
+thirteen hidden keys in the live run were defaults dharness never declared.
+`sdd-verify` caught the wording. It now names both reasons.

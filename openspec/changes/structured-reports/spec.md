@@ -556,13 +556,58 @@ Where the resolved value cannot be measured, the report states that the
 value could not be shown in full — it MUST NOT fall back to the truncated
 textual fragment.
 
-#### Scenario: a multi-line colliding value is shown whole, not truncated
+**AMENDED after live verification.** As first written this requirement said
+"reported whole" of *both* views, and `sdd-verify` correctly raised the
+resulting rendering as a spec violation. The amendment is recorded here
+rather than the code being reverted, because the original wording aimed at
+defect 8 — a *fragment*, produced by a single-line textual scan, that a
+reader cannot tell is partial — and it over-reached into forbidding a
+deliberate, labelled, counted selection, which is a different thing.
+
+What the live run showed: dharness declared 3 keys, fallow's resolved value
+carried 16, and the three shared keys all differed. Rendered whole, the one
+word the reader had to decide about was buried in nine wrapped lines of
+compact JSON split mid-token. A value nobody can read is not a value
+reported.
+
+So the rule splits by audience, and both halves are MUSTs:
+
+- **The JSON twin MUST carry both values whole**, always. The machine
+  reading `theirs` wants the value that runs, not a diff computed for
+  someone else's eyes.
+- **The human view MAY omit keys that carry no decision** — keys holding the
+  same value on both sides, and keys only the resolved side declares (those
+  are fallow's own defaults, which the project never wrote and dharness does
+  not disagree with). When it omits any, it MUST say how many and why, in
+  the same rendering. Silent shortening remains forbidden, and so does the
+  truncated fragment the original requirement was written against.
+
+#### Scenario: a multi-line colliding value is shown whole in the JSON twin
 
 - **GIVEN** a project's fallow config declaring a multi-line object value for
   a colliding key, and `effective` successfully measured
-- **WHEN** the collision is rendered in either view
-- **THEN** the full value object appears — not the fragment a single-line
-  scan of the opening line would have produced
+- **WHEN** the collision is rendered
+- **THEN** `--format json` carries the full value object for both sides — not
+  the fragment a single-line scan of the opening line would have produced,
+  and not the human view's narrowed selection
+
+#### Scenario: the human view omits only what carries no decision, and says so
+
+- **GIVEN** the same collision, where some keys hold identical values on both
+  sides and others are declared only by the resolved side
+- **WHEN** the collision is rendered for a person
+- **THEN** the keys that disagree appear with both of their values, the rest
+  are omitted, and the rendering states how many were omitted and that they
+  were either the same on both sides or defaults only fallow sets
+
+#### Scenario: nothing is omitted when the two sides cannot be compared
+
+- **GIVEN** a collision where either side was never measured, or a value that
+  is not a JSON object
+- **WHEN** the collision is rendered for a person
+- **THEN** the measured side is rendered whole and no omission is claimed —
+  shortening one side against nothing would hide information while asserting
+  a comparison happened
 
 #### Scenario: an unmeasured value is stated as unavailable, not silently truncated
 
