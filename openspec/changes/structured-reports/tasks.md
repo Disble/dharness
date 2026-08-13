@@ -468,7 +468,7 @@ A suite proves the suite agrees with itself. For a change whose deliverable
 task 4.22 passes, and no future slice that changes observable output ships
 without an equivalent task.
 
-- [ ] **4.22** ACCEPTANCE (blocking): build and run the real binary, then
+- [x] **4.22** ACCEPTANCE (blocking): build and run the real binary, then
       compare its output against `target-report.md` line by line.
 
       ```
@@ -496,31 +496,58 @@ without an equivalent task.
       Record what did not match. A mismatch is a defect in this slice, not a
       note for later.
 
-- [ ] **4.1** RED: `internal/setup/setup_test.go` —
+      **Result, 13 August 2026.** Ran against a throwaway repository with
+      `frontend/package.json` and `frontend/.fallowrc.json` declaring both
+      `boundaries` and `duplicates`. All eleven items closed: the collision
+      block now renders both sides' value, path and line, the measured
+      `effective` marker (or its honest absence), and the lettered
+      resolutions; subprocess output is framed line by line; `installed`
+      carries `name@version`, measured from `package.json` post-install
+      (disclosed deviation from design.md Decision 1's "no version",
+      documented at `installedWithVersions`, `internal/setup/steps.go`);
+      satisfied-step evidence is the real detection fact, not `Describe`'s
+      fix instructions, wrapped within the fixed width; the "Already in
+      place" glyph no longer collides with the subprocess gutter; every
+      per-step row carries `n/total`; a header block and a legend line
+      exist; the closing block's `next` pointer uses `Collision.ID` when the
+      delegated step carries one. Two further defects were found live and
+      fixed in the same pass, not on the original eleven-item list:
+      `Collision.Theirs.Path` was an absolute filesystem path
+      (`setup.Collisions`, `internal/setup/steps.go`) instead of
+      root-relative like `Ours.Path`; `eslintExtendsStep`'s satisfied
+      evidence still reused `Describe`'s truncated fix-instruction text for
+      its own "spliced regions already match" case, the same defect shape
+      the legacyLintConfigStep example named. The header block is a
+      deliberately simplified single-column layout, not target-report.md's
+      two-column grid, and omits the "read" line (no tracked concept of
+      "files read this run" exists in the model); both disclosed in
+      `writeHeaderBlock`'s own doc comment.
+
+- [x] **4.1** RED: `internal/setup/setup_test.go` —
       `TestRunReturnsAStepResultForEveryPlanStep`: an 11-step (or stubbed)
       plan mixing satisfied/delegated/applied steps; call `setup.Run(p)`;
       assert `len(steps) == len(Plan())` and every `Status` is one of the
       six defined values, none empty or unrecognised. Pins "every step in
       `Plan()` carries exactly one status."
-- [ ] **4.2** RED: `TestRunReadsNotesBeforeAnyByteChanges` — a stub step
+- [x] **4.2** RED: `TestRunReadsNotesBeforeAnyByteChanges` — a stub step
       whose `Satisfied`/`Delegated` would observe a side effect if called
       after a write; assert the three notes
       (`UncheckableConfigNote`/`UncertainPresetNote`/`EslintResidueNote`)
       are read before the first `Apply` runs. Pins Decision 8: "notes are
       read first inside `Run`... becomes structural."
-- [ ] **4.3** RED: `TestRunOrdersSatisfiedBeforeDelegated` — a stub step
+- [x] **4.3** RED: `TestRunOrdersSatisfiedBeforeDelegated` — a stub step
       whose `Satisfied` returns `true`; assert `Delegated` is never
       called for it. Preserves today's semantics and keeps
       `boundariesOwnerStep`'s fallback constants unreachable in the
       product, which 3.17 depends on remaining true (Decision 8, change
       #1).
-- [ ] **4.4** RED: `TestSatisfiedStepCarriesEvidenceNotBareStatus` — a
+- [x] **4.4** RED: `TestSatisfiedStepCarriesEvidenceNotBareStatus` — a
       step already satisfied (e.g. `fallowExtendsStep`); assert its
       `StepResult.Evidence` is non-empty and names the detection fact
       (e.g. `"extends → .dharness/fallow.jsonc"`), not merely
       `Status == "satisfied"` with empty `Evidence`. Pins the spec
       scenario of the same name.
-- [ ] **4.5** GREEN: `internal/setup/setup.go` — `func Run(p
+- [x] **4.5** GREEN: `internal/setup/setup.go` — `func Run(p
       project.Project) (steps []report.StepResult, notes []report.Note,
       err error)`; `internal/setup/notes.go` (new) reshapes the three
       existing notes into `[]report.Note`; for each `Plan()` step,
@@ -529,44 +556,44 @@ without an equivalent task.
       `Facts` + `Writer.Changed` wiring. `Apply(p, out) error` keeps its
       exact signature for `renderGolden`'s sole remaining call. Obs:
       4.1–4.4 pass.
-- [ ] **4.6** RED: `internal/setup/setup_test.go` —
+- [x] **4.6** RED: `internal/setup/setup_test.go` —
       `TestFailureRetractsEarlierStepsAndMarksRemainingNotReached`: step 2
       fails in an 11-step stub plan; assert step 1's `Status ==
       Retracted` (never `Applied`), `Rollback.Retracted` names it, the
       nine steps after step 2 are each `NotReached`, and `len(steps) ==
       11`. Pins the failure-variant requirement's both scenarios.
-- [ ] **4.7** GREEN: `internal/setup/setup.go` — on `Apply` error: run
+- [x] **4.7** GREEN: `internal/setup/setup.go` — on `Apply` error: run
       `Writer.Undo()`; mark the failed step `Failed`, every
       earlier-applied step `Retracted`, every remaining step
       `NotReached`; build `Rollback{Retracted: [...]}` naming them;
       delete the false "No earlier step is reported as having succeeded"
       sentence (`setup.go:110-112`) — the returned error keeps only the
       step name and cause. Obs: 4.6 passes.
-- [ ] **4.8** RED: `internal/setup/steps_test.go` —
+- [x] **4.8** RED: `internal/setup/steps_test.go` —
       `TestDelegatedCollisionMatchesTheComputedReportValue` — for a
       project with one colliding key, assert
       `boundariesOwnerStep.Delegated(p)`'s `why` string equals
       `renderCollisions(Collisions(p))` byte for byte. Pins
       `step-delegation`'s added requirement: "the report's collision
       rendering and the delegated reason cannot drift apart."
-- [ ] **4.9** GREEN: `internal/setup/steps.go` — `func renderCollisions(cs
+- [x] **4.9** GREEN: `internal/setup/steps.go` — `func renderCollisions(cs
       []report.Collision) string`; `describeBoundaries` and
       `delegateBoundaries`'s non-empty branches become
       `renderCollisions(Collisions(p))`, keeping the empty-set fallback
       constants byte-for-byte (Decision 6, guarded by 3.17). Obs: 4.8
       passes; 3.17's byte-identity test still passes unmodified.
-- [ ] **4.10** RED: `internal/report/human_test.go` —
+- [x] **4.10** RED: `internal/report/human_test.go` —
       `TestWhyAndCollisionsAreMutuallyExclusiveInRendering` — a
       `StepResult` carrying both a non-empty `Why` and a non-empty
       `Collisions` slice (a constructed adversarial value); assert the
       output contains the collision block and does not contain the `Why`
       string. Pins Decision 4's "seam that makes a second renderer
       impossible, rather than absent."
-- [ ] **4.11** Mutation guard: 4.10's test, verified as a killed mutant in
+- [x] **4.11** Mutation guard: 4.10's test, verified as a killed mutant in
       `go run ./tools/mutationstaged` — design.md names this branch as
       easy to leave unkilled (Mutation coverage table, 3rd item).
 
-- [ ] **4.11a** RED: `internal/report/human_test.go` —
+- [x] **4.11a** RED: `internal/report/human_test.go` —
       `TestFailureVariantRendersEveryNonTerminalStatus`: a `Report` whose
       steps carry `Failed`, `NotReached` and `Retracted`; assert each is
       rendered with its own line, that the retracted step is named in the
@@ -574,7 +601,7 @@ without an equivalent task.
       to the plan's length. Pins the six-value status enumeration
       (`spec.md`, amended) and `project-sync`'s added retraction
       requirement.
-- [ ] **4.11b** GREEN: `internal/report/human.go` — render the
+- [x] **4.11b** GREEN: `internal/report/human.go` — render the
       `Failed`/`NotReached`/`Retracted` per-step lines and the failure
       variant's closing block.
 
@@ -588,11 +615,11 @@ without an equivalent task.
       slice 4's existing 280–420 forecast; the rendering is three status
       arms and one closing block over a model that already carries every
       field (`report.Rollback`, `Summary.Retracted`).
-- [ ] **4.11c** Mutation guard: 4.11a's test over `internal/report`,
+- [x] **4.11c** Mutation guard: 4.11a's test over `internal/report`,
       verified killed. Status-arm branches are the same shape as the
       decorative-literal survivors slice 1 had to chase down; prefer
       simplifying the arm to pinning its text.
-- [ ] **4.12** RED + rewrite rule: `internal/cli/sync_test.go` — coordinated
+- [x] **4.12** RED + rewrite rule: `internal/cli/sync_test.go` — coordinated
       rewrite of all 16 existing test functions
       (`TestSyncSpeaksTheProjectsOwnPackageManager`,
       `TestSyncSaysWhyTheDelegatedStepIsDelegated`,
@@ -619,25 +646,25 @@ without an equivalent task.
       applies, what it names as delegated, what it retracts, which
       residue entries it lists. Obs: every non-heading assertion in each
       of the 16 tests is at least as strict after the rewrite as before it.
-- [ ] **4.13** GREEN: `internal/cli/sync.go` — rewrite `RunSync`: discover,
+- [x] **4.13** GREEN: `internal/cli/sync.go` — rewrite `RunSync`: discover,
       `setup.Run(p)`, assemble `report.Report{Version, Root, Source,
       Summary, Evidence, Notes, Steps, Rollback, Exit:
       runner.ExitCode(err)}`, dispatch to `report.WriteHuman` or
       `report.WriteJSON` per a new `--format` flag (default `human`; any
       other value errors naming both). Obs: 4.12's rewritten suite
       passes; `go build ./...`.
-- [ ] **4.14** RED: `TestSyncFormatJSONEmitsParseableJSONAndNothingElse` —
+- [x] **4.14** RED: `TestSyncFormatJSONEmitsParseableJSONAndNothingElse` —
       run `RunSync(["--format", "json"], &buf)` against a constructed
       project; assert `json.Unmarshal` succeeds and `json.Valid` covers
       the entire buffer. Pins "`--format json` emits parseable JSON on
       stdout."
-- [ ] **4.15** RED: `TestSyncFormatJSONAndHumanAgreeOnSummaryCounts` — run
+- [x] **4.15** RED: `TestSyncFormatJSONAndHumanAgreeOnSummaryCounts` — run
       `RunSync` twice against identical constructed project state, once
       default and once `--format json`; assert
       `summary.steps`/`applied`/`delegated`/`satisfied`/`failed` decoded
       from JSON equal the counts asserted from the human output. Pins
       "the JSON summary's counts match the human summary's counts."
-- [ ] **4.16** RED: `TestSyncExitFieldMatchesRunnerExitCode` — one run with
+- [x] **4.16** RED: `TestSyncExitFieldMatchesRunnerExitCode` — one run with
       a step failure and one clean run, including a delegated-work-only
       case (`Summary.Delegated > 0`, `Summary.Failed == 0`); assert the
       JSON's `exit` field equals `runner.ExitCode` of the exact error
@@ -645,28 +672,28 @@ without an equivalent task.
       `summary.delegated > 0` overrides it. Pins both exit-code scenarios
       together, since design.md's Property 2 exists to keep them
       untestable apart.
-- [ ] **4.17** RED: `TestClosingBlockNamesTheDelegatedStepAsNext` — a run
+- [x] **4.17** RED: `TestClosingBlockNamesTheDelegatedStepAsNext` — a run
       leaving one step delegated; assert the closing block names that
       step's identifier as next, distinct from the earlier "Left to you"
       detail. Pins "a run with delegated work names a next step."
-- [ ] **4.18** RED: `TestScopedMutationEvidenceSurvivesBothViewsRegardless`
+- [x] **4.18** RED: `TestScopedMutationEvidenceSurvivesBothViewsRegardless`
       — a constructed `project.Project` whose `ReadEvidence().ScopedMutation`
       is non-nil and every step satisfied (so `left != 0` is not the
       case that used to gate it); assert the measured related-test count
       and path appear in both the human output and the JSON's evidence
       object. Pins "measured evidence keeps its place in the model,"
       no longer gated on `left == 0` (Decision 8, change #2).
-- [ ] **4.19** RED: `TestNoReportFileIsPersisted` — snapshot the file tree
+- [x] **4.19** RED: `TestNoReportFileIsPersisted` — snapshot the file tree
       before and after a `--format json` run against a real
       `t.TempDir()` project fixture; assert the only files differing are
       ones the applied steps themselves own. Pins "no report is
       persisted to a file" at the integration layer.
-- [ ] **4.20** GREEN: `internal/cli/sync.go` / `internal/cli/flags.go` —
+- [x] **4.20** GREEN: `internal/cli/sync.go` / `internal/cli/flags.go` —
       wire the `--format` flag; wire `report.Evidence` from
       `p.ReadEvidence().ScopedMutation` whenever non-nil; wire the closing
       block's `next` pointer from the first delegated `StepResult` found.
       Obs: 4.14–4.19 pass.
-- [ ] **4.21** REFACTOR + MUTATE: `go run ./tools/mutationstaged` over
+- [x] **4.21** REFACTOR + MUTATE: `go run ./tools/mutationstaged` over
       `internal/cli`, `internal/setup`, `internal/report` (floor 0.80);
       `go build ./...`, `go vet ./...`, `go test ./...`, `gofmt -l .`
       clean; confirm all six golden fixtures remain byte-identical to

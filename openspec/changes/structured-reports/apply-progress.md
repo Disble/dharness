@@ -371,6 +371,182 @@ hand edits, per task 3.16. `TestBoundariesFallbackConstantsStayByteIdentical`
 (task 3.17) passes, pinning that Decision 6's "six lines is the complete
 golden impact" claim still holds.
 
-## Slice 4
+## Slice 4 — `setup.Run`, `RunSync` rewrite, `--format json`, failure variant (complete)
 
-Not started. Tasks 4.1 onward remain unchecked in `tasks.md`.
+All 25 tasks (4.1–4.21, 4.11a–c, 4.22) done, across two passes.
+
+**First pass (commit `a12b118`).** `setup.Run`/`run` built, replacing the
+`applySteps`/`Applying:` transcript: every `Plan()` step gets exactly one
+`report.StepResult` (Satisfied → Delegated → Apply, in that order,
+preserving `boundariesOwnerStep`'s fallback-constant unreachability).
+`notes.go` reshapes the three existing prose notes. `retractAndReport`
+replaces the false "no earlier step succeeded" sentence with
+`Rollback.Retracted`, naming every step this run's failure retracted.
+`internal/cli/sync.go`'s `RunSync` rewritten to assemble one `report.Report`
+from `setup.Run` and dispatch to `report.WriteHuman`/`report.WriteJSON` by a
+new `--format` flag. `internal/cli/sync_test.go`'s 16 pre-existing test
+functions rewritten under task 4.12's binding rule (shape assertions may
+change; behavioural assertions — which files, which step, what retracts,
+what residue — may not relax). `internal/report/human.go` gained the
+failure-variant rendering (`Failed`/`NotReached`/`Retracted` blocks, the
+failure closing tally) task 4.11a–c added after slice 1's own task list
+omitted it.
+
+**Second pass (this session), driven by task 4.22 — measured, not assumed.**
+The team lead built the binary from `a12b118` and ran it against a real
+project (`frontend/package.json` + `frontend/.fallowrc.json` declaring
+`boundaries` and `duplicates`), the check task 4.22 itself demands and the
+first pass never ran. `go test` was green and mutation score 0.98–1.00 at
+that point; the rendered report was still missing eleven things the
+approved report specifies. Closed all eleven, plus two more found live in
+verifying the fix:
+
+1. **Collision block.** `writeCollision`/`writeDeclaredSide`
+   (`internal/report/human.go`) render both sides' value, location and line,
+   the measured `effective` marker (`← this one runs`) or its honest
+   absence, and lettered resolutions (`resolutionLetter`,
+   `collisionResolutionText`) — replacing the old bare
+   `` `key` needs a decision `` placeholder.
+2. **Subprocess framing.** `writeAppliedBlock` now splits `Transcript` on
+   `\n` and frames every line under the gutter glyph, not only the first.
+3. **Installed version.** `installedWithVersions`
+   (`internal/setup/steps.go`) reads `package.json` back after the install
+   this same call ran and reports `name@version` when found, the bare name
+   otherwise — never a fabricated version. **Disclosed deviation from
+   design.md Decision 2** ("Facts.Installed names what dharness asked for,
+   no version"), which reasoned from what `Apply` could answer from its own
+   inputs alone; the measured gap showed a reader needs more than that, and
+   `package.json` is already read for this purpose (the install's rollback
+   snapshot). Caveat inherited from that same reasoning: `package.json` may
+   record a caret/tilde range rather than an exact resolved version,
+   depending on the project's own package-manager settings — reported
+   whatever range or exact version is actually there, stripped of the range
+   operator, never a version measured from a lockfile (out of scope per
+   CLAUDE.md's "if the CLI already does it, dharness does not do it" — no
+   single lockfile format across all four managers).
+4. **Satisfied evidence.** `satisfiedEvidence` (`internal/setup/setup.go`)
+   widened from a two-case special (`boundariesOwnerStep` /
+   `firstLine(Describe(p))` for everything else) to a type switch naming the
+   real detection fact per step (`fallowExtendsStep`/`lefthookExtendsStep`:
+   `"extends → " + ownedFrom(...)`; `legacyLintConfigStep`: `"not present"`/
+   `"parses"`; `mcpStep`: `".mcp.json declares fallow"`; `hookInstallStep`:
+   the wired hook file; `agentSkillStep`: the found skill location;
+   `architectureStep`: `"boundaries declared"`; `ownedFilesStep`: `"owned
+   files match"`; `eslintExtendsStep`: `eslintExtendsSatisfiedEvidence`,
+   mirroring its own `Satisfied` branches). `writeSatisfiedBlock` wraps long
+   evidence within the fixed report width instead of running past it.
+5. **Glyph collision.** `glyphSatisfied = "="` added, distinct from
+   `glyphGutter`; `writeSatisfiedBlock` uses it instead of the subprocess
+   gutter glyph.
+6. **Per-step numbering.** `stepLabel(n, total)` renders `n/total`; wired
+   into every per-step row (Applied, Failed, Retracted, Delegated, Not
+   reached, Already in place) — `StepResult.N`/`Summary.Steps` were already
+   in the model, just never rendered.
+7. **Header block.** `Report` gained `PackageManager`, `TestRunner`,
+   `Presets`, `OwnedDir` (`internal/report/report.go`); `writeHeaderBlock`
+   renders them plus `Version`/`Root`/`Source` before the summary line, when
+   `Root` is set. `cli.Version` (new, `internal/cli/flags.go`) is the
+   forwarding variable `app.RunArgs` assigns from `app.Version` before
+   dispatch — `internal/cli` cannot import `internal/app` (the reverse
+   import already exists), the same shape `app.ExitCode`/`runner.ExitCode`
+   already established. **Deliberately simplified**: a single-column
+   layout, not target-report.md's two-column grid, and omits the "read"
+   line — there is no tracked concept of "files read this run" in the model,
+   and inventing one to fill a header line would be exactly the fabrication
+   §09 forbids. Disclosed in `writeHeaderBlock`'s own doc comment.
+8. **Legend.** `writeAppliedBlock` prints `legend  + created  ~ modified
+   = unchanged  │ subprocess` once, after its rows.
+9. **`next` pointer.** `firstDelegatedID` (`internal/report/human.go`)
+   returns `step.Collisions[0].ID` when the first delegated step carries a
+   collision, `step.ID` otherwise — the addressable handle
+   (`sync:collision/duplicates`), not the step's prose heading.
+10. **`ours.path` empty.** `ourDeclared` (`internal/setup/steps.go`) widened
+    to take `p project.Project` and set `Declared.Path`/`Line` from the
+    owned `fallow.jsonc` path and `declaredAt`, not left zero-valued.
+11. **`resolutions` null.** `Collisions` now sets `Resolutions:
+    collisionResolutions` (`var collisionResolutions =
+    []string{"delete-theirs", "move-into-ours"}`) on every computed
+    collision — unconditional on whether `effective` was measured, since
+    the two ways to resolve a collision need no measurement to state.
+
+Two further defects found live, not on the original eleven-item list:
+
+- **`Theirs.Path` was an absolute filesystem path.**
+  `fallowConfigPath(p.Source)` returns an absolute path; `Collisions` used
+  it verbatim in `Theirs.Path`, so the newly-rendered collision block showed
+  `project  C:\Users\...\frontend\.fallowrc.json` instead of the short,
+  root-relative form `Ours.Path` and `Report.Source` already use. Fixed by
+  relativising the *displayed* path (`filepath.Rel(p.Root, path)`) while
+  `declaredAt` still reads from the real absolute path.
+- **`eslintExtendsStep`'s satisfied evidence still reused `Describe`'s
+  truncated text** for its own most common case (a config already spliced
+  and converged) — the same defect shape item 4 fixed for
+  `legacyLintConfigStep`, just not yet extended to this step.
+  `eslintExtendsSatisfiedEvidence` mirrors `Satisfied`'s own branches:
+  `"spliced regions match"`, `"TypeScript config present"`, `"legacy-only
+  config present"`, `"config could not be read"`, `"marker pair
+  malformed"`, `"config shape not recognised"`.
+
+**A design shape change, found live, not on the list.** Evidence rendered
+in a column aligned next to the step ID (`writeSatisfiedBlock`'s original
+shape, matching Applied/Failed) turned out unreadable against real step IDs
+— this product's IDs are full sentences (up to ~49 runes), so any one long
+ID in the block starved every row's evidence column to a handful of
+characters, wrapping even short facts like `"owned files match"`
+needlessly. Changed to evidence on its own indented line beneath the ID
+(matching the Applied block's own `Transcript`/`Installed`/`Wrote`
+sub-lines), a stronger and simpler invariant: the indent is now fixed (9
+spaces) regardless of ID length, not column-aligned across rows. The
+existing column-alignment test was rewritten
+(`TestWriteHumanEvidenceIndentIsFixedAcrossDifferentIDLengths`) rather than
+deleted, to pin the new invariant the same structural way.
+
+### Gate, at commit time
+
+`go build ./...`, `go vet ./...`, `go test ./...`, `gofmt -l .` all clean.
+Golden fixtures untouched (`git diff --cached --stat --
+internal/setup/testdata/golden/` empty) — this slice changes observable
+prose and the report's shape, not `Plan()`/`Step.ID()`, matching design.md
+Decision 9's forecast of 0 golden bytes for this slice.
+
+`go run ./tools/mutationstaged` run in three groups, per the team lead's
+guidance (avoid the documented cross-file scope-leak,
+`docs/backlog/mutation-wrapper.md` entry 1, and the OOM a combined run hit
+last time):
+
+- `internal/report/{human,report}.go` + their tests: **58/58 killed, score
+  1.00**, floor 0.80, exit 0. Reached in five rounds from an initial 0.62 —
+  survivors were mostly column-width index confusion in the
+  label/ID/time three-column layout (`w[0]`/`w[1]`/`w[2]` swapped), which a
+  cross-row alignment check can only catch when the fixture's own column
+  lengths make the wrong width overflow one row and not the other (two rows
+  of *equal* length in one dimension, *unequal* and each exceeding the
+  other column's width, isolate one direction at a time — a single fixture
+  cannot expose every direction, documented at
+  `TestWriteHumanAppliedAndFailedBlocksPairEachLabelWithItsOwnID`).
+- `internal/setup/{setup,steps}.go` + their tests: **38/39 killed, score
+  0.97**, floor 0.80, exit 0. The one survivor
+  (`!ok || version == ""` → `false || version == ""` in
+  `installedWithVersions`) is a **proven equivalent mutant**, documented as
+  a code comment at the narrowest location per the mutation-tdd rule: Go's
+  comma-ok map lookup always yields the zero value (`""`) for `version`
+  when both the `DevDependencies` and `Dependencies` lookups miss, so `!ok`
+  can never be true while `version` is non-empty — the `!ok ||` term
+  changes no reachable outcome. (The *other* Comparison Replace mutant on
+  the same line, `!ok || false`, is real and killed — an empty-string
+  version literally present in `package.json` must still fall back to the
+  bare name, not render `"name@"`.)
+- `internal/app/app.go` + `internal/cli/{flags,sync}.go` + their tests:
+  **2/2 killed, score 1.00**, floor 0.80, exit 0.
+
+### Verification beyond the suite
+
+Per the team lead's own instruction ("do not stop at `go test`"): built
+`dharness.exe` and ran `sync`/`sync --format json` against a throwaway git
+repository with `frontend/package.json` and a `frontend/.fallowrc.json`
+declaring both `boundaries` and `duplicates`, three separate times across
+this session (once per defect batch), reading the real output each time
+rather than trusting the suite. This is what found the two additional
+defects above that no test had ever named — a passing suite caught none of
+the thirteen total gaps (eleven plus two); running the binary caught all of
+them.
