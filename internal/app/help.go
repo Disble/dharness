@@ -22,6 +22,11 @@ COMMANDS
   mutate <path...>          Run mutation testing over the given files, to find
                             out whether their tests would notice the code
                             breaking. Use it once those tests are green.
+                            A path can name lines instead of the whole file,
+                            as src/thing.ts:12-40, and the verdict then covers
+                            exactly those lines. Installs Stryker at @latest in
+                            the project, which is the only place it can resolve
+                            the project's own TypeScript.
   version                   Print version
 
 FLAGS

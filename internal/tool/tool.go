@@ -44,38 +44,62 @@ func LatestSpec(binary string) string {
 	return binary + "@latest"
 }
 
-// StrykerCommand provisions Core and its selected official runner in one
-// transient package environment. Every argument is a separate token so paths
-// and package specs remain safe through the Windows cmd.exe shim.
-func StrykerCommand(packageManager string, yarnPnP bool, dir, testRunner string, configuredAppendPlugins []string, args ...string) (runner.Command, error) {
+// StrykerPackages names what the project must have installed to mutate, each
+// spec pinned to @latest.
+//
+// dharness installs these instead of provisioning a transient environment, and
+// the reason is measured rather than reasoned. Stryker's TSConfigPreprocessor
+// imports typescript dynamically from its own location, so a copy of Core
+// unpacked into a bunx or npx temporary directory cannot resolve the compiler
+// the project installed: every project holding a tsconfig.json died with
+// ERR_MODULE_NOT_FOUND before its first mutant. The project's own node_modules
+// is the one place Core and the compiler resolve each other.
+//
+// The transient route also did not do what it claimed. Measured on 2026-08-13,
+// bun keeps only the last --package of an invocation and drops the rest, so the
+// environment built for "Core and its runner together" held the runner alone
+// and reached Core transitively, at the runner's pinned range instead of the
+// requested @latest.
+//
+// @latest on every run is that route's one real benefit, kept: the manager
+// re-resolves the tag, so a project sitting on 8.2.6 is lifted to 9.6.1 by the
+// install itself and dharness never compares a version. Measured — that exact
+// upgrade took 5.7s, and a run with nothing to do costs 436ms and leaves
+// package.json byte-identical.
+func StrykerPackages(packageManager string, yarnPnP bool, testRunner string) ([]string, error) {
 	runnerPackage, ok := strykerRunnerPackages[testRunner]
 	if !ok {
-		return runner.Command{}, fmt.Errorf("%w: Stryker has no supported remote package for test runner %q; use vitest or jest", ErrUnsupportedStrykerExecution, testRunner)
+		return nil, fmt.Errorf("%w: Stryker has no supported package for test runner %q; use vitest or jest", ErrUnsupportedStrykerExecution, testRunner)
 	}
-
-	runnerLatest := runnerPackage + "@latest"
 	if packageManager == "yarn" && yarnPnP {
-		return runner.Command{}, fmt.Errorf("%w: Stryker cannot run in a Yarn Plug'n'Play project because the remote runner cannot resolve the project's test dependencies; configure nodeLinker: node-modules, run yarn install, then retry", ErrUnsupportedStrykerExecution)
+		return nil, fmt.Errorf("%w: Stryker cannot run in a Yarn Plug'n'Play project because it exposes no node_modules for Stryker to resolve the project's compiler through; configure nodeLinker: node-modules, run yarn install, then retry", ErrUnsupportedStrykerExecution)
 	}
 	if !knownManager(packageManager) {
-		return runner.Command{}, fmt.Errorf("%w: Stryker has no transient multi-package route for package manager %q; use npm, pnpm, yarn, or bun", ErrUnsupportedStrykerExecution, packageManager)
+		return nil, fmt.Errorf("%w: dharness cannot install Stryker with package manager %q; use npm, pnpm, yarn, or bun", ErrUnsupportedStrykerExecution, packageManager)
 	}
-	name, remoteArgs := transientPackages(packageManager, []string{strykerCoreLatest, runnerLatest}, Stryker)
+	return []string{strykerCoreLatest, runnerPackage + "@latest"}, nil
+}
 
+// StrykerLocal invokes the copy of Stryker the project has installed. The path
+// is the command name, never an argument to a remote executor.
+func StrykerLocal(binaryPath, dir, testRunner string, configuredAppendPlugins []string, args ...string) runner.Command {
 	appendPlugins := append([]string{}, configuredAppendPlugins...)
-	if !contains(appendPlugins, runnerPackage) {
+	if runnerPackage, ok := strykerRunnerPackages[testRunner]; ok && !contains(appendPlugins, runnerPackage) {
 		appendPlugins = append(appendPlugins, runnerPackage)
 	}
-	commandArgs := append(remoteArgs, args...)
-	commandArgs = append(commandArgs, "--appendPlugins", strings.Join(appendPlugins, ","))
+
+	commandArgs := append([]string{}, args...)
+	if len(appendPlugins) > 0 {
+		commandArgs = append(commandArgs, "--appendPlugins", strings.Join(appendPlugins, ","))
+	}
 
 	return runner.Command{
 		Label:       Stryker,
-		Name:        name,
+		Name:        binaryPath,
 		Args:        commandArgs,
 		Dir:         dir,
 		LowPriority: true,
-	}, nil
+	}
 }
 
 func contains(values []string, target string) bool {

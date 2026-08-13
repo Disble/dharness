@@ -69,8 +69,11 @@ func stub(t *testing.T, staged string) (*record, string) {
 	return captured, root
 }
 
-// mutable turns the stub root into a project Stryker can actually drive. The
-// runner plugin deliberately stays absent: remote execution provisions it.
+// mutable turns the stub root into a project Stryker can actually drive.
+//
+// The binary under node_modules/.bin is part of that now. dharness runs the
+// copy the project installed, so a root without one is a project mutate
+// refuses rather than a project it drives remotely.
 func mutable(t *testing.T, root string) {
 	t.Helper()
 
@@ -80,6 +83,34 @@ func mutable(t *testing.T, root string) {
 	if err := os.WriteFile(filepath.Join(root, "package-lock.json"), []byte(`{"lockfileVersion":3}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	binDir := filepath.Join(root, "node_modules", ".bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(binDir, binaryName("stryker")), "")
+}
+
+// commandFor finds one captured invocation by label.
+//
+// Mutation runs two commands now — the install that keeps Stryker at @latest,
+// then Stryker itself — and an index would pin that order rather than the
+// behaviour each test is about.
+func commandFor(t *testing.T, captured *record, label string) runner.Command {
+	t.Helper()
+
+	for _, command := range captured.commands {
+		if command.Label == label {
+			return command
+		}
+	}
+	t.Fatalf("no %s command among %+v", label, captured.commands)
+	return runner.Command{}
+}
+
+// strykerArgs is the flat argument string the mutation invocation carried.
+func strykerArgs(t *testing.T, captured *record) string {
+	t.Helper()
+	return strings.Join(commandFor(t, captured, "stryker").Args, " ")
 }
 
 func TestCheckRunsReactDoctorBeforeFallow(t *testing.T) {
@@ -233,23 +264,29 @@ func TestMutateWithoutPathsExplainsWhatItNeeds(t *testing.T) {
 	}
 }
 
-func TestStrykerRunsRemoteLatestEvenWhenInstalled(t *testing.T) {
+// Stryker runs from the project's own node_modules, and the inverse of this
+// test used to pin the opposite. Measured on 2026-08-13: Core unpacked into a
+// bunx temporary directory imports typescript from its own location, finds
+// nothing, and dies with ERR_MODULE_NOT_FOUND before the first mutant in any
+// project holding a tsconfig.json.
+func TestStrykerRunsTheBinaryTheProjectInstalled(t *testing.T) {
 	captured, root := stub(t, "")
 	binDir := filepath.Join(root, "node_modules", ".bin")
 	if err := os.MkdirAll(binDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeFile(t, filepath.Join(binDir, binaryName("stryker")), "")
+	binary := filepath.Join(binDir, binaryName("stryker"))
+	writeFile(t, binary, "")
 
 	p := project.Project{Root: root, Source: root, PackageManager: "npm"}
-	if err := runStryker(p, root, project.StrykerSelection{TestRunner: "vitest"}, []string{"run"}, io.Discard); err != nil {
+	if err := runStryker(binary, p, project.StrykerSelection{TestRunner: "vitest"}, []string{"run"}, io.Discard); err != nil {
 		t.Fatalf("runStryker() = %v", err)
 	}
 
 	if len(captured.commands) != 1 {
 		t.Fatalf("ran %d commands, want 1: %+v", len(captured.commands), captured.commands)
 	}
-	want := runner.Command{Label: "stryker", Name: "npx", Args: []string{"--yes", "--package=@stryker-mutator/core@latest", "--package=@stryker-mutator/vitest-runner@latest", "stryker", "run", "--appendPlugins", "@stryker-mutator/vitest-runner"}, Dir: root, LowPriority: true}
+	want := runner.Command{Label: "stryker", Name: binary, Args: []string{"run", "--appendPlugins", "@stryker-mutator/vitest-runner"}, Dir: root, LowPriority: true}
 	if got := captured.commands[0]; got.Label != want.Label || got.Name != want.Name || got.Dir != want.Dir || got.LowPriority != want.LowPriority || !slices.Equal(got.Args, want.Args) {
 		t.Errorf("runStryker command = %s %v in %s (low priority %t), want %s %v in %s (low priority %t)", got.Name, got.Args, got.Dir, got.LowPriority, want.Name, want.Args, want.Dir, want.LowPriority)
 	}
@@ -263,7 +300,7 @@ func TestMutatePairsIncrementalWithForceAndBoundsConcurrency(t *testing.T) {
 
 	_ = RunMutate([]string{"src/a.ts", "src/b.ts"}, io.Discard)
 
-	args := strings.Join(captured.commands[0].Args, " ")
+	args := strykerArgs(t, captured)
 	for _, want := range []string{"--mutate src/a.ts", "--mutate src/b.ts", "--incremental", "--force", "--concurrency 2"} {
 		if !strings.Contains(args, want) {
 			t.Errorf("stryker invoked without %q: %s", want, args)
@@ -281,7 +318,7 @@ func TestMutateDryRunMeasuresWithoutMutating(t *testing.T) {
 		t.Fatalf("RunMutate() = %v", err)
 	}
 
-	args := strings.Join(captured.commands[0].Args, " ")
+	args := strykerArgs(t, captured)
 	if !strings.Contains(args, "--dryRunOnly") {
 		t.Errorf("--dry-run did not reach Stryker: %s", args)
 	}
@@ -345,6 +382,58 @@ func TestMutateFailsWhenThereIsNoReportToRead(t *testing.T) {
 	}
 }
 
+// A project that cannot be given a Stryker is told so, and told what to run.
+//
+// The refusal exists because the alternative was measured and is worse: the
+// transient executor route reaches Stryker but not the project's typescript, so
+// falling back to it would answer a missing install with a Node stack trace
+// naming a path inside a temporary directory.
+func TestMutateRefusesWhenStrykerCannotBeInstalled(t *testing.T) {
+	cases := map[string]func(t *testing.T, captured *record, root string){
+		"the install fails": func(_ *testing.T, captured *record, _ string) {
+			captured.fail["npm"] = &runner.ExitError{Command: "npm", Code: 1}
+		},
+		"no binary appears": func(t *testing.T, _ *record, root string) {
+			if err := os.Remove(filepath.Join(root, "node_modules", ".bin", binaryName("stryker"))); err != nil {
+				t.Fatal(err)
+			}
+		},
+	}
+
+	for name, breakIt := range cases {
+		t.Run(name, func(t *testing.T) {
+			captured, root := stub(t, "")
+			mutable(t, root)
+			breakIt(t, captured, root)
+
+			err := RunMutate([]string{"src/a.ts"}, io.Discard)
+
+			var unavailable *StrykerUnavailableError
+			if !errors.As(err, &unavailable) {
+				t.Fatalf("RunMutate() = %v, want StrykerUnavailableError", err)
+			}
+			for _, evidence := range []string{
+				"npm install --save-dev",
+				"@stryker-mutator/core@latest",
+				"@stryker-mutator/vitest-runner@latest",
+				"nothing was mutated",
+			} {
+				if !strings.Contains(err.Error(), evidence) {
+					t.Errorf("refusal omits %q: %s", evidence, err)
+				}
+			}
+			if got := commandFor(t, captured, "npm"); len(got.Args) == 0 {
+				t.Error("the install was never attempted")
+			}
+			for _, command := range captured.commands {
+				if command.Label == "stryker" {
+					t.Errorf("Stryker ran without being installable: %+v", command)
+				}
+			}
+		})
+	}
+}
+
 // Nobody writes their flags before their paths. The standard flag package stops
 // parsing at the first positional, which would silently turn a flag into a path.
 func TestMutateAcceptsFlagsAfterPaths(t *testing.T) {
@@ -353,7 +442,7 @@ func TestMutateAcceptsFlagsAfterPaths(t *testing.T) {
 
 	_ = RunMutate([]string{"src/a.ts", "--concurrency", "4", "src/b.ts"}, io.Discard)
 
-	args := strings.Join(captured.commands[0].Args, " ")
+	args := strykerArgs(t, captured)
 	for _, want := range []string{"--mutate src/a.ts", "--mutate src/b.ts", "--concurrency 4"} {
 		if !strings.Contains(args, want) {
 			t.Errorf("stryker invoked without %q: %s", want, args)
@@ -374,14 +463,14 @@ func TestMutateAsksForTheReportItNeedsToJudge(t *testing.T) {
 
 	_ = RunMutate([]string{"src/a.ts"}, io.Discard)
 
-	args := strings.Join(captured.commands[0].Args, " ")
+	args := strykerArgs(t, captured)
 	if !strings.Contains(args, "--reporters clear-text,json") {
 		t.Errorf("without the json reporter there is no verdict to read: %s", args)
 	}
 	if strings.Contains(args, "--break") {
 		t.Errorf("--break does not exist in Stryker and was rejected when tried: %s", args)
 	}
-	if !captured.commands[0].LowPriority {
+	if !commandFor(t, captured, "stryker").LowPriority {
 		t.Error("mutation ran at normal priority; it is the one command that can freeze the machine")
 	}
 }
@@ -398,12 +487,14 @@ func TestMutateUsesTheConfiguredRunnerWithoutOverridingIt(t *testing.T) {
 	// proves the command passed the runner-selection boundary.
 	_ = RunMutate([]string{"src/a.ts"}, io.Discard)
 
-	args := strings.Join(captured.commands[0].Args, " ")
+	installed := strings.Join(commandFor(t, captured, "npm").Args, " ")
+	if !strings.Contains(installed, "@stryker-mutator/jest-runner@latest") {
+		t.Errorf("configured runner was not installed with Core: %s", installed)
+	}
+
+	args := strykerArgs(t, captured)
 	if strings.Contains(args, "--testRunner") {
 		t.Errorf("dharness overruled the project's own runner: %s", args)
-	}
-	if !strings.Contains(args, "@stryker-mutator/jest-runner@latest") {
-		t.Errorf("configured runner was not provisioned with Core: %s", args)
 	}
 	if !strings.Contains(args, "--appendPlugins custom-plugin,@stryker-mutator/jest-runner") {
 		t.Errorf("configured appendPlugins were not preserved: %s", args)
