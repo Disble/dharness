@@ -210,7 +210,7 @@ func (tool *tool) runOoze(root, sandbox, ignore, testCommand, scope string) erro
 	err := tool.runner.Run(commandSpec{
 		Dir: root, Name: "go",
 		Args:   []string{"test", "-v", "-tags=mutation", "-count=1", "-timeout=" + harnessTimeout, harnessPackage},
-		Env:    append(os.Environ(), envIgnorePattern+"="+ignore, envTestCommand+"="+testCommand, envThreshold+"="+threshold, envRepositoryDir+"="+sandbox, envScope+"="+scope),
+		Env:    append(environmentWithoutGitContext(), envIgnorePattern+"="+ignore, envTestCommand+"="+testCommand, envThreshold+"="+threshold, envRepositoryDir+"="+sandbox, envScope+"="+scope),
 		Stdout: tool.stdout, Stderr: tool.stderr,
 	})
 	if err != nil {

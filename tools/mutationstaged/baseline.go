@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"strings"
 )
 
@@ -29,7 +28,7 @@ func (tool *tool) verifyBaseline(sandbox, testCommand string) error {
 	var output strings.Builder
 	err := tool.runner.Run(commandSpec{
 		Dir: sandbox, Name: parts[0], Args: parts[1:],
-		Env:    os.Environ(),
+		Env:    environmentWithoutGitContext(),
 		Stdout: &output, Stderr: &output,
 	})
 	if err == nil {
