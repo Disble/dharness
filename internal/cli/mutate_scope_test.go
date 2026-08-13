@@ -23,6 +23,10 @@ func TestMutatePathsAreReExpressedForTheDirectoryStrykerRunsIn(t *testing.T) {
 		{"typed from the repository root", root, "frontend/src/a.ts", "src/a.ts"},
 		{"typed from the JS project", source, "src/a.ts", "src/a.ts"},
 		{"given absolute", root, filepath.Join(source, "src", "a.ts"), "src/a.ts"},
+		// The path moves and the range must not: it addresses lines in a file,
+		// not a location on disk.
+		{"a line range rides along", root, "frontend/src/a.ts:5-7", "src/a.ts:5-7"},
+		{"columns ride along verbatim", root, "frontend/src/a.ts:1:3-1:5", "src/a.ts:1:3-1:5"},
 	}
 
 	for _, testCase := range cases {
@@ -31,7 +35,7 @@ func TestMutatePathsAreReExpressedForTheDirectoryStrykerRunsIn(t *testing.T) {
 			if err != nil {
 				t.Fatalf("scopePaths() = %v", err)
 			}
-			if len(scoped) != 1 || scoped[0] != testCase.want {
+			if len(scoped) != 1 || scoped[0].Argument() != testCase.want {
 				t.Errorf("scopePaths() = %v, want [%s]", scoped, testCase.want)
 			}
 		})

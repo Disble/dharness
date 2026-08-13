@@ -7,118 +7,213 @@ whose evidence turns out to be a misreading goes away with the misreading.
 
 Nothing here is a promise. This is a list of things somebody noticed.
 
+The wrapper exists to make mutation testing **cheap enough to run**, and it
+buys that by mutating only what is staged. Cost is therefore the axis these
+entries are read on: a defect that inflates the mutant count attacks the only
+reason the tool exists. Correctness of attribution matters too, but it is the
+second question, not the first.
+
+**Validated 2026-08-13.** Entries 1 through 5 and 7 were turned into
+falsifiable predictions and measured against a controlled fixture rather than
+against a real change. The fixture is three files of **exactly 409 bytes each,
+byte-identical in layout** (`internal/exp/{alpha,beta,gamma}.go` on the
+throwaway branch `exp/mutation-hypotheses`), so function *k* of one file
+occupies the same byte range as function *k* of every other. That makes the
+prediction arithmetic instead of impressionistic, and it deliberately builds
+the **worst case** for cross-file collision. Three entries did not survive
+contact with measurement and have been corrected below.
+
 ---
 
-## 1. Line scope loses which file a byte offset came from
+## 1. The flat scope makes the mutant count quadratic in staged files
 
-**Measured on 2026-08-10**, during the change that made `installStep` stop
-reading `node_modules`.
+**Confirmed 2026-08-13 with a control.** Previously filed as "line scope loses
+which file a byte offset came from", first noticed 2026-08-10.
 
-`internal/setup/files.go` was staged with a **pure deletion**: the `installed`
-helper was removed and nothing was added. Its staged diff is one hunk,
-`@@ -66,8 +65,0 @@`, with no new-side lines at all. It therefore contributes
-zero byte ranges to the scope.
+`computeScope` (`tools/mutationstaged/main.go:127`) computes per-file line
+ranges correctly and passes them per file to `mutation.AnalyzeSource`, so the
+**forecast** is right. The defect is one line later. `allOffsets` accumulates
+`offsetRange` values carrying `start` and `end` and **no file identity**, and
+`plan.encoded` is a single flat `mergeOffsetRanges(allOffsets)` over the lot
+(`main.go:158`). `TestStagedMutation` then builds one `ScopeAll` from those
+ranges and hands the same virus instances to every file ooze mutates.
 
-The run mutated it anyway. Eight of the nine surviving mutants landed in
-`gateInstalled`, `huskyWired` and `appendHuskyGate` — three functions the diff
-never touched, in a file with no changed lines.
+That the collision is unavoidable, rather than merely possible, is settled by
+ooze itself: `GoSourceFile.Incubate` calls `token.NewFileSet()` **fresh for
+every file** (`internal/gosourcefile/gosourcefile.go:26`). Every file's byte
+offsets therefore restart at zero, so a merged flat range list necessarily
+addresses every file at once. This is what entry 4 was worried about, resolved
+in the direction that proves this entry.
 
-The likely mechanism, stated as a hypothesis rather than a finding:
-`computeScope` merges the offsets of every staged file into one flat list
-(`allOffsets = append(allOffsets, offsets...)`, then `encodeOffsetRanges` over
-the merge), and `lineScoped.Incubate` tests `int(node.Pos()) - 1` against that
-flat list with no file identity anywhere in the comparison. Ranges derived from
-one file are then matched against node positions in another.
+The measured cost, one changed line per file, each at a distinct position:
 
-Why it matters: on any change touching more than one file, the mutation score
-is measured over a set of nodes that is neither "the changed lines" nor "the
-whole file". It is whatever the arithmetic happens to overlap. A score computed
-that way can pass or fail for reasons unrelated to the change.
+| Staged files | `-dry` forecast | Mutants actually run | Ratio |
+|---|---|---|---|
+| 1 | 4 | 4 | 1× |
+| 2 | 8 | 16 | 2× |
+| 3 | 12 | **36** | 3× |
 
-What would settle it: keep the ranges keyed by file and give the virus the file
-identity of the node it is inspecting, or confirm that ooze parses each file
-with a fresh `token.FileSet` and that the collision has some other cause.
+The intended work is `4N`. The work performed is `4N²`. Each of the N files is
+measured against all N ranges, so **total mutant executions grow quadratically
+in the number of staged files**, and every mutant is one full run of the test
+command. The three-file run took 27s of wall clock for 36 mutants where 12 were
+called for.
 
-**Second occurrence, 2026-08-11, with sharper evidence.** A change that
-inserted a new method into `internal/project/git.go` — a pure insertion, the
-staged diff being one hunk at `@@ -108,0 +109,29 @@` — produced two survivors
-at line 91 of that same file, inside `StagedSourceFiles`, a function twenty
-lines *above* the insertion and untouched by the change. Five other files were
-staged in the same run.
+The single-file control is what makes this a finding rather than a coincidence:
+with one staged file the forecast and the run agree exactly (4 and 4). Nothing
+about the wrapper is broken until a second file joins.
 
-So this is not a one-off, and it has a cost beyond noise: a score reported for
-a slice is not a measure of that slice's coverage, and an author reading it is
-pushed toward writing tests for code their change never touched. The first
-occurrence could be read as a pure-deletion edge case; this one cannot.
+The `4N²` figure is the ceiling, realised here because the fixture is
+byte-identical by construction. Real files have different layouts and realise a
+fraction of it — the slice-2 measurement below is one such fraction — but the
+growth is in the wrong direction either way.
 
-## 2. The dry-run forecast and the real run disagree
+**Earlier occurrences, now explained by the above.** A pure deletion in
+`internal/setup/files.go` (2026-08-10) produced eight survivors in
+`gateInstalled`, `huskyWired` and `appendHuskyGate`. An insertion into
+`internal/project/git.go` (2026-08-11) produced two survivors twenty lines
+above the insertion, with five other files staged. Slice 2 of
+`structured-reports` (2026-08-12) staged five files and reported
+**0.796875 (51/64)**, failing the 0.80 floor; isolating the file groups along
+the dependency boundary gave **0.91 (10/11)** and **0.94 (44/47)** for the same
+code and the same tests, with only the grouping changed.
 
-Same run, same staged set:
+Two consequences, in the order they cost something:
 
-    go run ./tools/mutationstaged -dry
-      candidate mutants: 6 (kept nodes 1582, dropped nodes 40894)
+- **The run is slower than the tool promises.** That is the whole product.
+- **The score is measured over the wrong node set**, so it reads low, and an
+  author trusting it writes tests for code their change never touched.
 
-    go run ./tools/mutationstaged
-      Total: 32
+A fix needs the ranges keyed by file and the file identity carried through to
+the node comparison. The virus signature (`Incubate(node ast.Node)`) carries no
+file identity and ooze does not expose its `FileSet` to viruses, so this
+probably means one scoped pass per staged file rather than one merged pass.
+Until then, a multi-file edit should be read per file group, and a combined
+score below the floor is not evidence on its own.
 
-`-dry` exists so the cost of a run can be known before paying it. A forecast
-off by more than five times does not do that. Either `AnalyzeSource` counts
-something narrower than what ooze goes on to mutate, or the two are scoped
-differently — which would make this the same defect as entry 1 seen from the
-other side.
+## 2. The forecast is right and the run overcharges
 
-## 3. A pure-deletion file has no defensible place in the mutable set
+**Corrected 2026-08-13. The original entry blamed the wrong side.**
 
-Independent of how 1 and 2 resolve: a file whose staged diff only removes lines
-has no changed line to mutate. Today it is still handed to ooze as a mutable
-file, which is how three untested husky helpers came to decide whether an
-unrelated change could be committed.
+It read: `-dry` reported 6 candidates where the real run produced 32, and
+concluded that "a forecast off by more than five times" fails at the one job it
+has. The measurement says the opposite. `AnalyzeSource` is called per file with
+that file's own ranges, so `-dry` reports the number of mutants the staged
+change actually justifies. It is the execution that inflates, by exactly the
+factor in entry 1.
 
-Dropping such a file from the mutable set is one option. Failing open to whole
-files is another, and is what `wholeFileScope` already does elsewhere. What is
-not defensible is the current state, where the answer depends on arithmetic
-nobody chose.
+Measured: 3 staged files, `-dry` says 12, the run performs 36.
 
-The coverage gap those survivors exposed was real and has since been closed, so
-this entry is about the selection rule, not about those three functions.
+This matters more under a cost objective than under a correctness one. `-dry`
+exists so the price of a run can be known before it is paid. The price it
+quotes is honest; the run then charges N times it. For a tool whose reason to
+exist is fitting inside a gate, a forecast the execution does not honour is the
+central defect, not a reporting nuisance.
 
-## 4. `token.Pos` equals a byte offset only under an assumption nothing enforces
+Nothing needs fixing in `-dry`. Fixing entry 1 fixes this entry.
 
-`TestPositionMinusOneIsByteOffsetWithFreshFileSet` names the assumption in its
-own title: the identity holds when the `token.FileSet` contains one file, so
-its base is 1. Nothing checks that ooze parses that way. If it ever reuses a
-fileset across files, every position shifts by that file's base and the scope
-silently addresses the wrong bytes — silently, because a wrong offset still
-produces a valid mutant somewhere.
+## 3. A pure deletion is harmless alone and expensive in company
 
-A cheap guard: have the virus assert that the position it is about to compare
-belongs to the file whose ranges it holds, and fail loudly rather than drop or
-keep the wrong node.
+**Corrected 2026-08-13. The original premise was wrong; the risk is real.**
 
-## 5. A red suite reports a perfect score
+The original entry stated that a pure deletion "contributes zero byte ranges to
+the scope". It does not. The `count == 0` branch in
+`changedbytes.go:48` turns a zero-length new side into
+`lineRange{first: max(start, 1), last: start + 1}` — a synthetic two-line
+window around the deletion point. That branch has been present since the
+wrapper's first commit, so the premise was already false when it was written.
 
-**Measured on 2026-08-11**, during the boundaries-ownership change.
+Measured, deleting five lines from one staged file (`@@ -8,5 +7,0 @@`):
 
-The wrapper was run with one test already failing on unmutated code. It
-reported **6 mutants, 6 killed, score 1.00** and exited 0 — the gate's own
-verdict said the change was perfectly covered.
+    line scope       : 1 staged byte range(s)
+    candidate mutants: 0 (kept nodes 28, dropped nodes 714)
+    go mutation: staged line scope matched no ooze mutation nodes;
+                 refusing a zero-execution run
 
-The arithmetic is doing exactly what it was told: a mutant "dies" when the
-test command fails, and a suite that already fails kills every mutant without
-any mutation being involved. The score is not wrong so much as meaningless,
-and nothing in the output distinguishes the two.
+Alone, a pure deletion costs nothing: the window lands on a closing brace and a
+blank line, no mutator fires, and the wrapper refuses before ooze starts. That
+refusal is correct and should stay.
 
-The same run repeated against a green suite scored 0.83 with one survivor —
-a real gap, in a real guard, which the perfect score had hidden.
+In company it is pure waste. The same deletion staged alongside one ordinary
+one-line edit in a second file: `-dry` forecast 4, run performed **8**, and the
+deletion's own file received four of them — in `AaSix`, a function no diff
+touched — while contributing zero candidates to the forecast. A file with
+nothing to measure paid for four test-command runs.
 
-This is the failure the repository names in its own first rules: a verdict
+So the entry stands, for the reason in entry 1 rather than the reason
+originally given. Dropping a zero-candidate file from the mutable set would
+remove the cost and cannot lose information, because the file has none to give.
+
+## 4. Resolved: `token.Pos` minus one is a byte offset
+
+**Closed 2026-08-13.** The assumption holds, and checking it produced the proof
+for entry 1.
+
+`TestPositionMinusOneIsByteOffsetWithFreshFileSet` names the condition in its
+title: the identity holds when the `token.FileSet` contains one file, so its
+base is 1. ooze satisfies it — `GoSourceFile.Incubate` constructs
+`token.NewFileSet()` per file before parsing
+(`internal/gosourcefile/gosourcefile.go:26`).
+
+The worry was that a shared fileset would shift every position by that file's
+base. The reality is the opposite and worse: because every file starts at zero,
+offsets from different files overlap exactly. The guard this entry asked for —
+assert the position belongs to the file whose ranges are held — is still worth
+having, but as the fix for entry 1, not as a defence against this.
+
+## 5. A red suite reports a perfect score, and bills for it
+
+**Confirmed 2026-08-13, exactly as originally described.** First measured
+2026-08-11 during the boundaries-ownership change.
+
+With one test failing on unmutated code and an ordinary one-line staged change:
+
+    baseline suite on unmutated code : FAIL
+    Killed: 4   Survived: 0   Score: 1.00 (minimum: 0.80)
+    wrapper exit code: 0
+
+The gate's own verdict says the change is perfectly covered. The arithmetic is
+doing what it was told: a mutant dies when the test command fails, and a suite
+that already fails kills every mutant without any mutation being involved.
+
+Two notes from reproducing it. The failing test must be **independent of the
+mutated expression** — a first attempt whose red test read the very code being
+mutated scored 0.75, because one mutant happened to turn that test green. And
+the same run against a green suite scored 0.83 with one survivor: a real gap,
+in a real guard, which the perfect score had hidden.
+
+Under a cost objective this is the cheapest fix on the list and the largest
+saving. A red baseline wastes **one hundred percent** of the run: every mutant
+execution is paid for and returns no information. One unmutated run of the test
+command — a single execution, the cheapest check available — prevents all of
+them.
+
+This is also the failure the repository names in its own first rules: a verdict
 that has to be read out of context rather than off an exit code. A gate that
-reports 1.00 when its inputs are broken is worse than one that reports
-nothing, because it answers the question it was asked.
+reports 1.00 when its inputs are broken is worse than one that reports nothing,
+because it answers the question it was asked.
 
-What would close it: run the test command once, unmutated, before releasing
-ooze, and refuse to score at all if it does not pass. A baseline that fails
-is not a low score — it is no measurement.
+**Closed by `verifyBaseline`** (`tools/mutationstaged/baseline.go`). The test
+command runs once, unmutated, in the same sandbox ooze is about to mutate, and
+the wrapper refuses to score if it does not pass. It mirrors ooze's own
+execution deliberately — the same single-space split of the command string, the
+same working directory — because a baseline that runs a different command, or
+reads different bytes, proves nothing about the run it is clearing.
+
+The price, measured on the fixture with three staged files and 36 mutants:
+
+| | Wall clock | |
+|---|---|---|
+| The baseline alone | **1.2s** | one run of the test command |
+| Red baseline, refused | **3.2s** | ooze never released |
+| Green baseline, full run | **85.8s** | baseline plus 36 mutants |
+
+The cost is exactly one test-command run, always, so as a fraction it is
+`1/(mutants + 1)` — under 3% on this run, and worst on the smallest runs, which
+are the cheapest ones to repeat anyway. Against a red suite it avoided **96%**
+of the run, and every second of what it avoided would have bought nothing.
+
+A baseline that fails is not a low score — it is no measurement.
 
 ## 6. A `!p.HasSource()` guard is where the working directory leaks in
 
@@ -142,83 +237,61 @@ proves nothing, because the unguarded code finds nothing there either.
 
 ---
 
-## 7. Hunk proximity sweeps untouched functions into scope
+## 7. Nothing enforces the mutation floor automatically
 
-**Measured on 2026-08-12**, during the ESLint slice that deleted
-`doctorConfigStep`'s neighbours in `internal/setup/steps.go`.
+`.githooks/pre-commit` runs gofmt, vet and `go test ./...`;
+`.github/workflows/ci.yml` runs gofmt, vet, `go test ./... -race` and
+`scripts/verify-gate.sh`. Neither invokes `go run ./tools/mutationstaged`. The
+floor is real but it is enforced by an author choosing to run it, which is why
+the failing combined score in entry 1 did not block a commit.
 
-Staged scope is computed from the diff's line ranges, so a function the change
-never touched is mutated when it sits close enough to a hunk. The run reported
-a survivor in `lefthookExtendsStep.Satisfied` (`steps.go:243-246`), which that
-diff did not modify.
+**Retracted 2026-08-13: hunk proximity does not sweep in neighbours.** This
+entry previously claimed that a function the change never touched is mutated
+when it sits close enough to a hunk, on the evidence of a survivor in
+`lefthookExtendsStep.Satisfied`. The claim is false. `computeScope` reads the
+diff with `-U0`, so the scope is the changed lines exactly, and the single-file
+control measures one changed line producing exactly one mutation site and four
+mutants. The only proximity path that exists is the synthetic two-line window a
+pure deletion creates, which is entry 3. That survivor was a cross-file
+collision — entry 1 — in a run with several files staged.
 
-The survivor is real, not an artefact. `Satisfied` is
+The coverage gap that survivor exposed was real and separate from the
+attribution question: `lefthookExtendsStep.Satisfied` is
 
     hookManager(p) != managerLefthook || extendsWired(root, lefthookConfig, target)
 
-and the suite pins only the left side:
-`TestLefthookExtendsSatisfiedWhenLefthookIsNotTheHookManager` covers the
-short-circuit, `TestExtendsWiredIsFalseWithoutTheFile` covers `extendsWired`
-alone. **No test reaches the case where lefthook *is* the hook manager and the
-config is already wired**, so replacing the right operand with `true` survives.
+and no test reaches the case where lefthook *is* the hook manager and the
+config is already wired, so replacing the right operand with `true` survives.
 
-Two separate things worth doing, and they are not the same thing:
+## 8. The wrapper's own fixtures commit to the real repository
 
-1. The gap itself — one test with lefthook as the manager and a
-   `lefthook.yml` that already extends the owned file.
-2. The scoping behaviour. A survivor in code the diff never touched is
-   indistinguishable, in the report, from one the change introduced. The
-   author has to open each survivor to find out which it is, and the honest
-   answer differs: your own new code gets fixed, pre-existing code gets
-   recorded rather than silently absorbed into an unrelated review.
+**Measured 2026-08-13**, by causing it.
 
-Entry 1 is about scope losing *which file* an offset came from. This is the
-neighbouring problem: scope keeping code that no longer belongs to the change.
+`newGitFixture` in `tools/mutationstaged/flow_test.go` builds a throwaway repo
+in a temporary directory and runs `git` against it. Those `git` invocations
+inherit the ambient environment, and git exports different variables to hooks
+depending on the shape of the checkout:
 
-**Third occurrence, 2026-08-12, and the hypothesis is now confirmed.** Slice 2
-of `structured-reports` staged five files together — the first change in this
-repository to partially edit several existing files at once, rather than adding
-new ones. The combined run reported **0.796875 (51/64)** and failed the 0.80
-floor. Isolating the file groups along the dependency boundary gave **0.91
-(10/11)** for the `ExitCode`-move pair and **0.94 (44/47)** for the setup
-cluster. Same code, same tests; only the grouping changed.
+    plain repository  →  GIT_DIR=[]                       GIT_INDEX_FILE=.git/index
+    linked worktree   →  GIT_DIR=<repo>/.git/worktrees/X  GIT_INDEX_FILE=<...>/index
 
-The swept-in survivors were in `internal/app`'s `RunArgs` dispatch over
-`"sync"`/`"check"`/`"mutate"` — untouched by the slice, and the smallest staged
-file in the run. A byte offset legitimately changed in the much larger
-`internal/setup/setup.go` collides numerically with an unrelated offset inside
-`app.go`, which is exactly the mechanism entry 1 proposed as a hypothesis in
-August.
+In a plain clone `GIT_DIR` is not exported at all and `GIT_INDEX_FILE` is
+relative, so a subprocess whose working directory is the fixture resolves to
+the fixture and everything behaves. In a **linked worktree** both are absolute,
+every `git` subprocess on the machine retargets the real repository, and the
+fixture's `git commit -m fixture` commits against it — replacing the tree with
+the fixture's contents and leaving a commit named `fixture` on the branch.
 
-What was still open in the hypothesis is now closed by reading the code rather
-than inferring from symptoms. `computeScope` (`tools/mutationstaged/main.go:127`)
-already computes per-file ranges correctly and already passes them per file to
-`mutation.AnalyzeSource`, so the **statistics** are right. The defect is one
-line later: `allOffsets` accumulates `offsetRange` values that carry `start` and
-`end` and **no file identity at all**, and `plan.encoded` is one flat
-`mergeOffsetRanges(allOffsets)` over the lot. The encoded scope handed to ooze
-therefore cannot distinguish which file a range came from, while ooze parses
-each file with its own `token.FileSet` and so produces offsets that are only
-meaningful per file.
+Observed on both the worktree branch and, through an inherited absolute
+`GIT_DIR`, on `feat/structured-reports`. Recovery was `git reset --mixed` back
+to the real HEAD plus rebuilding the index; no file content was lost, because
+`git commit` does not touch the working tree.
 
-Why it went unnoticed for two days of work on this change: slice 1 added only
-brand-new files, where every offset is legitimately in scope whichever file it
-is attributed to. The defect needs a multi-file *partial* edit to show itself.
+Two things this costs. Running `go test ./...` from `.githooks/pre-commit`
+inside a linked worktree is unsafe today. And the failure is silent in the
+worst way: the test **passes**, because the misdirected commit succeeds.
 
-Two things this occurrence also settled, both worth stating plainly:
-
-- **Nothing enforces the mutation floor automatically.** `.githooks/pre-commit`
-  runs gofmt, vet and tests; `.github/workflows/ci.yml` runs gofmt, vet,
-  `go test ./... -race` and `scripts/verify-gate.sh`. Neither invokes
-  `go run ./tools/mutationstaged`. The floor is real but it is enforced by an
-  author choosing to run it, which is why a failing combined score did not
-  block the commit.
-- **The failure mode is the expensive direction.** A collision inflates the
-  denominator with untested code from an unrelated file, so the score reads
-  *low*. An author trusting it writes tests for code their change never
-  touched — the same cost entry 1 named, now measured at 0.797 against a real
-  0.91/0.94.
-
-A fix needs the ranges keyed by file and the file identity carried through to
-the node comparison. Until then, a multi-file partial edit should be read per
-file group, and a combined score below the floor is not evidence on its own.
+The fix is small: clear `GIT_DIR`, `GIT_INDEX_FILE` and `GIT_WORK_TREE` in the
+fixture's git invocations, so a fixture can only ever address its own
+repository. A test that can reach outside its fixture is not isolated,
+whatever it asserts.

@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/gtramontina/ooze"
+	"github.com/Disble/ditto"
 )
 
 const (
@@ -23,29 +23,30 @@ func TestStagedMutation(t *testing.T) {
 	if testCommand == "" {
 		t.Skip("run through go run ./tools/mutationstaged")
 	}
-	ranges, err := ParseOffsetRanges(os.Getenv(envScope))
+	ranges, err := ParseFileRanges(os.Getenv(envScope))
 	if err != nil {
 		t.Fatalf("%s is malformed: %v", envScope, err)
 	}
 
-	options := []ooze.Option{
-		ooze.WithRepositoryRoot(os.Getenv(envRepositoryDir)),
-		ooze.WithTestCommand(testCommand),
-		ooze.WithMinimumThreshold(thresholdFromEnv(t)),
+	options := []ditto.Option{
+		ditto.WithRepositoryRoot(os.Getenv(envRepositoryDir)),
+		ditto.WithTestCommand(testCommand),
+		ditto.WithMinimumThreshold(thresholdFromEnv(t)),
 	}
 	if ignore := os.Getenv(envIgnorePattern); ignore != "" {
-		options = append(options, ooze.IgnoreSourceFiles(ignore))
+		options = append(options, ditto.IgnoreSourceFiles(ignore))
 	}
 	if len(ranges) > 0 {
-		counter := &ScopeCounter{}
-		scoped := ScopeAll(DefaultViruses(), ranges, counter)
-		options = append(options, ooze.WithViruses(scoped[0], scoped[1:]...))
+		// The scope is ditto's now. It keeps each file's ranges beside that
+		// file, so a range measured in one file can no longer select nodes in
+		// another — which is what the wrapper's own flat scope used to do.
+		options = append(options, ditto.WithChangedRanges(ranges))
 	}
 
 	// Zero candidates were rejected by the wrapper's reachable preflight before
-	// this call. A guard after Release cannot provide that guarantee: ooze can
+	// this call. A guard after Release cannot provide that guarantee: ditto can
 	// call t.Fatal internally and make following statements unreachable.
-	ooze.Release(t, options...)
+	ditto.Release(t, options...)
 }
 
 func thresholdFromEnv(t *testing.T) float32 {

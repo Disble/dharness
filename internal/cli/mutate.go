@@ -51,7 +51,7 @@ func (e *SurvivorsError) Error() string {
 // the paths, the test runner derives it from the import graph, and barrel files
 // inflate that graph until every test counts as related.
 func RunMutate(args []string, stdout io.Writer) error {
-	flags := newFlagSet("mutate <path...>", stdout, "Run mutation testing over the given files. Use it once their tests are green.")
+	flags := newFlagSet("mutate <path...>", stdout, "Run mutation testing over the given files, or over given lines as src/thing.ts:12-40. Use it once their tests are green.")
 	concurrency := flags.Int("concurrency", defaultConcurrency, "Stryker workers")
 	dryRun := flags.Bool("dry-run", false, "measure how many tests a scoped run executes, without mutating anything")
 	paths, err := parseInterspersed(flags, args)
@@ -82,9 +82,15 @@ func RunMutate(args []string, stdout io.Writer) error {
 		return fmt.Errorf("%s", noSourceMessage(p))
 	}
 
-	paths, err = scopePaths(p, dir, paths)
+	scopes, err := scopePaths(p, dir, paths)
 	if err != nil {
 		return err
+	}
+	// The tokens go to Stryker exactly as they were typed, range and all. The
+	// parsed form stays behind so the verdict can be held to the same scope.
+	arguments := make([]string, 0, len(scopes))
+	for _, scope := range scopes {
+		arguments = append(arguments, scope.Argument())
 	}
 
 	selection, err := p.StrykerRunner()
@@ -96,15 +102,20 @@ func RunMutate(args []string, stdout io.Writer) error {
 		testRunnerArg = ""
 	}
 
+	binary, err := ensureStryker(p, selection, stdout)
+	if err != nil {
+		return err
+	}
+
 	if *dryRun {
 		fmt.Fprintln(stdout, "Running the initial test run only, to count the tests the runner considers related.")
 
 		// The count only exists in the output: --dryRunOnly writes no report.
 		var transcript bytes.Buffer
-		if err := runStryker(p, p.Source, selection, tool.StrykerDryRun(paths, testRunnerArg, *concurrency), io.MultiWriter(stdout, &transcript)); err != nil {
+		if err := runStryker(binary, p, selection, tool.StrykerDryRun(arguments, testRunnerArg, *concurrency), io.MultiWriter(stdout, &transcript)); err != nil {
 			return err
 		}
-		return recordMeasurement(p, transcript.String(), paths[0], stdout)
+		return recordMeasurement(p, transcript.String(), scopes[0].Path, stdout)
 	}
 
 	incremental, err := p.StatePath("stryker-incremental.json")
@@ -126,10 +137,10 @@ func RunMutate(args []string, stdout io.Writer) error {
 	}
 	defer func() { _ = runner.RemoveSandbox(sandbox) }()
 
-	if err := runStryker(p, p.Source, selection, tool.StrykerMutate(paths, testRunnerArg, incremental, sandbox, *concurrency), stdout); err != nil {
+	if err := runStryker(binary, p, selection, tool.StrykerMutate(arguments, testRunnerArg, incremental, sandbox, *concurrency), stdout); err != nil {
 		return err
 	}
-	return reportSurvivors(p.Source, stdout)
+	return reportSurvivors(p.Source, scopes, stdout)
 }
 
 // PathOutsideSourceError reports a path Stryker could never have mutated.
@@ -159,10 +170,16 @@ func (e *PathOutsideSourceError) Error() string {
 // A path outside the JS project is refused rather than clamped, because there
 // is no correct path to guess at and mutating nothing is indistinguishable from
 // mutating something that survived nothing.
-func scopePaths(p project.Project, dir string, paths []string) ([]string, error) {
-	scoped := make([]string, 0, len(paths))
+func scopePaths(p project.Project, dir string, paths []string) ([]tool.MutationScope, error) {
+	scoped := make([]tool.MutationScope, 0, len(paths))
 	for _, given := range paths {
-		absolute := given
+		// The range is split off before any path arithmetic. It survived
+		// filepath.Join and filepath.Rel intact when measured, but only by
+		// accident: a colon is meaningful in a Windows path, and relying on
+		// that is a bug waiting for a path that exercises it.
+		scope := tool.ParseMutationScope(given)
+
+		absolute := scope.Path
 		if !filepath.IsAbs(absolute) {
 			absolute = filepath.Join(dir, absolute)
 		}
@@ -171,22 +188,78 @@ func scopePaths(p project.Project, dir string, paths []string) ([]string, error)
 		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			return nil, &PathOutsideSourceError{Path: given, Source: p.Source}
 		}
-		scoped = append(scoped, filepath.ToSlash(rel))
+		scoped = append(scoped, scope.WithPath(filepath.ToSlash(rel)))
 	}
 	return scoped, nil
 }
 
-func runStryker(p project.Project, dir string, selection project.StrykerSelection, args []string, stdout io.Writer) error {
-	command, err := tool.StrykerCommand(p.PackageManager, p.YarnPnP, dir, selection.TestRunner, selection.AppendPlugins, args...)
+// StrykerUnavailableError reports a project that could not be given a Stryker
+// to run, and names the command that would fix it.
+//
+// It never falls back to a remote executor. That route cannot resolve the
+// project's TypeScript compiler, so a fallback would trade a message a person
+// can act on for a Node stack trace from a temporary directory.
+type StrykerUnavailableError struct {
+	Packages []string
+	Install  string
+	err      error
+}
+
+func (e *StrykerUnavailableError) Error() string {
+	cause := fmt.Sprintf("no %s binary appeared under node_modules/.bin", tool.Stryker)
+	if e.err != nil {
+		cause = e.err.Error()
+	}
+	return fmt.Sprintf("Stryker could not be installed, so nothing was mutated: %s\n\nInstall it and retry:\n\n    %s %s",
+		cause, e.Install, strings.Join(e.Packages, " "))
+}
+
+func (e *StrykerUnavailableError) Unwrap() error { return e.err }
+
+// ensureStryker installs Stryker at @latest and returns the binary that lands.
+//
+// Installing on every run is the point rather than a convenience. The transient
+// executor route bought exactly one thing — a package always resolved at
+// @latest, against the cache staleness LatestSpec documents — and it bought it
+// at the cost of a Core that cannot see the project's compiler. Asking the
+// manager for @latest keeps the freshness and drops the cost: the manager
+// re-resolves the tag, so a stale install is lifted by the install itself and
+// dharness never compares a version or asks a registry anything.
+//
+// This is not the gate. internal/cli/check.go declines to install at gate time
+// because a gate runs on every commit; mutate is invoked when a unit of work is
+// finished, so the install is paid once per finished unit and costs 436ms when
+// there is nothing to do.
+func ensureStryker(p project.Project, selection project.StrykerSelection, stdout io.Writer) (string, error) {
+	packages, err := tool.StrykerPackages(p.PackageManager, p.YarnPnP, selection.TestRunner)
 	if err != nil {
-		return err
+		return "", err
+	}
+	unavailable := func(cause error) error {
+		return &StrykerUnavailableError{Packages: packages, Install: tool.InstallCommand(p.PackageManager), err: cause}
 	}
 
+	fmt.Fprintf(stdout, "Resolving %s in the project, so Stryker reads the project's own compiler.\n",
+		strings.Join(packages, " "))
+	if err := runner.Run(tool.InstallPackages(p.PackageManager, p.Source, packages), stdout, stdout); err != nil {
+		return "", unavailable(err)
+	}
+
+	// Read back rather than assumed: a manager that exits 0 without exposing the
+	// binary would otherwise surface as a confusing failure to execute a path.
+	binary := p.LocalBinary(tool.Stryker)
+	if binary == "" {
+		return "", unavailable(nil)
+	}
+	return binary, nil
+}
+
+func runStryker(binary string, p project.Project, selection project.StrykerSelection, args []string, stdout io.Writer) error {
+	command := tool.StrykerLocal(binary, p.Source, selection.TestRunner, selection.AppendPlugins, args...)
+
 	if err := runner.Run(command, stdout, stdout); err != nil {
-		help, helpErr := tool.StrykerCommand(p.PackageManager, p.YarnPnP, dir, selection.TestRunner, selection.AppendPlugins, "run", "--help")
-		if helpErr == nil {
-			fmt.Fprint(stdout, pointer(help))
-		}
+		help := tool.StrykerLocal(binary, p.Source, selection.TestRunner, selection.AppendPlugins, "run", "--help")
+		fmt.Fprint(stdout, pointer(help))
 		return err
 	}
 	return nil
@@ -213,7 +286,7 @@ func recordMeasurement(p project.Project, transcript, path string, stdout io.Wri
 
 // reportSurvivors turns Stryker's report into the exit code it does not
 // produce. A missing report is not a pass: it means the run said nothing.
-func reportSurvivors(dir string, stdout io.Writer) error {
+func reportSurvivors(dir string, scopes []tool.MutationScope, stdout io.Writer) error {
 	path := filepath.Join(dir, tool.MutationReportPath)
 
 	file, err := os.Open(path)
@@ -222,7 +295,7 @@ func reportSurvivors(dir string, stdout io.Writer) error {
 	}
 	defer func() { _ = file.Close() }()
 
-	survivors, err := tool.Survivors(file)
+	survivors, err := tool.SurvivorsInScope(file, scopes)
 	if err != nil {
 		return err
 	}

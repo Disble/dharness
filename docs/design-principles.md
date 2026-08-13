@@ -46,6 +46,13 @@ trae; la verificación de configuración resultó ser el campo `entry_points` qu
 fallow ya reporta; y Stryker no necesita archivo de configuración porque toda
 opción suya es un flag.
 
+*Enmendado el 13 de agosto de 2026.* El principio gobierna también la sintaxis de
+los argumentos, no solo los comandos. Mutar por rango de líneas parecía una
+funcionalidad a construir y resultó ser la sintaxis que `--mutate` ya documenta
+—`src/app.js:5-7`, columnas incluidas—, así que dharness la parte para saber qué
+pidió y la vuelve a emitir textual. Reconstruirla desde los números parseados
+convertía `:1:3-1:5` en `:1-1` y ensanchaba en silencio lo que se muta.
+
 ### 02. La frontera de la delegación es «¿existe un comando?»
 
 No es configuración contra código, ni preparación contra hallazgos. Todo lo que
@@ -123,6 +130,28 @@ rechazó explícitamente un fallback remoto. Medido contra el proyecto de
 referencia: el binario local corre en ~347/358/349 ms (`docs/learning-log.md`,
 12 de agosto de 2026).
 
+*Enmendado el 13 de agosto de 2026.* Stryker es la tercera excepción, y la
+primera que **elimina** la ruta remota en lugar de convivir con ella. `mutate`
+instala `@stryker-mutator/core@latest` y su runner en el proyecto y ejecuta el
+binario local; si no puede, rehúsa nombrando el comando de instalación y nunca
+cae al ejecutor remoto. La razón es la de ESLint otra vez, medida: el
+`TSConfigPreprocessor` de Stryker importa `typescript` desde su propia
+ubicación, así que un Core desempaquetado en un temporal de bunx no resuelve el
+compilador del proyecto, y todo proyecto con `tsconfig.json` muere con
+`ERR_MODULE_NOT_FOUND` antes del primer mutante. `NODE_PATH` no alcanza —el
+fallo es ESM— y `--tsconfigFile` no existe como flag, solo como clave de
+configuración.
+
+Lo que este párrafo afirmaba antes era además falso. Core y el runner **no** se
+provisionaban juntos con `@latest`: bun instala únicamente el último `--package`
+y descarta el resto, de modo que el entorno transitorio llevaba el runner solo y
+Core entraba de arrastre, en el rango del runner. El `@latest` que esa ruta sí
+compraba se conserva pidiéndoselo al gestor en cada corrida —reinstalar `@latest`
+levanta un 8.2.6 a 9.6.1 por sí solo, y sin nada que hacer cuesta 436 ms y deja
+el manifiesto idéntico—, así que dharness nunca consulta el registro ni compara
+versiones. Instalar no contradice a `check.go`, que declina instalar en tiempo de
+gate: `mutate` no es el gate, se invoca al terminar una unidad de trabajo.
+
 ### 04. Un comando que no se puede nombrar está haciendo dos cosas
 
 El nombre no es presentación, es diagnóstico. Cuando ninguno encaja, casi siempre
@@ -192,6 +221,14 @@ reportar exactamente lo que uno estaba por aproximar.
 detectar entry points mal configurados. fallow imprime `1 entry point detected` y
 expone `entry_points` en su JSON. El heurístico sobraba entero.
 
+*Enmendado el 13 de agosto de 2026.* El mismo reflejo apareció con la frescura de
+versiones, y lo cortó una pregunta antes de que se escribiera: para no correr un
+Stryker viejo estaba por consultar el registro, comparar versiones y mantener una
+tabla de comandos `view` por gestor. Pedirle `@latest` al instalador del gestor
+responde lo mismo sin comparar nada, porque el gestor ya resuelve la etiqueta. La
+señal directa no siempre es un dato que la herramienta reporta; a veces es un
+efecto que ya sabe producir.
+
 ### 10. Un mecanismo sin momento de ejecutarse no es un diseño
 
 Antes de proponer que algo pase periódicamente, hay que poder nombrar qué lo
@@ -216,6 +253,14 @@ discrepan.
 *Salió de:* que el default de Stryker es `break: null`, documentado como *«never
 let your build fail»*: reportaba supervivientes y salía 0. Un agente lo corría,
 veía éxito y seguía de largo.
+
+*Enmendado el 13 de agosto de 2026.* Si el veredicto es de dharness, su alcance
+también lo es. `--incremental` hace acumulativo el reporte de Stryker a
+propósito, y dharness lo juzgaba entero: una corrida acotada a `src/a.ts:5-7`
+instrumentó cinco mutantes y salió 1 por un superviviente de la línea 10,
+sobrante de una corrida anterior del archivo completo. La herramienta informa el
+estado del proyecto; qué se preguntó en *esta* corrida no lo sabe nadie más que
+quien la pidió.
 
 ### 12. Orden por costo ascendente
 
@@ -284,6 +329,13 @@ proyecto usa, y se detiene ahí.
 modelo que ejecutó el pre-commit es invaluable. Y de encontrar que el fallo
 nombraba una ruta absoluta en lugar de la herramienta.
 
+*Enmendado el 13 de agosto de 2026.* Cuando la herramienta no llega a arrancar,
+su salida cruda no sirve de nada y hay que reemplazarla. Un Stryker que no
+resuelve el compilador del proyecto entrega un stack de Node apuntando a un
+directorio temporal, del que nadie deduce que faltan dos paquetes por instalar:
+ahí `mutate` rehúsa con el comando de instalación escrito en el mensaje. La regla
+sigue siendo no reinterpretar hallazgos; un arranque fallido no es un hallazgo.
+
 ### 17. La IA nunca es el gate
 
 El veredicto sale de códigos de salida y de JSON, siempre. La IA edita; no decide
@@ -342,6 +394,12 @@ escribe para referenciarlo nace vacío hasta que el agente declare la
 arquitectura, así que la corrida entera se deshizo para proteger una referencia a
 un archivo sin contenido. Peor: el bloqueo disparaba justo cuando el repositorio
 estaba mejor configurado.
+
+*Enmendado el 13 de agosto de 2026.* Un comando puede tener un requisito que un
+paso de `sync` no tendría. `mutate` sin Stryker instalable no baja un escalón: no
+hay corrida que seguir, porque el comando entero *es* esa corrida. Rehúsa. La
+escalera de este principio gobierna los pasos de `sync`, donde el resto del plan
+sobrevive a uno que no se pudo ejecutar.
 
 ### 21. El cliente es el agente, y la escalera termina ahí
 

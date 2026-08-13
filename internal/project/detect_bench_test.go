@@ -24,6 +24,6 @@ func BenchmarkDescribeAndBuildRemoteInvocations(b *testing.B) {
 		p := Describe(root)
 		tool.RemoteLatest(p.PackageManager, tool.ReactDoctor, p.Source)
 		tool.RemoteLatest(p.PackageManager, tool.Fallow, p.Source)
-		_, _ = tool.StrykerCommand(p.PackageManager, p.YarnPnP, p.Source, p.TestRunner, nil, "run")
+		_, _ = tool.StrykerPackages(p.PackageManager, p.YarnPnP, p.TestRunner)
 	}
 }
