@@ -456,6 +456,46 @@ land together, per Decision 4's own ordering note, or a key renders twice in
 the window between them). Why here: the only slice that changes the report's
 shape; its test rewrite is inseparable from it (design.md Decision 9).
 
+**MERGE CONDITION — run the binary and look at it.** Added after the fact,
+because its absence cost this slice a full pass. `go test` was green and the
+mutation score was 0.98–1.00 while the rendered report was missing eleven
+things the approved report specifies, including the entire body of the
+collision block — the richest block in the report and the reason this change
+exists. Not one of this file's tasks asked anyone to look at the output.
+
+A suite proves the suite agrees with itself. For a change whose deliverable
+*is* observable output, that is not evidence. This slice is not done until
+task 4.22 passes, and no future slice that changes observable output ships
+without an equivalent task.
+
+- [ ] **4.22** ACCEPTANCE (blocking): build and run the real binary, then
+      compare its output against `target-report.md` line by line.
+
+      ```
+      go build -o <scratch>/dharness.exe ./cmd/dharness
+      ```
+
+      Run `sync` and `sync --format json` in a throwaway git repo holding
+      `frontend/package.json` and a `frontend/.fallowrc.json` that declares
+      both `boundaries` and `duplicates`, so the collision path is actually
+      exercised. Check, at minimum:
+
+      - the header block, the `■` summary line, and the closing tally
+      - per-step numbering (`4/11`)
+      - each collision rendering its key, both values with their paths, the
+        measured `effective` **or its stated absence**, and the lettered
+        resolutions
+      - subprocess output framed on **every** line, not just the first
+      - `installed <package>@<version>`, with the version
+      - a satisfied step carrying the evidence that satisfied it, wrapped
+        rather than truncated mid-clause
+      - the legend, and no glyph used for two meanings
+      - `--format json` parsing, and agreeing with the human view because
+        both came from one analysis
+
+      Record what did not match. A mismatch is a defect in this slice, not a
+      note for later.
+
 - [ ] **4.1** RED: `internal/setup/setup_test.go` —
       `TestRunReturnsAStepResultForEveryPlanStep`: an 11-step (or stubbed)
       plan mixing satisfied/delegated/applied steps; call `setup.Run(p)`;
