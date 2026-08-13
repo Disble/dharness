@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.4.1](https://github.com/Disble/dharness/compare/v1.4.0...v1.4.1) (2026-08-13)
+
+
+### Bug Fixes
+
+* **mutate:** keep the Stryker version the project declared ([8741e56](https://github.com/Disble/dharness/commit/8741e560add90946c79ccb616352f14e8945ae0f))
+* **mutate:** keep the Stryker version the project declared ([13b5367](https://github.com/Disble/dharness/commit/13b536774e399fa93069c85ebbe5ef936938468e))
+
 ## [1.4.0](https://github.com/Disble/dharness/compare/v1.3.0...v1.4.0) (2026-08-13)
 
 
