@@ -193,9 +193,27 @@ that has to be read out of context rather than off an exit code. A gate that
 reports 1.00 when its inputs are broken is worse than one that reports nothing,
 because it answers the question it was asked.
 
-What would close it: run the test command once, unmutated, before releasing
-ooze, and refuse to score at all if it does not pass. A baseline that fails is
-not a low score — it is no measurement.
+**Closed by `verifyBaseline`** (`tools/mutationstaged/baseline.go`). The test
+command runs once, unmutated, in the same sandbox ooze is about to mutate, and
+the wrapper refuses to score if it does not pass. It mirrors ooze's own
+execution deliberately — the same single-space split of the command string, the
+same working directory — because a baseline that runs a different command, or
+reads different bytes, proves nothing about the run it is clearing.
+
+The price, measured on the fixture with three staged files and 36 mutants:
+
+| | Wall clock | |
+|---|---|---|
+| The baseline alone | **1.2s** | one run of the test command |
+| Red baseline, refused | **3.2s** | ooze never released |
+| Green baseline, full run | **85.8s** | baseline plus 36 mutants |
+
+The cost is exactly one test-command run, always, so as a fraction it is
+`1/(mutants + 1)` — under 3% on this run, and worst on the smallest runs, which
+are the cheapest ones to repeat anyway. Against a red suite it avoided **96%**
+of the run, and every second of what it avoided would have bought nothing.
+
+A baseline that fails is not a low score — it is no measurement.
 
 ## 6. A `!p.HasSource()` guard is where the working directory leaks in
 
