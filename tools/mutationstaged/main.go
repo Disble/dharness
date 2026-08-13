@@ -108,6 +108,10 @@ func (tool *tool) run(dry bool) error {
 		return err
 	}
 	defer cleanup()
+	if err := tool.verifyBaseline(sandbox, testCommand); err != nil {
+		return err
+	}
+	fmt.Fprintln(tool.stdout, "  baseline suite   : passed on unmutated code")
 	return tool.runOoze(root, sandbox, ignore, testCommand, plan.encoded)
 }
 
