@@ -95,7 +95,36 @@ func wrap(text string, width, indent int) []string {
 		line = word
 		linePrefix = prefix
 	}
-	return append(lines, linePrefix+line)
+	lines = append(lines, linePrefix+line)
+
+	return hardSplitOverlongLines(lines, width)
+}
+
+// hardSplitOverlongLines is wrap's fallback for a "word" (a run of
+// non-whitespace, by strings.Fields' own definition) that alone already
+// exceeds width: it has no space to break at, so the greedy word-wrap above
+// returns it whole, wider than width, on a line of its own. It can only
+// ever be placed alone — any candidate joining it to anything else is
+// already over width before the join is even tried — so there is nothing
+// else sharing that line to disturb by cutting it. Measured live against a
+// real collision value: fallow's `--format json` output is compact with no
+// internal whitespace at all, so the whole value is one unbreakable word by
+// this definition. Rather than special-case that inside the greedy loop,
+// every already-assembled line is checked once, here, after wrapping: a
+// still-too-long line is carved into width-rune pieces with no separator —
+// "the bound, not the break points" (this function's own long-standing
+// rule) applies even when there is no break point at all.
+func hardSplitOverlongLines(lines []string, width int) []string {
+	var out []string
+	for _, line := range lines {
+		runes := []rune(line)
+		for len(runes) > width {
+			out = append(out, string(runes[:width]))
+			runes = runes[width:]
+		}
+		out = append(out, string(runes))
+	}
+	return out
 }
 
 // WriteHuman renders r as the report a person reads: one summary line, then
@@ -359,8 +388,8 @@ const collisionValueUnavailable = "could not be shown"
 func writeCollision(b *strings.Builder, c Collision) {
 	fmt.Fprintf(b, "\n   `%s` has two owners        id  %s\n\n", c.Key, c.ID)
 
-	writeDeclaredSide(b, "dharness", c.Ours, effectiveMark(c, "ours"))
-	writeDeclaredSide(b, "project", c.Theirs, effectiveMark(c, "theirs"))
+	writeDeclaredSide(b, "dharness", c.Ours, effectiveMark(c, "ours"), false)
+	writeDeclaredSide(b, "project", c.Theirs, effectiveMark(c, "theirs"), true)
 	b.WriteString("\n")
 
 	if len(c.Resolutions) > 0 {
@@ -374,20 +403,94 @@ func writeCollision(b *strings.Builder, c Collision) {
 	b.WriteString("   Then re-run `dharness sync` to confirm.\n")
 }
 
+// declaredSideIndent is the column every value line starts at: 5 leading
+// spaces + an 8-rune label field + 2 spaces (fmt.Sprintf("     %-8s  ",
+// label)) — the same column the location line above it already starts its
+// own value at. wrap's own indent parameter stays 0 at this call site,
+// exactly like writeSatisfiedBlock's evidence: this function prints that
+// fixed prefix itself, on every line, so wrap must not add a second hanging
+// indent on top of it.
+const declaredSideIndent = 15
+
+// resolvedNote marks the project side of a collision as fallow's resolved
+// value rather than the text the project actually wrote, whenever it was
+// actually measured (setup.Collisions only ever populates Theirs.Value from
+// `fallow config --format json` — the fully resolved config, every default
+// filled in, never the declared text). A run measured against a real
+// project made the gap concrete: dharness's own declared value carried 3
+// fields, fallow's resolved value for the same key carried 15. Printed side
+// by side with no distinction, a reader expects the two blobs to be
+// directly comparable and cannot find the difference — the one thing this
+// block exists to show. Narrowing the resolved side to only the keys that
+// differ from Ours, the way fallow's own dupes report hides unchanged
+// clones (`note: hid N clone groups`), was considered and rejected here: it
+// reads better, but it is a second comparison feature with its own tests,
+// not a one-line fix to an unlabeled value that is already correct.
+//
+// Kept to one short word, deliberately, appended to the location line
+// rather than the (already wrapped) value line: a paragraph-length
+// explanation would itself need wrapping and start competing with the
+// value for the reader's attention. It is not itself wrapped — every path
+// this block has ever printed, measured live, stays well inside the
+// remaining budget, and the location line was never bounded before this
+// note existed either; a genuinely pathological path is a pre-existing,
+// separate gap this fix does not take on.
+const resolvedNote = "  (fallow-resolved)"
+
 // writeDeclaredSide renders one side of a collision — its location (path,
-// and line when known) and its value, or collisionValueUnavailable when it
-// could not be measured, plus mark when a measurement says this is the side
-// that runs.
-func writeDeclaredSide(b *strings.Builder, label string, d Declared, mark string) {
+// and line when known, plus resolvedNote when this side's value is
+// fallow's measured, fully resolved config rather than declared text) and
+// its value, or collisionValueUnavailable when it could not be measured,
+// plus mark when a measurement says this is the side that runs.
+func writeDeclaredSide(b *strings.Builder, label string, d Declared, mark string, resolved bool) {
 	location := d.Path
 	if d.Line > 0 {
 		location = fmt.Sprintf("%s:%d", d.Path, d.Line)
 	}
+	note := ""
+	if resolved && d.Value != nil {
+		note = resolvedNote
+	}
+	fmt.Fprintf(b, "     %-8s  %s%s\n", label, location, note)
+
 	value := collisionValueUnavailable
 	if d.Value != nil {
 		value = string(*d.Value)
 	}
-	fmt.Fprintf(b, "     %-8s  %s\n               %s%s\n", label, location, value, mark)
+
+	// A colliding value can be hundreds of characters long — fallow's own
+	// resolved config for one key measured 345 characters live against a
+	// real project, the widest line the whole report ever produced, and it
+	// broke the block's layout unwrapped. It is wrapped here exactly like
+	// every other wrapped field (wrap, wrapWidth), at declaredSideIndent —
+	// the same column the location line above it already starts a value
+	// at.
+	//
+	// The effective mark, when present, is appended to the LAST wrapped
+	// line rather than printed on a line of its own: a separate line would
+	// read as marking the whole side rather than the specific value it
+	// measures, and the existing rendering test (and every real reading of
+	// this block) expects it directly attached to what it marks. To keep
+	// that line within wrapWidth with the mark attached, the value is
+	// wrapped inside a width narrowed by the mark's own length whenever a
+	// mark is present — a small, uniform tightening applied to every line
+	// rather than a special case for only the last one. available is never
+	// non-positive for any real caller: wrapWidth (70) minus
+	// declaredSideIndent (15) minus the mark's own fixed length (18) still
+	// leaves room to spare.
+	available := wrapWidth - declaredSideIndent
+	if mark != "" {
+		available -= utf8.RuneCountInString(mark)
+	}
+	valueIndent := strings.Repeat(" ", declaredSideIndent)
+	lines := wrap(value, available, 0)
+	for i, line := range lines {
+		suffix := ""
+		if i == len(lines)-1 {
+			suffix = mark
+		}
+		fmt.Fprintf(b, "%s%s%s\n", valueIndent, line, suffix)
+	}
 }
 
 // effectiveMark names which side a measurement says actually runs, or ""

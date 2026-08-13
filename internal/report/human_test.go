@@ -386,6 +386,413 @@ func TestWriteHumanCollisionBlockShowsBothSidesAndResolutions(t *testing.T) {
 	}
 }
 
+// TestWriteHumanCollisionValueWrapsWithinReportWidth pins the first defect
+// found live during 4.22's follow-up verification: a colliding value can be
+// hundreds of characters long — fallow's own resolved config for one key
+// measured 345 characters against a real project, far wider than any other
+// line the report prints — and an unwrapped value destroyed the whole
+// block's layout. The fixed report width (wrapWidth) must bound every
+// rendered line, including this one, exactly as it already bounds
+// Why/Evidence/Reason.
+func TestWriteHumanCollisionValueWrapsWithinReportWidth(t *testing.T) {
+	// The exact value fallow's `--format json` returned for one colliding
+	// key in the team lead's own reproduction — compact, with no internal
+	// whitespace at all, so a plain word-wrap (which can only break at a
+	// space) cannot bound it without help.
+	theirs := jsonRaw(`{"enabled":true,"mode":"weak","near":false,"minTokens":50,"minLines":5,"minOccurrences":2,"threshold":5.0,"ignore":[],"ignoredClones":[],"ignoreDefaults":true,"skipLocal":false,"crossLanguage":false,"ignoreImports":true,"normalization":{},"minCorpusSizeForShingleFilter":1024,"minCorpusSizeForTokenCache":5000}`)
+	if n := utf8.RuneCountInString(string(theirs)); n <= wrapWidth {
+		t.Fatalf("fixture sanity check failed: value is %d runes, want more than wrapWidth (%d)", n, wrapWidth)
+	}
+	ours := jsonRaw(`{"minOccurrences":3,"mode":"semantic","threshold":3}`)
+	r := Report{
+		Steps: []StepResult{
+			{
+				ID:     "resolve the keys this project and dharness both declare",
+				Status: Delegated,
+				Collisions: []Collision{{
+					ID:     "sync:collision/duplicates",
+					Key:    "duplicates",
+					Ours:   Declared{Path: ".dharness/fallow.jsonc", Line: 4, Value: &ours},
+					Theirs: Declared{Path: "frontend/.fallowrc.json", Line: 2, Value: &theirs},
+				}},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := WriteHuman(&buf, r); err != nil {
+		t.Fatalf("WriteHuman() = %v", err)
+	}
+	out := buf.String()
+
+	for _, line := range strings.Split(out, "\n") {
+		if n := utf8.RuneCountInString(line); n > wrapWidth {
+			t.Errorf("line exceeds the fixed report width of %d runes (%d): %q", wrapWidth, n, line)
+		}
+	}
+	if !strings.Contains(out, "minCorpusSizeForTokenCache") {
+		t.Errorf("wrapped value lost content:\n%s", out)
+	}
+}
+
+// TestEffectiveMarkStaysAttachedWhenTheValueWraps triangulates
+// TestWriteHumanCollisionValueWrapsWithinReportWidth with the case that
+// exercises the mark: "this one runs" must still appear exactly once, and
+// it must read as attached to the value it marks — the value's own last
+// wrapped line — rather than floating on a line of its own that a reader
+// could mistake for marking the whole side. It must also still respect
+// wrapWidth with the mark appended, not only without it.
+func TestEffectiveMarkStaysAttachedWhenTheValueWraps(t *testing.T) {
+	theirs := jsonRaw(`{"enabled":true,"mode":"weak","near":false,"minTokens":50,"minLines":5,"minOccurrences":2,"threshold":5.0,"ignore":[],"ignoredClones":[],"ignoreDefaults":true,"skipLocal":false,"crossLanguage":false,"ignoreImports":true,"normalization":{},"minCorpusSizeForShingleFilter":1024,"minCorpusSizeForTokenCache":5000}`)
+	ours := jsonRaw(`{"minOccurrences":3,"mode":"semantic","threshold":3}`)
+	effective := "theirs"
+	r := Report{
+		Steps: []StepResult{
+			{
+				ID:     "resolve the keys this project and dharness both declare",
+				Status: Delegated,
+				Collisions: []Collision{{
+					ID:        "sync:collision/duplicates",
+					Key:       "duplicates",
+					Ours:      Declared{Path: ".dharness/fallow.jsonc", Value: &ours},
+					Theirs:    Declared{Path: "frontend/.fallowrc.json", Value: &theirs},
+					Effective: &effective,
+				}},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := WriteHuman(&buf, r); err != nil {
+		t.Fatalf("WriteHuman() = %v", err)
+	}
+	out := buf.String()
+
+	if got := strings.Count(out, "this one runs"); got != 1 {
+		t.Fatalf(`strings.Count(output, "this one runs") = %d, want exactly 1:%s`, got, out)
+	}
+
+	var markLine string
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "this one runs") {
+			markLine = line
+			break
+		}
+	}
+	if markLine == "" {
+		t.Fatalf("mark line not found:\n%s", out)
+	}
+	// The value ends in "5000}" — if the mark is attached to the value's
+	// own last wrapped line rather than floating on a line by itself, that
+	// tail of the value and the mark appear together on the same line.
+	if !strings.Contains(markLine, "5000}") {
+		t.Errorf("mark is not attached to the value's last wrapped line, which should end \"5000}\":\n%s", markLine)
+	}
+
+	for _, line := range strings.Split(out, "\n") {
+		if n := utf8.RuneCountInString(line); n > wrapWidth {
+			t.Errorf("line exceeds the fixed report width of %d runes (%d) even with the mark attached: %q", wrapWidth, n, line)
+		}
+	}
+}
+
+// TestEffectiveMarkNarrowsWrapWidthToLeaveRoomForItself is a mutation guard
+// for writeDeclaredSide's own width-narrowing branch (available -=
+// utf8.RuneCountInString(mark)): the fixture in
+// TestEffectiveMarkStaysAttachedWhenTheValueWraps never lands its last
+// hard-split chunk close enough to the un-narrowed width to expose a mutant
+// that skips the narrowing, so this pins the boundary directly. The value's
+// length is chosen as an exact multiple of (wrapWidth - declaredSideIndent)
+// — the width wrap would use if the mark were wrongly ignored — so an
+// un-narrowed wrap produces a full-width final chunk that overflows the
+// moment the mark is appended to it; the correctly narrowed width never
+// produces a final chunk wide enough for that to happen, by construction.
+func TestEffectiveMarkNarrowsWrapWidthToLeaveRoomForItself(t *testing.T) {
+	const unnarrowedAvailable = wrapWidth - declaredSideIndent // 55
+	value := strings.Repeat("a", unnarrowedAvailable*2)        // 110, a clean multiple
+	theirs := jsonRaw(value)
+	ours := jsonRaw(`{"minOccurrences":3}`)
+	effective := "theirs"
+	r := Report{
+		Steps: []StepResult{
+			{
+				ID:     "resolve",
+				Status: Delegated,
+				Collisions: []Collision{{
+					ID:        "sync:collision/duplicates",
+					Key:       "duplicates",
+					Ours:      Declared{Path: ".dharness/fallow.jsonc", Value: &ours},
+					Theirs:    Declared{Path: "frontend/.fallowrc.json", Value: &theirs},
+					Effective: &effective,
+				}},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := WriteHuman(&buf, r); err != nil {
+		t.Fatalf("WriteHuman() = %v", err)
+	}
+	out := buf.String()
+
+	for _, line := range strings.Split(out, "\n") {
+		if n := utf8.RuneCountInString(line); n > wrapWidth {
+			t.Errorf("line exceeds the fixed report width of %d runes (%d): the mark's own width was not reserved for: %q", wrapWidth, n, line)
+		}
+	}
+}
+
+// TestWriteHumanLabelsTheProjectSideAsResolvedWhenMeasured pins the second
+// defect found live during 4.22's follow-up verification: setup.Collisions
+// always populates Theirs.Value from fallow's `--format json` output — the
+// fully resolved config, every default filled in — never the text the
+// project actually wrote. A real run measured this concretely: dharness's
+// own declared value carried 3 fields; fallow's resolved value for the same
+// key carried 15. Printed side by side with no distinction, a reader
+// believes the two sides are directly comparable and cannot find the
+// difference — the one thing this block exists to show. The project side
+// must say, once, that it is showing fallow's resolved value rather than
+// the declared text.
+func TestWriteHumanLabelsTheProjectSideAsResolvedWhenMeasured(t *testing.T) {
+	ours := jsonRaw(`{"minOccurrences":3,"mode":"semantic","threshold":3}`)
+	theirs := jsonRaw(`{"minOccurrences":2,"mode":"weak","threshold":5,"enabled":true,"near":false}`)
+	r := Report{
+		Steps: []StepResult{
+			{
+				ID:     "resolve the keys this project and dharness both declare",
+				Status: Delegated,
+				Collisions: []Collision{{
+					ID:     "sync:collision/duplicates",
+					Key:    "duplicates",
+					Ours:   Declared{Path: ".dharness/fallow.jsonc", Value: &ours},
+					Theirs: Declared{Path: "frontend/.fallowrc.json", Value: &theirs},
+				}},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := WriteHuman(&buf, r); err != nil {
+		t.Fatalf("WriteHuman() = %v", err)
+	}
+	out := buf.String()
+
+	lines := strings.Split(out, "\n")
+	var oursBlock, theirsBlock string
+	for i, line := range lines {
+		if strings.Contains(line, "dharness ") && i+1 < len(lines) {
+			oursBlock = line + "\n" + lines[i+1]
+		}
+		if strings.Contains(line, "project ") && i+1 < len(lines) {
+			theirsBlock = line + "\n" + lines[i+1]
+		}
+	}
+	if oursBlock == "" || theirsBlock == "" {
+		t.Fatalf("could not locate both sides in output:\n%s", out)
+	}
+	if !strings.Contains(theirsBlock, "resolved") {
+		t.Errorf("project side does not say its value is fallow's resolved value:\n%s", theirsBlock)
+	}
+	if strings.Contains(oursBlock, "resolved") {
+		t.Errorf("dharness's own literally-declared side is wrongly labeled resolved too:\n%s", oursBlock)
+	}
+}
+
+// TestWriteHumanOmitsResolvedLabelWhenTheirsValueIsAbsent is
+// TestWriteHumanLabelsTheProjectSideAsResolvedWhenMeasured's discriminating
+// twin: when the resolve measurement never succeeded (Theirs.Value == nil),
+// there is no resolved value to label — the side already states
+// collisionValueUnavailable, and labeling it resolved too would claim a
+// measurement that never happened.
+func TestWriteHumanOmitsResolvedLabelWhenTheirsValueIsAbsent(t *testing.T) {
+	ours := jsonRaw(`{"minOccurrences":3}`)
+	r := Report{
+		Steps: []StepResult{
+			{
+				ID:     "resolve the keys this project and dharness both declare",
+				Status: Delegated,
+				Collisions: []Collision{{
+					ID:     "sync:collision/duplicates",
+					Key:    "duplicates",
+					Ours:   Declared{Path: ".dharness/fallow.jsonc", Value: &ours},
+					Theirs: Declared{Path: "frontend/.fallowrc.json"},
+				}},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := WriteHuman(&buf, r); err != nil {
+		t.Fatalf("WriteHuman() = %v", err)
+	}
+	out := buf.String()
+
+	if strings.Contains(out, "resolved") {
+		t.Errorf("output labels a side resolved despite no measured value being present:\n%s", out)
+	}
+}
+
+// TestWrapHardSplitsAWordWithNoBreakPoint pins wrap's fallback for a "word"
+// (a run of non-whitespace, by strings.Fields' own definition) that alone
+// already exceeds width: a real collision value is exactly this shape —
+// fallow's `--format json` output is compact, with no internal whitespace
+// at all, so the whole value is one unbreakable word. Word-wrapping alone
+// cannot bound such a line; "the bound, not the break points" (this file's
+// own rule for wrap) requires carving it even with nowhere natural to cut.
+func TestWrapHardSplitsAWordWithNoBreakPoint(t *testing.T) {
+	cases := []struct {
+		name      string
+		word      string
+		width     int
+		wantLines int
+	}{
+		// An exact multiple is the boundary a mutant on the split loop's
+		// `>` (e.g. loosened to `>=`) disagrees with: it would take one
+		// extra, empty final chunk after the last real one lands exactly
+		// on width, growing this case to 3 lines instead of 2 — content
+		// and per-line width alone cannot tell them apart, since an empty
+		// trailing line satisfies both.
+		{"word exactly twice the width", strings.Repeat("a", 20), 10, 2},
+		{"word not an exact width multiple", strings.Repeat("b", 25), 10, 3},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			lines := wrap(tc.word, tc.width, 0)
+
+			if len(lines) != tc.wantLines {
+				t.Errorf("wrap(%q, %d, 0) = %d lines %v, want %d lines", tc.word, tc.width, len(lines), lines, tc.wantLines)
+			}
+
+			for _, line := range lines {
+				if n := utf8.RuneCountInString(line); n > tc.width {
+					t.Errorf("wrap(%q, %d, 0) produced line %q of %d runes, want <= %d",
+						tc.word, tc.width, line, n, tc.width)
+				}
+			}
+
+			var rejoined string
+			for _, line := range lines {
+				rejoined += line
+			}
+			if rejoined != tc.word {
+				t.Errorf("wrap(%q, %d, 0) lost or altered content when hard-splitting: got %q, want %q", tc.word, tc.width, rejoined, tc.word)
+			}
+		})
+	}
+}
+
+// TestWriteDeclaredSideValueStartsAtTheDocumentedIndent is a mutation guard
+// for declaredSideIndent: the value line's own leading-space count is
+// checked against a literal, not the declaredSideIndent constant itself — a
+// mutation only changes the constant in production code, and comparing
+// against the same (also-mutated) symbol here would make the assertion
+// agree with the mutant by construction, the same self-reference risk
+// TestWriteClosingBlockRuleSpansWrapWidth already avoids for wrapWidth. A
+// mutant changing 15 to any other number shifts the value out of the column
+// the location line above it starts a value at.
+func TestWriteDeclaredSideValueStartsAtTheDocumentedIndent(t *testing.T) {
+	const wantIndent = 15
+	value := jsonRaw(`"X"`)
+	r := Report{
+		Steps: []StepResult{
+			{
+				ID:     "resolve",
+				Status: Delegated,
+				Collisions: []Collision{{
+					ID:   "sync:collision/duplicates",
+					Key:  "duplicates",
+					Ours: Declared{Path: ".dharness/fallow.jsonc", Value: &value},
+				}},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := WriteHuman(&buf, r); err != nil {
+		t.Fatalf("WriteHuman() = %v", err)
+	}
+	out := buf.String()
+
+	var valueLine string
+	for _, line := range strings.Split(out, "\n") {
+		if strings.TrimSpace(line) == `"X"` {
+			valueLine = line
+			break
+		}
+	}
+	if valueLine == "" {
+		t.Fatalf("value line not found:\n%s", out)
+	}
+	leading := len(valueLine) - len(strings.TrimLeft(valueLine, " "))
+	if leading != wantIndent {
+		t.Errorf("value line indent = %d, want exactly %d: %q", leading, wantIndent, valueLine)
+	}
+}
+
+// TestWriteHumanCollisionValueContinuationLinesHaveNoExtraHangingIndent is a
+// mutation guard for wrap's own indent argument in writeDeclaredSide (0, not
+// a hanging indent): this block already adds its own fixed
+// declaredSideIndent prefix externally to every line, so wrap must not add
+// a second hanging indent on top of it — mirroring
+// TestWriteHumanSatisfiedEvidenceContinuationLinesHaveNoExtraHangingIndent
+// for the satisfied block's own evidence. The fixture uses actual
+// whitespace-separated words (unlike a real compact-JSON collision value)
+// deliberately: the hard-split path a spaceless value takes never consults
+// wrap's indent argument at all, so only a value with real word boundaries
+// can tell indent 0 apart from indent 1 here.
+func TestWriteHumanCollisionValueContinuationLinesHaveNoExtraHangingIndent(t *testing.T) {
+	const wantIndent = 15
+	value := strings.TrimSpace(strings.Repeat("measured ", 20))
+	theirs := jsonRaw(value)
+	r := Report{
+		Steps: []StepResult{
+			{
+				ID:     "resolve",
+				Status: Delegated,
+				Collisions: []Collision{{
+					ID:     "sync:collision/duplicates",
+					Key:    "duplicates",
+					Theirs: Declared{Path: "frontend/.fallowrc.json", Value: &theirs},
+				}},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := WriteHuman(&buf, r); err != nil {
+		t.Fatalf("WriteHuman() = %v", err)
+	}
+	out := buf.String()
+
+	var valueLines []string
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		onlyMeasured := true
+		for _, field := range fields {
+			if field != "measured" {
+				onlyMeasured = false
+				break
+			}
+		}
+		if onlyMeasured {
+			valueLines = append(valueLines, line)
+		}
+	}
+	if len(valueLines) < 2 {
+		t.Fatalf("expected the value to wrap into at least 2 lines, got %d:\n%s", len(valueLines), out)
+	}
+	for _, line := range valueLines {
+		leading := len(line) - len(strings.TrimLeft(line, " "))
+		if leading != wantIndent {
+			t.Errorf("value continuation line carries a hanging indent on top of the fixed prefix: got %d leading spaces, want exactly %d: %q", leading, wantIndent, line)
+		}
+	}
+}
+
 func jsonRaw(s string) json.RawMessage { return json.RawMessage(s) }
 
 // TestWriteHumanAppliedTranscriptFramesEveryLine pins gap 2 from the measured
