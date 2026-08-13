@@ -4,6 +4,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -35,56 +37,434 @@ func stepIDPresent(steps []Step, id string) bool {
 	return false
 }
 
+// writeLocalFallowBinary creates the file p.LocalBinary(tool.Fallow) looks
+// for, in the platform-specific shape npm actually writes: a .cmd shim on
+// Windows, a plain file everywhere else — the same fixture shape
+// internal/cli's own tests already use for a locally installed tool. Its
+// contents never run; runner.Run is always seamed in these tests.
+func writeLocalFallowBinary(t *testing.T, source string) {
+	t.Helper()
+	name := "fallow"
+	if runtime.GOOS == "windows" {
+		name = "fallow.cmd"
+	}
+	path := filepath.Join(source, "node_modules", ".bin", name)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestCollisionNamesEveryContributedKeyTheProjectDeclares pins the widened
-// step's whole contract: every colliding key is named, with both the
-// preset's contributed value and the project's own declared value, and a
-// key the project never declared is never mentioned. entryPoints is a
-// stand-in key for this test only — no real preset contributes it (see
-// CLAUDE.md's own recorded lesson about that key).
+// step's whole contract: every colliding key is named, and a key the
+// project never declared is never mentioned. It uses a real preset match
+// (wails) rather than a stub, because design.md Decision 4 wires this slice
+// so describeBoundaries/delegateBoundaries's non-empty branch renders from
+// Collisions(p) — which resolves matches through preset.Resolve(p), not
+// through whatever a caller happens to pass — so a stub matches slice is no
+// longer reachable from that branch at all. entryPointsLikeKey exercises
+// the "never mentioned" half without depending on a second real preset.
 func TestCollisionNamesEveryContributedKeyTheProjectDeclares(t *testing.T) {
 	root := t.TempDir()
-	// The project's own value (dist/**) is deliberately different from the
-	// preset's (wailsjs/**) and from the unrelated stand-in preset's
-	// (src/main.ts), so an assertion that finds one cannot be satisfied by
-	// mistaking it for another — the fixture two identical values would
-	// produce cannot tell collidingKeys/ownedValue/declaredValue apart.
-	writeProjectFallow(t, root, `{"ignorePatterns": ["dist/**"]}`)
-
-	matches := []preset.Match{
-		stubMatch("wails", preset.Root, "ignorePatterns", []string{"wailsjs/**"}, "wails.json"),
-		stubMatch("stub", preset.Root, "entryPoints", []string{"src/main.ts"}, "test stand-in"),
+	if err := os.WriteFile(filepath.Join(root, "wails.json"), []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
 	}
-
-	colliding := collidingKeys(root, matches)
-	if len(colliding) != 1 || colliding[0] != "ignorePatterns" {
-		t.Fatalf("collidingKeys() = %v, want exactly [ignorePatterns]", colliding)
-	}
-
+	writeProjectFallow(t, root, `{"boundaries":{"zones":[]},"ignorePatterns":["dist/**"]}`)
 	p := project.Project{Root: root, Source: root}
 
-	why := delegateBoundaries(p, colliding, matches)
-	if !strings.Contains(why, "ignorePatterns") {
-		t.Errorf("Delegated() why does not name ignorePatterns:\n%s", why)
-	}
-	if !strings.Contains(why, `["wailsjs/**"]`) {
-		t.Errorf("Delegated() why does not show the preset's contributed value:\n%s", why)
-	}
-	if !strings.Contains(why, `"dist/**"`) {
-		t.Errorf("Delegated() why does not show the project's own declared value:\n%s", why)
-	}
-	if strings.Contains(why, "entryPoints") || strings.Contains(why, "src/main.ts") {
-		t.Errorf("Delegated() why mentions entryPoints, which the project never declared:\n%s", why)
+	colliding, _ := boundaryCollision(p)
+	if len(colliding) != 2 {
+		t.Fatalf("boundaryCollision() = %v, want exactly 2 colliding keys (boundaries, ignorePatterns)", colliding)
 	}
 
-	describe := describeBoundaries(p, colliding, matches)
-	if !strings.Contains(describe, `["wailsjs/**"]`) {
-		t.Errorf("Describe() does not show the preset's contributed value:\n%s", describe)
+	rendered := renderCollisions(Collisions(p))
+	why := delegateBoundaries(p, colliding)
+	describe := describeBoundaries(p, colliding)
+
+	if why != rendered {
+		t.Errorf("delegateBoundaries() = %q, want renderCollisions(Collisions(p)) = %q (the report's collision rendering and the delegated reason must not drift apart)", why, rendered)
 	}
-	if !strings.Contains(describe, `"ignorePatterns": ["dist/**"]`) {
-		t.Errorf("Describe() does not show the project's own declared value:\n%s", describe)
+	if describe != rendered {
+		t.Errorf("describeBoundaries() = %q, want renderCollisions(Collisions(p)) = %q", describe, rendered)
 	}
-	if strings.Contains(describe, "entryPoints") || strings.Contains(describe, "src/main.ts") {
-		t.Errorf("Describe() mentions entryPoints, which the project never declared:\n%s", describe)
+
+	for _, key := range colliding {
+		if !strings.Contains(rendered, key) {
+			t.Errorf("rendered collision prose omits colliding key %q:\n%s", key, rendered)
+		}
+	}
+	if strings.Contains(rendered, "entryPoints") {
+		t.Errorf("rendered collision prose mentions entryPoints, which the project never declared:\n%s", rendered)
+	}
+}
+
+// TestDelegatedCollisionMatchesTheComputedReportValue pins step-delegation's
+// added requirement: boundariesOwnerStep's delegation hands back the same
+// structured Collision value the report is rendered from, not a
+// pre-rendered prose string a second, independent renderer could drift
+// away from. Asserted for a single colliding key — the "boundaries" fixture
+// every other boundariesOwnerStep test already uses, so this test isolates
+// the byte-for-byte equality rather than the multi-key case above.
+func TestDelegatedCollisionMatchesTheComputedReportValue(t *testing.T) {
+	root := t.TempDir()
+	p := project.Project{Root: root, Source: root}
+	writeProjectFallow(t, root, `{"extends":["./.dharness/fallow.jsonc"],"boundaries":{"zones":[]}}`)
+
+	why, ok := (boundariesOwnerStep{}).Delegated(p)
+	if !ok {
+		t.Fatal("Delegated() ok = false; a real collision must delegate")
+	}
+
+	want := renderCollisions(Collisions(p))
+	if why != want {
+		t.Errorf("Delegated() why = %q, want renderCollisions(Collisions(p)) = %q", why, want)
+	}
+}
+
+// TestBoundariesOwnerStepIDMakesNoArchitectureClaim pins spec's amended
+// requirement (a) by content, not exact wording: ID() takes no
+// project.Project, so it cannot know whether this project declares one
+// architecture, two, or none — the string it returns must not claim two
+// regardless.
+func TestBoundariesOwnerStepIDMakesNoArchitectureClaim(t *testing.T) {
+	id := (boundariesOwnerStep{}).ID()
+	if strings.Contains(id, "two architectures") || strings.Contains(id, "architectures this project declares") {
+		t.Errorf("ID() = %q, still asserts an architecture claim it cannot back", id)
+	}
+}
+
+// TestBoundariesFallbackConstantsStayByteIdentical guards design.md
+// Decision 6's "six lines is the complete golden impact" claim: the generic
+// golden fixtures render a project where collidingKeys is always empty, so
+// describeBoundaries/delegateBoundaries reach only these two fallback
+// constants. If either changes by even one byte, the six-line figure is no
+// longer true and every golden fixture needs re-measuring, not just line 26.
+func TestBoundariesFallbackConstantsStayByteIdentical(t *testing.T) {
+	const wantDescribe = "Move the zones and rules from %s into %s, or delete the block dharness\nowns and keep the project's. Either is a valid answer; having both is not,\nbecause only one of them runs and the file gives no sign of which."
+	const wantWhy = "%s declares its own `boundaries`, and fallow's `extends` replaces that key\nrather than merging it — the project's block replaces the one dharness owns\nentirely, without an error. Only one architecture is being enforced, and the\nconfiguration does not say which."
+
+	if boundariesFallbackDescribe != wantDescribe {
+		t.Errorf("boundariesFallbackDescribe changed:\ngot  %q\nwant %q", boundariesFallbackDescribe, wantDescribe)
+	}
+	if boundariesFallbackWhy != wantWhy {
+		t.Errorf("boundariesFallbackWhy changed:\ngot  %q\nwant %q", boundariesFallbackWhy, wantWhy)
+	}
+}
+
+// TestResolvedConfigShortCircuitsOnNoLocalBinary pins the measurement's
+// first exit: with no local fallow binary, resolvedConfig never builds a
+// subprocess at all — the cheapest of the absence rows, and the one that
+// costs nothing.
+func TestResolvedConfigShortCircuitsOnNoLocalBinary(t *testing.T) {
+	var commands []runner.Command
+	t.Cleanup(runner.SetForTest(func(cmd runner.Command, _, _ io.Writer) error {
+		commands = append(commands, cmd)
+		return nil
+	}))
+
+	root := t.TempDir()
+	p := project.Project{Root: root, Source: root}
+
+	resolved, ok := resolvedConfig(p)
+	if ok {
+		t.Error("resolvedConfig() ok = true with no local fallow binary")
+	}
+	if resolved != nil {
+		t.Errorf("resolvedConfig() = %v, want nil", resolved)
+	}
+	if len(commands) != 0 {
+		t.Errorf("resolvedConfig() ran %d commands with no local binary, want 0: %v", len(commands), commands)
+	}
+}
+
+// TestResolvedConfigShortCircuitsOnExit3 pins the exit-3 short circuit
+// itself: the --format json call must never run once --path answers "no
+// config at all". Asserted on command count, not merely on the result, so a
+// mutant that runs both commands and still lands on absence through the
+// unmarshal failure cannot survive (design.md's named mutation risk).
+func TestResolvedConfigShortCircuitsOnExit3(t *testing.T) {
+	root := t.TempDir()
+	writeLocalFallowBinary(t, root)
+	p := project.Project{Root: root, Source: root}
+
+	var commands []runner.Command
+	t.Cleanup(runner.SetForTest(func(cmd runner.Command, _, _ io.Writer) error {
+		commands = append(commands, cmd)
+		return &runner.ExitError{Command: "fallow", Code: 3}
+	}))
+
+	resolved, ok := resolvedConfig(p)
+	if ok {
+		t.Error("resolvedConfig() ok = true after a --path exit 3")
+	}
+	if resolved != nil {
+		t.Errorf("resolvedConfig() = %v, want nil", resolved)
+	}
+	if len(commands) != 1 {
+		t.Fatalf("resolvedConfig() ran %d commands after exit 3, want exactly 1 (--format json must never run): %v", len(commands), commands)
+	}
+	if !slices.Contains(commands[0].Args, "--path") {
+		t.Errorf("the one command run was %v, want the --path probe", commands[0].Args)
+	}
+}
+
+// TestResolvedConfigAbsenceHasOneShape covers the two remaining failure
+// modes at resolvedConfig's own layer, beyond the no-local-binary and
+// exit-3 cases pinned above: a non-zero, non-3 --path exit, and --format
+// json succeeding but returning stdout that does not parse as JSON. Every
+// row: absent, never fabricated.
+func TestResolvedConfigAbsenceHasOneShape(t *testing.T) {
+	cases := []struct {
+		name string
+		run  func(cmd runner.Command, stdout io.Writer) error
+	}{
+		{
+			name: "non-zero, non-3 exit from --path",
+			run: func(cmd runner.Command, _ io.Writer) error {
+				if slices.Contains(cmd.Args, "--path") {
+					return &runner.ExitError{Command: "fallow", Code: 2}
+				}
+				return nil
+			},
+		},
+		{
+			name: "non-JSON stdout from --format json",
+			run: func(cmd runner.Command, stdout io.Writer) error {
+				if slices.Contains(cmd.Args, "--format") {
+					_, _ = io.WriteString(stdout, "not json")
+				}
+				return nil
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeLocalFallowBinary(t, root)
+			p := project.Project{Root: root, Source: root}
+
+			t.Cleanup(runner.SetForTest(func(cmd runner.Command, stdout, _ io.Writer) error {
+				return tc.run(cmd, stdout)
+			}))
+
+			resolved, ok := resolvedConfig(p)
+			if ok {
+				t.Error("resolvedConfig() ok = true, want false")
+			}
+			if resolved != nil {
+				t.Errorf("resolvedConfig() = %v, want nil", resolved)
+			}
+		})
+	}
+}
+
+// TestResolvedConfigSucceedsAfterExit0Probe pins the success path: a config
+// present, a clean --path probe, and --format json invoked exactly once,
+// its resolved map becoming the return value.
+func TestResolvedConfigSucceedsAfterExit0Probe(t *testing.T) {
+	root := t.TempDir()
+	writeLocalFallowBinary(t, root)
+	p := project.Project{Root: root, Source: root}
+
+	var jsonCalls int
+	t.Cleanup(runner.SetForTest(func(cmd runner.Command, stdout, _ io.Writer) error {
+		if slices.Contains(cmd.Args, "--path") {
+			return nil
+		}
+		jsonCalls++
+		_, _ = io.WriteString(stdout, `{"duplicates":{"threshold":3}}`)
+		return nil
+	}))
+
+	resolved, ok := resolvedConfig(p)
+	if !ok {
+		t.Fatal("resolvedConfig() ok = false, want true")
+	}
+	if jsonCalls != 1 {
+		t.Errorf("--format json ran %d times, want exactly 1", jsonCalls)
+	}
+	raw, present := resolved["duplicates"]
+	if !present {
+		t.Fatal(`resolvedConfig() map has no "duplicates" key`)
+	}
+	if string(raw) != `{"threshold":3}` {
+		t.Errorf(`resolvedConfig()["duplicates"] = %s, want {"threshold":3}`, raw)
+	}
+}
+
+// TestCollisionsComputesEachKeyOnce pins "a collision is computed once and
+// rendered from that one value in both views" at the computation layer: two
+// colliding keys through the real preset registry (a wails-matched project
+// whose own config also declares boundaries), each producing exactly one
+// report.Collision. Ours is always populated from the dharness-owned value;
+// Effective and Theirs.Value are populated only when the resolve actually
+// succeeds — exercised for both outcomes, since a stub that always resolved
+// could not tell the two apart.
+func TestCollisionsComputesEachKeyOnce(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "wails.json"), []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	writeProjectFallow(t, root, `{"boundaries":{"zones":[]},"ignorePatterns":["dist/**"]}`)
+	p := project.Project{Root: root, Source: root}
+
+	// Absent case: no local fallow binary at all.
+	absent := Collisions(p)
+	if len(absent) != 2 {
+		t.Fatalf("Collisions() returned %d entries, want 2: %+v", len(absent), absent)
+	}
+	for _, c := range absent {
+		if c.ID != "sync:collision/"+c.Key {
+			t.Errorf("collision %q: ID = %q, want sync:collision/%s", c.Key, c.ID, c.Key)
+		}
+		if c.Ours.Value == nil {
+			t.Errorf("collision %q: Ours.Value is nil, want the dharness-owned value", c.Key)
+		}
+		if c.Effective != nil || c.Theirs.Value != nil {
+			t.Errorf("collision %q: Effective/Theirs.Value populated with no local fallow binary to resolve them", c.Key)
+		}
+	}
+
+	// Present case: a stubbed local binary resolves both keys.
+	writeLocalFallowBinary(t, root)
+	t.Cleanup(runner.SetForTest(func(cmd runner.Command, stdout, _ io.Writer) error {
+		if slices.Contains(cmd.Args, "--format") {
+			_, _ = io.WriteString(stdout, `{"boundaries":{"zones":[]},"ignorePatterns":["dist/**"]}`)
+		}
+		return nil
+	}))
+
+	resolved := Collisions(p)
+	if len(resolved) != 2 {
+		t.Fatalf("Collisions() (resolved) returned %d entries, want 2: %+v", len(resolved), resolved)
+	}
+	for _, c := range resolved {
+		if c.Theirs.Value == nil {
+			t.Errorf("collision %q: Theirs.Value is nil after a successful resolve", c.Key)
+		}
+		if c.Effective == nil {
+			t.Errorf("collision %q: Effective is nil after a successful resolve", c.Key)
+		}
+	}
+}
+
+// TestCollisionsOursNamesTheOwnedFallowPath pins gap 10 from the team
+// lead's measured run: Collision.Ours.Path must name the file dharness owns
+// (.dharness/fallow.jsonc), never an empty string — a reader cannot act on
+// "dharness: <value>" with nowhere to look.
+func TestCollisionsOursNamesTheOwnedFallowPath(t *testing.T) {
+	root := t.TempDir()
+	writeProjectFallow(t, root, `{"boundaries":{"zones":[]}}`)
+	p := project.Project{Root: root, Source: root}
+
+	collisions := Collisions(p)
+	if len(collisions) != 1 {
+		t.Fatalf("Collisions() = %+v, want exactly 1", collisions)
+	}
+	want := filepath.ToSlash(filepath.Join(project.Dir, ownedFallow))
+	if collisions[0].Ours.Path != want {
+		t.Errorf("Ours.Path = %q, want %q", collisions[0].Ours.Path, want)
+	}
+}
+
+// TestCollisionsOursLineMeasuresTheOwnedFileWhenItExists triangulates the
+// case above once the owned file is actually on disk (as it is by the time
+// boundariesOwnerStep runs inside setup.Run, since ownedFilesStep applies
+// first in Plan() order): the line number must be measured from that real
+// file, not left at the zero sentinel declaredAt documents for "not found".
+func TestCollisionsOursLineMeasuresTheOwnedFileWhenItExists(t *testing.T) {
+	root := t.TempDir()
+	writeProjectFallow(t, root, `{"boundaries":{"zones":[]}}`)
+	ownedPath := filepath.Join(root, project.Dir, ownedFallow)
+	if err := os.MkdirAll(filepath.Dir(ownedPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ownedPath, []byte("{\n  \"boundaries\": []\n}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p := project.Project{Root: root, Source: root}
+
+	collisions := Collisions(p)
+	if len(collisions) != 1 {
+		t.Fatalf("Collisions() = %+v, want exactly 1", collisions)
+	}
+	if collisions[0].Ours.Line != 2 {
+		t.Errorf("Ours.Line = %d, want 2 (the line declaring \"boundaries\" in the owned file)", collisions[0].Ours.Line)
+	}
+}
+
+// TestCollisionsTheirsPathIsRootRelative pins a defect found while verifying
+// the human collision block against a real project: fallowConfigPath(p.Source)
+// is an absolute filesystem path, and Collisions used to store it verbatim —
+// the collision block ends up unreadable ("project
+// C:\Users\...\frontend\.fallowrc.json") instead of the short, root-relative
+// form Ours.Path already uses (.dharness/fallow.jsonc) and Report.Source
+// itself already uses (p.SourceRel()).
+func TestCollisionsTheirsPathIsRootRelative(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "frontend")
+	if err := os.MkdirAll(source, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeProjectFallow(t, source, `{"boundaries":{"zones":[]}}`)
+	p := project.Project{Root: root, Source: source}
+
+	collisions := Collisions(p)
+	if len(collisions) != 1 {
+		t.Fatalf("Collisions() = %+v, want exactly 1", collisions)
+	}
+	want := "frontend/" + fallowConfig
+	if collisions[0].Theirs.Path != want {
+		t.Errorf("Theirs.Path = %q, want %q (root-relative, matching Ours.Path's own convention)", collisions[0].Theirs.Path, want)
+	}
+}
+
+// TestCollisionsAlwaysCarriesTheTwoResolutions pins gap 11: Resolutions must
+// never be null — there is exactly one way to resolve any config collision
+// on a key dharness also owns (delete the project's own declaration, or move
+// it into the file dharness owns), whether or not effective was ever
+// measured.
+func TestCollisionsAlwaysCarriesTheTwoResolutions(t *testing.T) {
+	root := t.TempDir()
+	writeProjectFallow(t, root, `{"boundaries":{"zones":[]}}`)
+	p := project.Project{Root: root, Source: root}
+
+	collisions := Collisions(p)
+	if len(collisions) != 1 {
+		t.Fatalf("Collisions() = %+v, want exactly 1", collisions)
+	}
+	want := []string{"delete-theirs", "move-into-ours"}
+	if !slices.Equal(collisions[0].Resolutions, want) {
+		t.Errorf("Resolutions = %v, want %v", collisions[0].Resolutions, want)
+	}
+}
+
+// TestCollisionsSpawnsNoProcessWithNoCollidingKey pins design.md Decision
+// 5's "cheaper than the proposal's one cheap probe, and free (§13)": with
+// nothing colliding, Collisions must never call resolvedConfig at all, not
+// merely resolve it to absence. A local fallow binary is present so this
+// isolates the collision-count short circuit from the no-binary short
+// circuit TestResolvedConfigShortCircuitsOnNoLocalBinary already covers.
+func TestCollisionsSpawnsNoProcessWithNoCollidingKey(t *testing.T) {
+	root := t.TempDir()
+	writeLocalFallowBinary(t, root)
+	writeProjectFallow(t, root, `{"extends":["./.dharness/fallow.jsonc"]}`)
+	p := project.Project{Root: root, Source: root}
+
+	var commands []runner.Command
+	t.Cleanup(runner.SetForTest(func(cmd runner.Command, _, _ io.Writer) error {
+		commands = append(commands, cmd)
+		return nil
+	}))
+
+	if collisions := Collisions(p); collisions != nil {
+		t.Fatalf("Collisions() = %+v, want nil with nothing colliding", collisions)
+	}
+	if len(commands) != 0 {
+		t.Errorf("Collisions() ran %d commands with no colliding key, want 0: %v", len(commands), commands)
 	}
 }
 
@@ -199,8 +579,11 @@ func TestWailsMatchedOwnedFileIsNoLongerEmpty(t *testing.T) {
 // TestIgnorePatternsCollidesInTheMotivatingShape is task 19.4, the end-to-end
 // proof of the proposal's "applied to the motivating repository" claim: a
 // Wails-matched project whose own .fallowrc.json already declares
-// ignorePatterns collides, names both values, and still gets the preset's
-// value written into the file dharness owns.
+// ignorePatterns collides, names the key and the preset's own value, and
+// still gets the preset's value written into the file dharness owns. The
+// project's own declared value is asserted as the honest interim phrase
+// (declaredValueUnknown) rather than the fragment it used to show — see
+// TestCollisionNamesEveryContributedKeyTheProjectDeclares's own comment.
 func TestIgnorePatternsCollidesInTheMotivatingShape(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "wails.json"), []byte("{}\n"), 0o600); err != nil {
@@ -224,8 +607,8 @@ func TestIgnorePatternsCollidesInTheMotivatingShape(t *testing.T) {
 	if !strings.Contains(why, `["frontend/wailsjs/**"]`) {
 		t.Errorf("Delegated() why does not show wails' contributed value:\n%s", why)
 	}
-	if !strings.Contains(why, `"dist/**"`) {
-		t.Errorf("Delegated() why does not show the project's own declared value:\n%s", why)
+	if !strings.Contains(why, declaredValueUnknown) {
+		t.Errorf("Delegated() why does not carry the honest interim phrase for the project's own value:\n%s", why)
 	}
 
 	region := presetRegion(preset.Resolve(p))
@@ -284,12 +667,12 @@ func TestBoundariesOwnerDescribeAndDelegatedDoNotReadCwdWithoutASource(t *testin
 
 	p := project.Project{Root: t.TempDir()}
 
-	wantDescribe := describeBoundaries(p, nil, nil)
+	wantDescribe := describeBoundaries(p, nil)
 	if got := (boundariesOwnerStep{}).Describe(p); got != wantDescribe {
 		t.Errorf("Describe() = %q, want the no-collision fallback %q — an unrelated config was read from the working directory", got, wantDescribe)
 	}
 
-	wantWhy := delegateBoundaries(p, nil, nil)
+	wantWhy := delegateBoundaries(p, nil)
 	if got, _ := (boundariesOwnerStep{}).Delegated(p); got != wantWhy {
 		t.Errorf("Delegated() = %q, want the no-collision fallback %q — an unrelated config was read from the working directory", got, wantWhy)
 	}
@@ -524,7 +907,7 @@ func TestEslintExtendsStepApplyWritesAConfigWhenNoneExists(t *testing.T) {
 	root := t.TempDir()
 	p := project.Project{Root: root, Source: root}
 
-	if err := (eslintExtendsStep{}).Apply(p, &Writer{}); err != nil {
+	if _, err := (eslintExtendsStep{}).Apply(p, &Writer{}, io.Discard); err != nil {
 		t.Fatalf("Apply() = %v", err)
 	}
 
@@ -562,7 +945,7 @@ func TestEslintExtendsStepApplyResolvesFromASplitLayout(t *testing.T) {
 	}
 	p := project.Project{Root: root, Source: source}
 
-	if err := (eslintExtendsStep{}).Apply(p, &Writer{}); err != nil {
+	if _, err := (eslintExtendsStep{}).Apply(p, &Writer{}, io.Discard); err != nil {
 		t.Fatalf("Apply() = %v", err)
 	}
 
@@ -586,7 +969,7 @@ func TestEslintExtendsStepApplyResultIsAlreadySatisfied(t *testing.T) {
 	if (eslintExtendsStep{}).Satisfied(p) {
 		t.Fatal("Satisfied() = true before Apply ever ran")
 	}
-	if err := (eslintExtendsStep{}).Apply(p, &Writer{}); err != nil {
+	if _, err := (eslintExtendsStep{}).Apply(p, &Writer{}, io.Discard); err != nil {
 		t.Fatalf("Apply() = %v", err)
 	}
 	if !(eslintExtendsStep{}).Satisfied(p) {
@@ -606,7 +989,7 @@ func TestEslintExtendsStepApplyInsertsBothRegionsIntoAnExistingArrayLiteral(t *t
 	writeStepFixtureFile(t, root, eslintConfig, original)
 	p := project.Project{Root: root, Source: root}
 
-	if err := (eslintExtendsStep{}).Apply(p, &Writer{}); err != nil {
+	if _, err := (eslintExtendsStep{}).Apply(p, &Writer{}, io.Discard); err != nil {
 		t.Fatalf("Apply() = %v", err)
 	}
 
@@ -662,7 +1045,7 @@ func TestPresentMarkersWithStaleBytesAreReplacedNotDuplicated(t *testing.T) {
 	writeStepFixtureFile(t, root, eslintConfig, stale)
 	p := project.Project{Root: root, Source: root}
 
-	if err := (eslintExtendsStep{}).Apply(p, &Writer{}); err != nil {
+	if _, err := (eslintExtendsStep{}).Apply(p, &Writer{}, io.Discard); err != nil {
 		t.Fatalf("Apply() = %v", err)
 	}
 
@@ -714,7 +1097,7 @@ func TestSpliceGuardRollsBackAnUnparseableResult(t *testing.T) {
 	})
 	defer restore()
 
-	if err := (eslintExtendsStep{}).Apply(p, &Writer{}); err == nil {
+	if _, err := (eslintExtendsStep{}).Apply(p, &Writer{}, io.Discard); err == nil {
 		t.Fatal("Apply() = nil, want an error from the candidate guard")
 	}
 
@@ -737,7 +1120,7 @@ func TestSecondSyncWritesNothing(t *testing.T) {
 	writeStepFixtureFile(t, root, eslintConfig, original)
 	p := project.Project{Root: root, Source: root}
 
-	if err := (eslintExtendsStep{}).Apply(p, &Writer{}); err != nil {
+	if _, err := (eslintExtendsStep{}).Apply(p, &Writer{}, io.Discard); err != nil {
 		t.Fatalf("first Apply() = %v", err)
 	}
 	if !(eslintExtendsStep{}).Satisfied(p) {
@@ -750,7 +1133,7 @@ func TestSecondSyncWritesNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := (eslintExtendsStep{}).Apply(p, &Writer{}); err != nil {
+	if _, err := (eslintExtendsStep{}).Apply(p, &Writer{}, io.Discard); err != nil {
 		t.Fatalf("second Apply() = %v", err)
 	}
 	afterSecond, err := os.ReadFile(path)
@@ -831,7 +1214,7 @@ func TestEslintExtendsStepApplyPreservesCRLFAndBOMThroughTheSplice(t *testing.T)
 	writeStepFixtureFile(t, root, eslintConfig, bom)
 	p := project.Project{Root: root, Source: root}
 
-	if err := (eslintExtendsStep{}).Apply(p, &Writer{}); err != nil {
+	if _, err := (eslintExtendsStep{}).Apply(p, &Writer{}, io.Discard); err != nil {
 		t.Fatalf("Apply() = %v", err)
 	}
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/Disble/dharness/internal/preset"
 	"github.com/Disble/dharness/internal/project"
+	"github.com/Disble/dharness/internal/report"
 	"github.com/Disble/dharness/internal/runner"
 )
 
@@ -85,16 +87,16 @@ func (stubDelegatedStep) Delegated(project.Project) (string, bool) {
 	return "handed to the agent", true
 }
 
-func (s stubDelegatedStep) Apply(project.Project, *Writer) error {
+func (s stubDelegatedStep) Apply(project.Project, *Writer, io.Writer) (Facts, error) {
 	*s.applied = true
-	return nil
+	return Facts{}, nil
 }
 
 func TestApplySkipsEveryDelegatedStep(t *testing.T) {
 	applied := false
 	step := stubDelegatedStep{applied: &applied}
 
-	if err := applySteps([]Step{step}, project.Project{}, io.Discard); err != nil {
+	if _, err := applySteps([]Step{step}, project.Project{}, io.Discard); err != nil {
 		t.Fatalf("applySteps() = %v", err)
 	}
 	if applied {
@@ -106,8 +108,621 @@ func TestApplySkipsEveryDelegatedStep(t *testing.T) {
 // calls its Apply. The error Apply returns is a contract assertion for the
 // case that should be unreachable, not a code path any run takes.
 func TestAgentSkillApplyIsUnreachable(t *testing.T) {
-	if err := (agentSkillStep{}).Apply(project.Project{}, &Writer{}); err == nil {
+	if _, err := (agentSkillStep{}).Apply(project.Project{}, &Writer{}, io.Discard); err == nil {
 		t.Error("agentSkillStep.Apply() = nil, want the delegated-and-must-not-be-applied assertion")
+	}
+}
+
+// stubSinkStep is a minimal Step whose Apply writes a marker to the out
+// parameter it is handed and returns structured Facts, standing in for a
+// real step (installStep, hookInstallStep) without depending on either.
+type stubSinkStep struct{}
+
+func (stubSinkStep) ID() string                               { return "stub sink step" }
+func (stubSinkStep) Describe(project.Project) string          { return "" }
+func (stubSinkStep) Satisfied(project.Project) bool           { return false }
+func (stubSinkStep) Delegated(project.Project) (string, bool) { return "", false }
+
+func (stubSinkStep) Apply(_ project.Project, _ *Writer, out io.Writer) (Facts, error) {
+	fmt.Fprint(out, "marker-bytes-from-the-stub-step")
+	return Facts{Installed: []string{"pkg"}}, nil
+}
+
+// stubWriteStep writes one file per path it is given, letting a test build
+// a step whose attributed files are known in advance.
+type stubWriteStep struct {
+	id    string
+	paths []string
+}
+
+func (s stubWriteStep) ID() string                             { return s.id }
+func (stubWriteStep) Describe(project.Project) string          { return "" }
+func (stubWriteStep) Satisfied(project.Project) bool           { return false }
+func (stubWriteStep) Delegated(project.Project) (string, bool) { return "", false }
+
+func (s stubWriteStep) Apply(_ project.Project, w *Writer, _ io.Writer) (Facts, error) {
+	for _, path := range s.paths {
+		if err := w.Write(path, []byte("content")); err != nil {
+			return Facts{}, err
+		}
+	}
+	return Facts{}, nil
+}
+
+// TestPerStepFileAttributionIsPartitioned pins the file-attribution
+// requirement's own scenario: two steps that both write files are
+// attributed independently, with no overlap between them, even though both
+// share the one Writer applySteps threads through the whole run.
+func TestPerStepFileAttributionIsPartitioned(t *testing.T) {
+	root := t.TempDir()
+	a := filepath.Join(root, "a.txt")
+	b1 := filepath.Join(root, "b1.txt")
+	b2 := filepath.Join(root, "b2.txt")
+
+	steps := []Step{
+		stubWriteStep{id: "step A", paths: []string{a}},
+		stubWriteStep{id: "step B", paths: []string{b1, b2}},
+	}
+
+	outcomes, err := applySteps(steps, project.Project{Root: root}, io.Discard)
+	if err != nil {
+		t.Fatalf("applySteps() = %v", err)
+	}
+	if len(outcomes) != 2 {
+		t.Fatalf("applySteps() returned %d outcomes, want 2", len(outcomes))
+	}
+
+	wantPaths := func(changes []report.FileChange) []string {
+		paths := make([]string, len(changes))
+		for i, change := range changes {
+			paths[i] = change.Path
+		}
+		return paths
+	}
+
+	if got := wantPaths(outcomes[0].wrote); !slices.Equal(got, []string{"a.txt"}) {
+		t.Errorf("step A's attributed files = %v, want [a.txt]", got)
+	}
+	if got := wantPaths(outcomes[1].wrote); !slices.Equal(got, []string{"b1.txt", "b2.txt"}) {
+		t.Errorf("step B's attributed files = %v, want [b1.txt b2.txt]", got)
+	}
+}
+
+// TestApplyWritesOnlyToTheGivenSink pins the sink requirement (spec.md
+// step-outcome, first two requirements) at the applySteps layer: a step's
+// Apply writes only through the out parameter it is handed — a per-step
+// buffer applySteps controls — never through some channel of its own
+// choosing, and its structured Facts return value survives the trip back to
+// the caller, a fact no byte stream could carry.
+//
+// The marker text is expected to reach the writer applySteps itself was
+// given: Decision 9's own invariant for this slice ("nothing a user sees
+// changes") and TestSyncStdoutUnchangedAfterTheSinkMove both require
+// applySteps to copy each step's captured sink back onto its own stdout, so
+// dharness sync's real output stays byte-identical until slice 4 rewrites
+// RunSync to render a report instead of streaming live. What the sink
+// prevents is a step writing to some channel applySteps never sees at all
+// (os.Stdout/os.Stderr directly — defect 5), not the framed copy back.
+func TestApplyWritesOnlyToTheGivenSink(t *testing.T) {
+	var stdout bytes.Buffer
+	outcomes, err := applySteps([]Step{stubSinkStep{}}, project.Project{}, &stdout)
+	if err != nil {
+		t.Fatalf("applySteps() = %v", err)
+	}
+	if len(outcomes) != 1 {
+		t.Fatalf("applySteps() returned %d outcomes, want 1", len(outcomes))
+	}
+	if !slices.Equal(outcomes[0].facts.Installed, []string{"pkg"}) {
+		t.Errorf("outcome Facts.Installed = %v, want [pkg]", outcomes[0].facts.Installed)
+	}
+	if strings.Count(stdout.String(), "marker-bytes-from-the-stub-step") != 1 {
+		t.Errorf("the step's sink content did not reach the writer applySteps was given, exactly once: %q", stdout.String())
+	}
+}
+
+// TestRunReturnsAStepResultForEveryPlanStep pins "every step in Plan()
+// carries exactly one status, and none is an ambiguous absence": Run(p),
+// over the real registry, returns one entry per Plan() step and every
+// entry's status is one of the six defined values.
+func TestRunReturnsAStepResultForEveryPlanStep(t *testing.T) {
+	p, _, _ := integrationProject(t)
+	t.Cleanup(runner.SetForTest(func(runner.Command, io.Writer, io.Writer) error { return nil }))
+
+	steps, _, err := Run(p)
+	if err != nil {
+		t.Fatalf("Run() = %v", err)
+	}
+	if len(steps) != len(Plan()) {
+		t.Fatalf("Run() returned %d steps, want %d (len(Plan()))", len(steps), len(Plan()))
+	}
+
+	valid := map[report.Status]bool{
+		report.Applied: true, report.Delegated: true, report.Satisfied: true,
+		report.Failed: true, report.NotReached: true, report.Retracted: true,
+	}
+	for _, step := range steps {
+		if !valid[step.Status] {
+			t.Errorf("step %q has status %q, want one of the six defined values, none empty or unrecognised", step.ID, step.Status)
+		}
+	}
+}
+
+// TestRunNumbersStepsFromOneInPlanOrder is a mutation guard for run's own
+// `n := i + 1`: N must be the step's 1-based position in Plan() order, not
+// merely non-zero — the human view's "n/total" numbering (gap 6) reads
+// directly from it, so an off-by-one here would misnumber every step.
+func TestRunNumbersStepsFromOneInPlanOrder(t *testing.T) {
+	steps, _, err := run([]Step{stubSatisfiedStep{}, stubSatisfiedStep{}, stubSatisfiedStep{}}, project.Project{})
+	if err != nil {
+		t.Fatalf("run() = %v", err)
+	}
+	if len(steps) != 3 {
+		t.Fatalf("run() returned %d steps, want 3", len(steps))
+	}
+	for i, step := range steps {
+		if want := i + 1; step.N != want {
+			t.Errorf("steps[%d].N = %d, want %d", i, step.N, want)
+		}
+	}
+}
+
+// TestRunReadsNotesBeforeAnyByteChanges pins design.md Decision 8: notes are
+// read first inside Run, before the loop touches anything. A stub step
+// whose Apply writes .fallowrc.json would, if UncheckableConfigNote were
+// evaluated after it ran instead of before, make the blind spot look
+// resolved by the very run that could not see past it.
+func TestRunReadsNotesBeforeAnyByteChanges(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "fallow.toml"), []byte("ignorePatterns = [\"wailsjs/**\"]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p := project.Project{Root: root, Source: root}
+
+	step := stubWriteStep{id: "stub", paths: []string{filepath.Join(root, fallowConfig)}}
+
+	_, notes, err := run([]Step{step}, p)
+	if err != nil {
+		t.Fatalf("run() = %v", err)
+	}
+
+	found := false
+	for _, note := range notes {
+		if note.Kind == "not-checked" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("notes = %+v, want the not-checked note — it must be read before the stub step's Apply wrote .fallowrc.json, not after", notes)
+	}
+}
+
+// stubSatisfiedStep is a minimal Step whose Satisfied always answers true,
+// recording whether Delegated was ever asked of it.
+type stubSatisfiedStep struct {
+	delegatedCalled *bool
+}
+
+func (stubSatisfiedStep) ID() string                      { return "stub satisfied step" }
+func (stubSatisfiedStep) Describe(project.Project) string { return "already done" }
+func (stubSatisfiedStep) Satisfied(project.Project) bool  { return true }
+
+func (s stubSatisfiedStep) Delegated(project.Project) (string, bool) {
+	*s.delegatedCalled = true
+	return "should never be asked", true
+}
+
+func (stubSatisfiedStep) Apply(project.Project, *Writer, io.Writer) (Facts, error) {
+	return Facts{}, nil
+}
+
+// TestRunOrdersSatisfiedBeforeDelegated pins design.md Decision 8, change
+// #1: Satisfied is asked first, and Delegated is never asked of a step that
+// already answers true.
+func TestRunOrdersSatisfiedBeforeDelegated(t *testing.T) {
+	called := false
+	step := stubSatisfiedStep{delegatedCalled: &called}
+
+	steps, _, err := run([]Step{step}, project.Project{})
+	if err != nil {
+		t.Fatalf("run() = %v", err)
+	}
+	if called {
+		t.Error("Delegated() was called on a step Satisfied() already reported true")
+	}
+	if len(steps) != 1 || steps[0].Status != report.Satisfied {
+		t.Errorf("run() = %+v, want exactly one satisfied step", steps)
+	}
+	if steps[0].Evidence != "already done" {
+		t.Errorf("Evidence = %q, want the stub's single-line Describe() text unchanged", steps[0].Evidence)
+	}
+}
+
+// TestFirstLineTakesOnlyTheFirstLine pins the boundary firstLine exists
+// for: a single-line input passes through unchanged, and a multi-line one
+// is cut at its first newline, dropping everything after it.
+func TestFirstLineTakesOnlyTheFirstLine(t *testing.T) {
+	if got := firstLine("one line only"); got != "one line only" {
+		t.Errorf("firstLine(%q) = %q, want the input unchanged", "one line only", got)
+	}
+	if got := firstLine("first\nsecond\nthird"); got != "first" {
+		t.Errorf("firstLine(%q) = %q, want %q", "first\nsecond\nthird", got, "first")
+	}
+}
+
+// TestSatisfiedStepCarriesEvidenceNotBareStatus pins the same requirement's
+// second scenario: a satisfied step's entry names the fact that satisfied
+// it, not merely the status word.
+func TestSatisfiedStepCarriesEvidenceNotBareStatus(t *testing.T) {
+	root := t.TempDir()
+	p := project.Project{Root: root, Source: root}
+	if err := wireFallowExtends(p, &Writer{}); err != nil {
+		t.Fatal(err)
+	}
+	if !(fallowExtendsStep{}).Satisfied(p) {
+		t.Fatal("fixture is not satisfied; fix the test before trusting its assertion")
+	}
+
+	steps, _, err := run([]Step{fallowExtendsStep{}}, p)
+	if err != nil {
+		t.Fatalf("run() = %v", err)
+	}
+	if len(steps) != 1 {
+		t.Fatalf("run() returned %d steps, want 1", len(steps))
+	}
+	if steps[0].Status != report.Satisfied {
+		t.Fatalf("status = %q, want satisfied", steps[0].Status)
+	}
+	if steps[0].Evidence == "" {
+		t.Error("Evidence is empty for a satisfied step, want a status word plus a supporting fact")
+	}
+	// Gap 4 from the team lead's measured run: a satisfied step's evidence
+	// must be the detection fact that satisfied it, not Describe's first
+	// line — which for most steps is fix instructions for the unsatisfied
+	// case, actively wrong read as evidence nothing needs doing. spec.md's
+	// own scenario names this exact step and this exact fact
+	// ("`.fallowrc.json` already contains `extends →
+	// .dharness/fallow.jsonc`").
+	want := "extends → " + ownedFrom(p, p.Source, ownedFallow)
+	if steps[0].Evidence != want {
+		t.Errorf("Evidence = %q, want the step's own detection fact %q", steps[0].Evidence, want)
+	}
+}
+
+// TestSatisfiedStepsCarryTheirOwnDetectionFactNotDescribesFixInstructions
+// extends the guard above (gap 4) to every other step whose satisfied
+// evidence used to reuse Describe's first line — instructions for the
+// unsatisfied case, not a fact about why this run found nothing to do. The
+// team lead's measured example was legacyLintConfigStep, observed showing
+// "Make .eslintrc.json parse, or delete it..." as if that were evidence
+// nothing needed fixing.
+func TestSatisfiedStepsCarryTheirOwnDetectionFactNotDescribesFixInstructions(t *testing.T) {
+	t.Run("lefthookExtendsStep, wired", func(t *testing.T) {
+		root := t.TempDir()
+		p := project.Project{Root: root, Source: root}
+		writeStepFixtureFile(t, root, "lefthook.yml", "extends:\n  - .dharness/lefthook.yml\n")
+		if !(lefthookExtendsStep{}).Satisfied(p) {
+			t.Fatal("fixture is not satisfied; fix the test before trusting its assertion")
+		}
+		steps, _, err := run([]Step{lefthookExtendsStep{}}, p)
+		if err != nil || len(steps) != 1 {
+			t.Fatalf("run() = %+v, %v", steps, err)
+		}
+		if want := "extends → " + ownedFrom(p, p.Root, ownedLefthook); steps[0].Evidence != want {
+			t.Errorf("Evidence = %q, want %q", steps[0].Evidence, want)
+		}
+	})
+
+	t.Run("lefthookExtendsStep, no lefthook manager", func(t *testing.T) {
+		root := t.TempDir()
+		p := project.Project{Root: root, Source: root}
+		if !(lefthookExtendsStep{}).Satisfied(p) {
+			t.Fatal("fixture is not satisfied; fix the test before trusting its assertion")
+		}
+		steps, _, err := run([]Step{lefthookExtendsStep{}}, p)
+		if err != nil || len(steps) != 1 {
+			t.Fatalf("run() = %+v, %v", steps, err)
+		}
+		if steps[0].Evidence == "" {
+			t.Error("Evidence is empty")
+		}
+	})
+
+	t.Run("legacyLintConfigStep, file not present", func(t *testing.T) {
+		root := t.TempDir()
+		p := project.Project{Root: root, Source: root}
+		if !(legacyLintConfigStep{}).Satisfied(p) {
+			t.Fatal("fixture is not satisfied; fix the test before trusting its assertion")
+		}
+		steps, _, err := run([]Step{legacyLintConfigStep{}}, p)
+		if err != nil || len(steps) != 1 {
+			t.Fatalf("run() = %+v, %v", steps, err)
+		}
+		if steps[0].Evidence != "not present" {
+			t.Errorf("Evidence = %q, want %q", steps[0].Evidence, "not present")
+		}
+	})
+
+	t.Run("legacyLintConfigStep, file present and parses", func(t *testing.T) {
+		root := t.TempDir()
+		p := project.Project{Root: root, Source: root}
+		writeStepFixtureFile(t, root, legacyLintConfig, "{}")
+		if !(legacyLintConfigStep{}).Satisfied(p) {
+			t.Fatal("fixture is not satisfied; fix the test before trusting its assertion")
+		}
+		steps, _, err := run([]Step{legacyLintConfigStep{}}, p)
+		if err != nil || len(steps) != 1 {
+			t.Fatalf("run() = %+v, %v", steps, err)
+		}
+		if steps[0].Evidence != "parses" {
+			t.Errorf("Evidence = %q, want %q", steps[0].Evidence, "parses")
+		}
+		if strings.Contains(steps[0].Evidence, "Make") {
+			t.Errorf("Evidence = %q still reuses Describe's fix-instruction text", steps[0].Evidence)
+		}
+	})
+
+	t.Run("mcpStep", func(t *testing.T) {
+		root := t.TempDir()
+		p := project.Project{Root: root, Source: root}
+		writeStepFixtureFile(t, root, mcpConfig, `{"mcpServers":{"fallow":{"command":"bunx"}}}`)
+		if !(mcpStep{}).Satisfied(p) {
+			t.Fatal("fixture is not satisfied; fix the test before trusting its assertion")
+		}
+		steps, _, err := run([]Step{mcpStep{}}, p)
+		if err != nil || len(steps) != 1 {
+			t.Fatalf("run() = %+v, %v", steps, err)
+		}
+		if want := mcpConfig + " declares fallow"; steps[0].Evidence != want {
+			t.Errorf("Evidence = %q, want %q", steps[0].Evidence, want)
+		}
+	})
+
+	t.Run("hookInstallStep, lefthook", func(t *testing.T) {
+		root := t.TempDir()
+		p := project.Project{Root: root, Source: root}
+		if err := os.MkdirAll(filepath.Join(root, ".git", "hooks"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeStepFixtureFile(t, root, "lefthook.yml", "pre-commit:\n")
+		writeStepFixtureFile(t, filepath.Join(root, ".git", "hooks"), "pre-commit", "lefthook run pre-commit\n")
+		if !(hookInstallStep{}).Satisfied(p) {
+			t.Fatal("fixture is not satisfied; fix the test before trusting its assertion")
+		}
+		steps, _, err := run([]Step{hookInstallStep{}}, p)
+		if err != nil || len(steps) != 1 {
+			t.Fatalf("run() = %+v, %v", steps, err)
+		}
+		if want := filepath.ToSlash(filepath.Join(".git", "hooks", "pre-commit")); steps[0].Evidence != want {
+			t.Errorf("Evidence = %q, want %q", steps[0].Evidence, want)
+		}
+	})
+
+	t.Run("agentSkillStep", func(t *testing.T) {
+		root := t.TempDir()
+		p := project.Project{Root: root, Source: root}
+		skillDir := filepath.Join(root, ".claude", "skills", "react-doctor")
+		if err := os.MkdirAll(skillDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeStepFixtureFile(t, skillDir, "SKILL.md", "# skill\n")
+		if !(agentSkillStep{}).Satisfied(p) {
+			t.Fatal("fixture is not satisfied; fix the test before trusting its assertion")
+		}
+		steps, _, err := run([]Step{agentSkillStep{}}, p)
+		if err != nil || len(steps) != 1 {
+			t.Fatalf("run() = %+v, %v", steps, err)
+		}
+		// The exact candidate is asserted, not merely the word "present":
+		// a mutant inverting os.Stat's error check would skip the real
+		// (existing) candidate and fall through to a later, non-existent
+		// one — which also renders "<path> present", the wrong path.
+		want := filepath.ToSlash(filepath.Join(".claude", "skills", "react-doctor")) + " present"
+		if steps[0].Evidence != want {
+			t.Errorf("Evidence = %q, want %q", steps[0].Evidence, want)
+		}
+	})
+
+	t.Run("eslintExtendsStep, spliced regions already match", func(t *testing.T) {
+		root := t.TempDir()
+		p := project.Project{Root: root, Source: root}
+		if _, err := (eslintExtendsStep{}).Apply(p, &Writer{}, io.Discard); err != nil {
+			t.Fatalf("Apply() = %v", err)
+		}
+		if !(eslintExtendsStep{}).Satisfied(p) {
+			t.Fatal("fixture is not satisfied; fix the test before trusting its assertion")
+		}
+		steps, _, err := run([]Step{eslintExtendsStep{}}, p)
+		if err != nil || len(steps) != 1 {
+			t.Fatalf("run() = %+v, %v", steps, err)
+		}
+		if strings.Contains(steps[0].Evidence, "ESLint's flat config has no") {
+			t.Errorf("Evidence = %q still reuses Describe's truncated fix-instruction text (found live during verification, mirroring the team lead's legacyLintConfigStep example)", steps[0].Evidence)
+		}
+		if steps[0].Evidence == "" {
+			t.Error("Evidence is empty")
+		}
+	})
+
+	t.Run("eslintExtendsStep, TypeScript config always delegates but reports satisfied", func(t *testing.T) {
+		root := t.TempDir()
+		p := project.Project{Root: root, Source: root}
+		writeStepFixtureFile(t, root, "eslint.config.ts", "export default [];\n")
+		if !(eslintExtendsStep{}).Satisfied(p) {
+			t.Fatal("fixture is not satisfied; fix the test before trusting its assertion")
+		}
+		steps, _, err := run([]Step{eslintExtendsStep{}}, p)
+		if err != nil || len(steps) != 1 {
+			t.Fatalf("run() = %+v, %v", steps, err)
+		}
+		if !strings.Contains(steps[0].Evidence, "TypeScript") {
+			t.Errorf("Evidence = %q, want it to name the TypeScript config it found", steps[0].Evidence)
+		}
+	})
+
+	// TestSatisfiedStepsCarryTheirOwnDetectionFactNotDescribesFixInstructions/eslintExtendsStep,_legacy-only_config
+	// is the TypeScript case's sibling: a legacy-only project (no flat
+	// config, no TypeScript config, one legacy .eslintrc.json) also always
+	// delegates and reports satisfied — a mutant inverting
+	// eslintLegacyConfig(...) != "" would make this branch unreachable
+	// without breaking the TypeScript case above, since both branches
+	// share the same switch.
+	t.Run("eslintExtendsStep, legacy-only config", func(t *testing.T) {
+		root := t.TempDir()
+		p := project.Project{Root: root, Source: root}
+		writeStepFixtureFile(t, root, ".eslintrc.json", "{}")
+		if !(eslintExtendsStep{}).Satisfied(p) {
+			t.Fatal("fixture is not satisfied; fix the test before trusting its assertion")
+		}
+		steps, _, err := run([]Step{eslintExtendsStep{}}, p)
+		if err != nil || len(steps) != 1 {
+			t.Fatalf("run() = %+v, %v", steps, err)
+		}
+		if !strings.Contains(steps[0].Evidence, "legacy") {
+			t.Errorf("Evidence = %q, want it to name the legacy-only config it found", steps[0].Evidence)
+		}
+	})
+
+	// eslintExtendsStep, config could not be read is a mutation guard for
+	// the os.ReadFile error branch: a directory named eslint.config.js
+	// exists (so eslintFlatConfig finds it — os.Stat succeeds on a
+	// directory too) but cannot be read as a file, the portable way to
+	// force this branch without relying on filesystem permissions.
+	t.Run("eslintExtendsStep, config could not be read", func(t *testing.T) {
+		root := t.TempDir()
+		p := project.Project{Root: root, Source: root}
+		if err := os.MkdirAll(filepath.Join(root, eslintConfig), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if !(eslintExtendsStep{}).Satisfied(p) {
+			t.Fatal("fixture is not satisfied; fix the test before trusting its assertion")
+		}
+		steps, _, err := run([]Step{eslintExtendsStep{}}, p)
+		if err != nil || len(steps) != 1 {
+			t.Fatalf("run() = %+v, %v", steps, err)
+		}
+		if !strings.Contains(steps[0].Evidence, "could not be read") {
+			t.Errorf("Evidence = %q, want it to say the config could not be read", steps[0].Evidence)
+		}
+	})
+
+	t.Run("architectureStep", func(t *testing.T) {
+		root := t.TempDir()
+		p := project.Project{Root: root, Source: root}
+		if err := os.MkdirAll(filepath.Join(root, project.Dir), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeStepFixtureFile(t, filepath.Join(root, project.Dir), ownedFallow, `{"boundaries":[]}`)
+		if !(architectureStep{}).Satisfied(p) {
+			t.Fatal("fixture is not satisfied; fix the test before trusting its assertion")
+		}
+		steps, _, err := run([]Step{architectureStep{}}, p)
+		if err != nil || len(steps) != 1 {
+			t.Fatalf("run() = %+v, %v", steps, err)
+		}
+		if steps[0].Evidence != "boundaries declared" {
+			t.Errorf("Evidence = %q, want %q", steps[0].Evidence, "boundaries declared")
+		}
+	})
+}
+
+// TestSatisfiedBoundariesStepNeverReusesTheFallbackFixInstructions pins
+// satisfiedEvidence's own guard: boundariesOwnerStep.Describe's no-collision
+// branch is boundariesFallbackDescribe, a fixed instruction for the
+// unsatisfied case ("move the zones and rules from... or delete the
+// block..."), which must never surface as evidence that the step is
+// already satisfied — that would tell a reader to do something they do not
+// need to do.
+func TestSatisfiedBoundariesStepNeverReusesTheFallbackFixInstructions(t *testing.T) {
+	root := t.TempDir()
+	p := project.Project{Root: root, Source: root}
+	writeProjectFallow(t, root, `{"extends":["./.dharness/fallow.jsonc"]}`)
+
+	if !(boundariesOwnerStep{}).Satisfied(p) {
+		t.Fatal("fixture is not satisfied; fix the test before trusting its assertion")
+	}
+
+	steps, _, err := run([]Step{boundariesOwnerStep{}}, p)
+	if err != nil {
+		t.Fatalf("run() = %v", err)
+	}
+	if len(steps) != 1 || steps[0].Status != report.Satisfied {
+		t.Fatalf("run() = %+v, want exactly one satisfied step", steps)
+	}
+	if strings.Contains(steps[0].Evidence, "Move the zones and rules") {
+		t.Errorf("Evidence = %q, reuses the unsatisfied-case fix instructions as if they were a fact", steps[0].Evidence)
+	}
+	if steps[0].Evidence == "" {
+		t.Error("Evidence is empty for a satisfied step")
+	}
+}
+
+// stubApplyStep is a minimal Step that is never satisfied and never
+// delegated, calling an injected fn so a test can control success or
+// failure at a chosen plan index.
+type stubApplyStep struct {
+	id string
+	fn func(*Writer, io.Writer) (Facts, error)
+}
+
+func (s stubApplyStep) ID() string                             { return s.id }
+func (stubApplyStep) Describe(project.Project) string          { return "" }
+func (stubApplyStep) Satisfied(project.Project) bool           { return false }
+func (stubApplyStep) Delegated(project.Project) (string, bool) { return "", false }
+
+func (s stubApplyStep) Apply(_ project.Project, w *Writer, out io.Writer) (Facts, error) {
+	return s.fn(w, out)
+}
+
+// TestFailureRetractsEarlierStepsAndMarksRemainingNotReached pins the
+// failure-variant requirement's both scenarios together: step 2 fails in an
+// 11-step stub plan, so step 1 (already applied and reported) is retracted
+// rather than left standing as applied, and the nine steps after step 2
+// that this run never attempted are each not-reached — none of them simply
+// absent, and the report's step count still equals the plan's length.
+func TestFailureRetractsEarlierStepsAndMarksRemainingNotReached(t *testing.T) {
+	ok := func(*Writer, io.Writer) (Facts, error) { return Facts{}, nil }
+
+	plan := make([]Step, 11)
+	plan[0] = stubApplyStep{id: "step 1", fn: ok}
+	plan[1] = stubApplyStep{id: "step 2", fn: func(*Writer, io.Writer) (Facts, error) {
+		return Facts{}, errors.New("step 2 broke")
+	}}
+	for i := 2; i < 11; i++ {
+		plan[i] = stubApplyStep{id: fmt.Sprintf("step %d", i+1), fn: ok}
+	}
+
+	steps, notes, err := run(plan, project.Project{})
+	if err == nil {
+		t.Fatal("run() = nil, want the step 2 failure to surface")
+	}
+	if notes != nil {
+		t.Errorf("run() notes = %+v on failure, want nil — the report's narrative is the caller's job, not a second copy here", notes)
+	}
+	if len(steps) != 11 {
+		t.Fatalf("run() returned %d steps, want 11 — the plan's own length, not merely as far as this run reached", len(steps))
+	}
+
+	if steps[0].Status != report.Retracted {
+		t.Errorf("step 1 status = %q, want retracted — it is not left standing as applied once step 2 fails", steps[0].Status)
+	}
+	if steps[1].Status != report.Failed {
+		t.Errorf("step 2 status = %q, want failed", steps[1].Status)
+	}
+	for i := 2; i < 11; i++ {
+		if steps[i].Status != report.NotReached {
+			t.Errorf("step %d status = %q, want not-reached — never attempted, never silently absent", i+1, steps[i].Status)
+		}
+	}
+
+	var retracted []string
+	for _, s := range steps {
+		if s.Status == report.Retracted {
+			retracted = append(retracted, s.ID)
+		}
+	}
+	rollback := report.Rollback{Retracted: retracted}
+	if !slices.Equal(rollback.Retracted, []string{"step 1"}) {
+		t.Errorf("the retracted step names = %v, want [step 1] — what Rollback.Retracted must name", rollback.Retracted)
 	}
 }
 
@@ -217,7 +832,7 @@ func writeFallow(t *testing.T, root, contents string) {
 func TestMCPConfigRunsTheBundledBinaryFromFallowLatest(t *testing.T) {
 	root := t.TempDir()
 	p := project.Project{Root: root, Source: root, PackageManager: "pnpm"}
-	if err := (mcpStep{}).Apply(p, &Writer{}); err != nil {
+	if _, err := (mcpStep{}).Apply(p, &Writer{}, io.Discard); err != nil {
 		t.Fatalf("Apply() = %v", err)
 	}
 
@@ -254,6 +869,112 @@ func TestApplySuccessDoesNotCompensateIntegrationInstall(t *testing.T) {
 	want := []string{"install", "--save-dev", RulesPackage}
 	if commands[0].Name != "npm" || !slices.Equal(commands[0].Args, want) {
 		t.Errorf("install command = %s %v, want npm %v", commands[0].Name, commands[0].Args, want)
+	}
+}
+
+// TestInstallStepAppliesReportsTheResolvedVersion pins gap 3 from the team
+// lead's measured run: Facts.Installed must carry the version the package
+// manager actually resolved into package.json, not the bare package name —
+// "installed dharness-eslint-plugin" says nothing about what actually
+// landed. Measured, not fabricated: read back from package.json after the
+// (stubbed) install writes it, the same file installStep's own snapshot
+// already watches for rollback.
+func TestInstallStepAppliesReportsTheResolvedVersion(t *testing.T) {
+	p, _, _ := integrationProject(t)
+
+	t.Cleanup(runner.SetForTest(func(cmd runner.Command, _, _ io.Writer) error {
+		if !slices.Contains(cmd.Args, RulesPackage) {
+			return nil
+		}
+		var pkg map[string]any
+		raw, err := os.ReadFile(filepath.Join(p.Source, "package.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(raw, &pkg); err != nil {
+			t.Fatal(err)
+		}
+		devDeps, _ := pkg["devDependencies"].(map[string]any)
+		if devDeps == nil {
+			devDeps = map[string]any{}
+		}
+		devDeps[RulesPackage] = "^0.3.0"
+		pkg["devDependencies"] = devDeps
+		encoded, err := json.Marshal(pkg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return os.WriteFile(filepath.Join(p.Source, "package.json"), encoded, 0o600)
+	}))
+
+	facts, err := (installStep{}).Apply(p, &Writer{}, io.Discard)
+	if err != nil {
+		t.Fatalf("Apply() = %v", err)
+	}
+	want := RulesPackage + "@0.3.0"
+	if !slices.Contains(facts.Installed, want) {
+		t.Errorf("Installed = %v, want %q with its caret-free resolved version", facts.Installed, want)
+	}
+}
+
+// TestInstallStepAppliesFallsBackToTheBareNameWhenUnmeasured pins the other
+// half: when package.json cannot be read back (or never gained the entry —
+// a stubbed test double that never wrote it, matching an install that ran
+// against a package.json this step cannot re-read for any reason), Facts
+// still names the package by its bare name — never a fabricated version.
+func TestInstallStepAppliesFallsBackToTheBareNameWhenUnmeasured(t *testing.T) {
+	p, _, _ := integrationProject(t)
+	t.Cleanup(runner.SetForTest(func(runner.Command, io.Writer, io.Writer) error { return nil }))
+
+	facts, err := (installStep{}).Apply(p, &Writer{}, io.Discard)
+	if err != nil {
+		t.Fatalf("Apply() = %v", err)
+	}
+	if !slices.Contains(facts.Installed, RulesPackage) {
+		t.Errorf("Installed = %v, want the bare package name %q with no version measured", facts.Installed, RulesPackage)
+	}
+	for _, name := range facts.Installed {
+		if strings.Contains(name, "@") {
+			t.Errorf("Installed = %v carries a fabricated version for %q", facts.Installed, name)
+		}
+	}
+}
+
+// TestInstalledWithVersionsTreatsALiteralEmptyVersionAsUnmeasured is a
+// mutation guard for the `!ok || version == ""` check: package.json
+// declaring a package against a literal empty-string version (syntactically
+// possible, if nonsensical) must fall back to the bare name — not render
+// "name@" with nothing after the @, which `!ok || false` would produce
+// since the package IS present (ok == true).
+func TestInstalledWithVersionsTreatsALiteralEmptyVersionAsUnmeasured(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"devDependencies":{"`+RulesPackage+`":""}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p := project.Project{Root: root, Source: root}
+
+	got := installedWithVersions(p, []string{RulesPackage})
+	if !slices.Equal(got, []string{RulesPackage}) {
+		t.Errorf("installedWithVersions() = %v, want %v (empty version treated as unmeasured)", got, []string{RulesPackage})
+	}
+}
+
+// TestInstalledWithVersionsContinuesPastAnUnresolvedPackage is a mutation
+// guard for the loop's `continue` (not `break`): when an earlier package in
+// the list has no matching package.json entry, a later package in the same
+// list must still get its own resolved version — `break` would abandon the
+// rest of the slice, leaving every later package unresolved too.
+func TestInstalledWithVersionsContinuesPastAnUnresolvedPackage(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"devDependencies":{"second-package":"1.2.3"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p := project.Project{Root: root, Source: root}
+
+	got := installedWithVersions(p, []string{"first-package-not-in-package-json", "second-package"})
+	want := []string{"first-package-not-in-package-json", "second-package@1.2.3"}
+	if !slices.Equal(got, want) {
+		t.Errorf("installedWithVersions() = %v, want %v", got, want)
 	}
 }
 
@@ -526,7 +1247,7 @@ func TestFallowExtendsIsDelegatedWhenTheProjectOwnsTheConfig(t *testing.T) {
 		t.Errorf("Delegated() why = %q, want it to name %s", why, fallowConfig)
 	}
 
-	if err := applySteps([]Step{fallowExtendsStep{}}, p, io.Discard); err != nil {
+	if _, err := applySteps([]Step{fallowExtendsStep{}}, p, io.Discard); err != nil {
 		t.Fatalf("applySteps() = %v", err)
 	}
 	raw, err := os.ReadFile(filepath.Join(root, fallowConfig))
@@ -553,7 +1274,7 @@ func TestLefthookExtendsIsDelegatedWhenTheProjectOwnsTheConfig(t *testing.T) {
 		t.Errorf("Delegated() why = %q, want it to name %s", why, lefthookConfig)
 	}
 
-	if err := applySteps([]Step{lefthookExtendsStep{}}, p, io.Discard); err != nil {
+	if _, err := applySteps([]Step{lefthookExtendsStep{}}, p, io.Discard); err != nil {
 		t.Fatalf("applySteps() = %v", err)
 	}
 	raw, err := os.ReadFile(filepath.Join(root, lefthookConfig))
@@ -621,7 +1342,7 @@ func TestExtendsStepsWriteTheirFileWhenTheProjectHasNone(t *testing.T) {
 		t.Fatalf("Delegated() = %q, true; want ok=false with no config present", why)
 	}
 
-	if err := applySteps([]Step{fallowExtendsStep{}, lefthookExtendsStep{}}, p, io.Discard); err != nil {
+	if _, err := applySteps([]Step{fallowExtendsStep{}, lefthookExtendsStep{}}, p, io.Discard); err != nil {
 		t.Fatalf("applySteps() = %v", err)
 	}
 
@@ -696,7 +1417,7 @@ func TestOwnedFilesCarryTheThresholdsTheRulesCannot(t *testing.T) {
 	root := t.TempDir()
 	p := project.Project{Root: root}
 
-	if err := (ownedFilesStep{}).Apply(p, &Writer{}); err != nil {
+	if _, err := (ownedFilesStep{}).Apply(p, &Writer{}, io.Discard); err != nil {
 		t.Fatalf("Apply() = %v", err)
 	}
 

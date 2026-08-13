@@ -114,32 +114,27 @@ func TestFallowConfigPathIsEmptyWithoutEitherSpelling(t *testing.T) {
 	}
 }
 
-// TestDeclaredLineShowsTheOpeningLineOnly pins declaredLine's stated honest
-// limit: it is a grep for the declaring line, not a value parser.
-func TestDeclaredLineShowsTheOpeningLineOnly(t *testing.T) {
+// TestDeclaredAtReturnsALineNumber pins declaredAt's replacement contract
+// for declaredLine (design.md Decision 5): locating a key by a textual scan
+// is sound, and stays; showing its value with one was defect 8, and does
+// not. Reuses declaredLine's own fixtures — same scan, same lines, now a
+// 1-based line number instead of the line's text, and the documented
+// sentinel 0 when the key is not declared at all.
+func TestDeclaredAtReturnsALineNumber(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, fallowConfig)
 	if err := os.WriteFile(path, []byte("{\n  \"ignorePatterns\": [\n    \"wailsjs/**\"\n  ]\n}"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	got := declaredLine(path, "ignorePatterns")
-	if got != `"ignorePatterns": [` {
-		t.Errorf("declaredLine() = %q, want the opening line trimmed", got)
+	if got := declaredAt(path, "ignorePatterns"); got != 2 {
+		t.Errorf("declaredAt() = %d, want line 2 (1-based)", got)
 	}
-}
-
-// TestDeclaredLineIsEmptyWhenTheKeyIsAbsent covers declaredLine's other
-// branch: no line contains the quoted key at all.
-func TestDeclaredLineIsEmptyWhenTheKeyIsAbsent(t *testing.T) {
-	root := t.TempDir()
-	path := filepath.Join(root, fallowConfig)
-	if err := os.WriteFile(path, []byte(`{"extends": ["./.dharness/fallow.jsonc"]}`), 0o600); err != nil {
-		t.Fatal(err)
+	if got := declaredAt(path, "notDeclared"); got != 0 {
+		t.Errorf("declaredAt() = %d, want the documented sentinel 0 for a key the file never declares", got)
 	}
-
-	if got := declaredLine(path, "ignorePatterns"); got != "" {
-		t.Errorf("declaredLine() = %q, want \"\" for a key the file never declares", got)
+	if got := declaredAt(filepath.Join(root, "missing.json"), "ignorePatterns"); got != 0 {
+		t.Errorf("declaredAt() = %d, want the documented sentinel 0 for a file that cannot be read at all", got)
 	}
 }
 

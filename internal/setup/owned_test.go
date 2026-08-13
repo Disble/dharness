@@ -1,6 +1,7 @@
 package setup
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -126,7 +127,7 @@ func TestArchitectureStepStaysUnsatisfiedWithoutTheAgentBlock(t *testing.T) {
 	p.InRepository = true
 
 	w := &Writer{}
-	if err := (ownedFilesStep{}).Apply(p, w); err != nil {
+	if _, err := (ownedFilesStep{}).Apply(p, w, io.Discard); err != nil {
 		t.Fatalf("Apply() = %v", err)
 	}
 
@@ -280,6 +281,37 @@ func TestOwnedFilesSatisfiedRequiresEveryOwnedFileToExist(t *testing.T) {
 	}
 }
 
+// TestOwnedFilesSatisfiedRequiresRulesJSONAfterAFullApply is a mutation
+// guard for the ownedLefthook/ownedRules existence loop: unlike
+// TestOwnedFilesSatisfiedRequiresEveryOwnedFileToExist (whose fixture never
+// wrote eslint.config.js, so a mutant skipping this loop entirely would
+// still fail Satisfied() later, for the wrong reason, hiding the gap), this
+// runs a full Apply() first — every other check the function makes
+// afterwards (region bytes, eslint bytes, the gitignore entry) genuinely
+// passes — then removes only rules.json by hand. A mutant that breaks out
+// of the loop before ever checking either file's existence would let this
+// incorrectly report satisfied, since nothing downstream would catch it.
+func TestOwnedFilesSatisfiedRequiresRulesJSONAfterAFullApply(t *testing.T) {
+	root := t.TempDir()
+	p := project.At(root, root)
+	p.InRepository = true
+
+	if _, err := (ownedFilesStep{}).Apply(p, &Writer{}, io.Discard); err != nil {
+		t.Fatalf("Apply() = %v", err)
+	}
+	if !(ownedFilesStep{}).Satisfied(p) {
+		t.Fatal("Satisfied() = false immediately after Apply()")
+	}
+
+	if err := os.Remove(filepath.Join(root, project.Dir, ownedRules)); err != nil {
+		t.Fatal(err)
+	}
+
+	if (ownedFilesStep{}).Satisfied(p) {
+		t.Error("Satisfied() = true after rules.json was removed by hand, want false — the existence loop must not be skipped")
+	}
+}
+
 func TestOwnedFilesSatisfiedComparesRegionBytesOnly(t *testing.T) {
 	root := t.TempDir()
 	p := project.At(root, root)
@@ -291,7 +323,7 @@ func TestOwnedFilesSatisfiedComparesRegionBytesOnly(t *testing.T) {
 	}
 
 	w := &Writer{}
-	if err := (ownedFilesStep{}).Apply(p, w); err != nil {
+	if _, err := (ownedFilesStep{}).Apply(p, w, io.Discard); err != nil {
 		t.Fatalf("Apply() = %v", err)
 	}
 
@@ -313,7 +345,7 @@ func TestApplyWritesTheOwnedEslintConfigAndDeclaresItShared(t *testing.T) {
 	p.InRepository = true
 
 	w := &Writer{}
-	if err := (ownedFilesStep{}).Apply(p, w); err != nil {
+	if _, err := (ownedFilesStep{}).Apply(p, w, io.Discard); err != nil {
 		t.Fatalf("Apply() = %v", err)
 	}
 
@@ -344,7 +376,7 @@ func TestOwnedFilesSatisfiedRequiresTheEslintAllowListEntry(t *testing.T) {
 	p := project.At(root, root)
 	p.InRepository = true
 
-	if err := (ownedFilesStep{}).Apply(p, &Writer{}); err != nil {
+	if _, err := (ownedFilesStep{}).Apply(p, &Writer{}, io.Discard); err != nil {
 		t.Fatalf("Apply() = %v", err)
 	}
 	if !(ownedFilesStep{}).Satisfied(p) {
@@ -377,7 +409,7 @@ func TestOwnedFilesSatisfiedComparesTheEslintConfigBytes(t *testing.T) {
 	p := project.At(root, root)
 	p.InRepository = true
 
-	if err := (ownedFilesStep{}).Apply(p, &Writer{}); err != nil {
+	if _, err := (ownedFilesStep{}).Apply(p, &Writer{}, io.Discard); err != nil {
 		t.Fatalf("Apply() = %v", err)
 	}
 
@@ -401,7 +433,7 @@ func TestOwnedFilesSatisfiedFalseWhenTheEslintConfigFileIsMissing(t *testing.T) 
 	p := project.At(root, root)
 	p.InRepository = true
 
-	if err := (ownedFilesStep{}).Apply(p, &Writer{}); err != nil {
+	if _, err := (ownedFilesStep{}).Apply(p, &Writer{}, io.Discard); err != nil {
 		t.Fatalf("Apply() = %v", err)
 	}
 	if err := os.Remove(filepath.Join(root, project.Dir, ownedEslint)); err != nil {
@@ -422,7 +454,7 @@ func TestOwnedFilesSatisfiedFalseWhenTheGitignoreFileIsMissing(t *testing.T) {
 	p := project.At(root, root)
 	p.InRepository = true
 
-	if err := (ownedFilesStep{}).Apply(p, &Writer{}); err != nil {
+	if _, err := (ownedFilesStep{}).Apply(p, &Writer{}, io.Discard); err != nil {
 		t.Fatalf("Apply() = %v", err)
 	}
 	if err := os.Remove(filepath.Join(root, project.Dir, ".gitignore")); err != nil {
@@ -457,7 +489,7 @@ func TestApplyReadsTheExistingFileRatherThanRewritingTheSkeleton(t *testing.T) {
 
 	var after [3]string
 	for run := range after {
-		if err := (ownedFilesStep{}).Apply(p, &Writer{}); err != nil {
+		if _, err := (ownedFilesStep{}).Apply(p, &Writer{}, io.Discard); err != nil {
 			t.Fatalf("Apply() run %d = %v", run+1, err)
 		}
 		raw, err := os.ReadFile(path)

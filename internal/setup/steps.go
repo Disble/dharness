@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/Disble/dharness/internal/jsconfig"
 	"github.com/Disble/dharness/internal/preset"
 	"github.com/Disble/dharness/internal/project"
+	"github.com/Disble/dharness/internal/report"
 	"github.com/Disble/dharness/internal/runner"
 	"github.com/Disble/dharness/internal/tool"
 )
@@ -68,23 +70,90 @@ func (s installStep) Describe(p project.Project) string {
 // installing a package to the agent instead of dharness.
 func (installStep) Delegated(project.Project) (string, bool) { return "", false }
 
-func (installStep) Apply(p project.Project, w *Writer) error {
+// Apply routes the install and its rollback compensation through out rather
+// than os.Stdout/os.Stderr directly (step-outcome's sink requirement,
+// defect 5), and returns the package specs this run asked the manager to
+// add as Facts — a fact no byte stream can answer (Decision 2).
+func (installStep) Apply(p project.Project, w *Writer, out io.Writer) (Facts, error) {
 	packages := integrationPackages(p)
 
 	for _, path := range p.PackageStateFiles() {
 		if err := w.remember(path); err != nil {
-			return fmt.Errorf("snapshot package state before install: %w", err)
+			return Facts{}, fmt.Errorf("snapshot package state before install: %w", err)
 		}
 	}
 
-	installErr := runner.Run(tool.InstallPackages(p.PackageManager, p.Source, packages), os.Stdout, os.Stderr)
+	installErr := runner.Run(tool.InstallPackages(p.PackageManager, p.Source, packages), out, out)
 	w.compensate(func() error {
-		if err := runner.Run(tool.RemovePackages(p.PackageManager, p.Source, packages), os.Stdout, os.Stderr); err != nil {
+		if err := runner.Run(tool.RemovePackages(p.PackageManager, p.Source, packages), out, out); err != nil {
 			return fmt.Errorf("remove integration packages added by this run: %w", err)
 		}
 		return nil
 	})
-	return installErr
+	if installErr != nil {
+		return Facts{}, installErr
+	}
+	return Facts{Installed: installedWithVersions(p, packages)}, nil
+}
+
+// installedWithVersions names each installed package the way a reader can
+// act on: "name@version", not the bare name Facts.Installed named before —
+// "installed dharness-eslint-plugin" says nothing about what actually
+// landed (gap 3, from the team lead's measured run). The version is read
+// back from package.json after the install this same call just ran, never
+// invented: a package this run added but package.json does not (yet)
+// resolve — an unreadable file, a manager that writes it differently, a
+// name this scan does not find — falls back to its bare name rather than a
+// fabricated version, matching the "reported whole or not at all" rule
+// config-collision's own requirement states for a colliding value.
+//
+// This is a disclosed, deliberate departure from design.md Decision 2
+// ("Facts.Installed names what dharness asked for, no version"): that
+// decision reasoned from what Apply could answer from its own inputs alone.
+// The measured gap shows a reader needs more than that, and package.json is
+// already read back after every install for exactly this purpose. The
+// caveat design.md's own reasoning correctly anticipated: package.json may
+// record a caret/tilde range rather than the exact resolved version,
+// depending on the project's own package-manager settings — this reports
+// whatever range or exact version package.json actually carries, stripped
+// of the range operator, never a version measured from a lockfile (which
+// differs by manager and is out of scope here per CLAUDE.md's "if the CLI
+// already does it, dharness does not do it").
+func installedWithVersions(p project.Project, packages []string) []string {
+	raw, err := os.ReadFile(filepath.Join(p.Source, "package.json"))
+	if err != nil {
+		return packages
+	}
+	var pkg struct {
+		Dependencies    map[string]string `json:"dependencies"`
+		DevDependencies map[string]string `json:"devDependencies"`
+	}
+	if json.Unmarshal(raw, &pkg) != nil {
+		return packages
+	}
+
+	versioned := make([]string, len(packages))
+	for i, name := range packages {
+		// !ok is a proven equivalent condition to version == "" here, not
+		// tested separately (mutation-tdd: disable only a proven
+		// equivalent mutant, at the narrowest location, with a written
+		// reason): Go's comma-ok map lookup always yields the zero value
+		// ("") for version when a lookup misses, on both the
+		// DevDependencies and (if that also misses) Dependencies try, so
+		// !ok can never be true while version is non-empty. The `!ok ||`
+		// term is kept for readability — "not found, or found empty" — not
+		// because it changes behaviour in any reachable state.
+		version, ok := pkg.DevDependencies[name]
+		if !ok {
+			version, ok = pkg.Dependencies[name]
+		}
+		if !ok || version == "" {
+			versioned[i] = name
+			continue
+		}
+		versioned[i] = name + "@" + strings.TrimLeft(version, "^~")
+	}
+	return versioned
 }
 
 // integrationPackages lists the packages dharness adds to p, as opposed to
@@ -161,15 +230,15 @@ func (ownedFilesStep) Describe(project.Project) string {
 // write.
 func (ownedFilesStep) Delegated(project.Project) (string, bool) { return "", false }
 
-func (ownedFilesStep) Apply(p project.Project, w *Writer) error {
+func (ownedFilesStep) Apply(p project.Project, w *Writer, _ io.Writer) (Facts, error) {
 	// EnsureDir also writes the ignore rules, so a transient file appearing
 	// later is never the first thing to create them.
 	if _, err := p.EnsureDir(""); err != nil {
-		return err
+		return Facts{}, err
 	}
 
 	if err := w.Write(filepath.Join(p.Root, project.Dir, ownedLefthook), []byte(gateConfig(p))); err != nil {
-		return err
+		return Facts{}, err
 	}
 
 	// The boundaries block is deliberately absent from what dharness ever
@@ -187,18 +256,18 @@ func (ownedFilesStep) Apply(p project.Project, w *Writer) error {
 	matches := preset.Resolve(p)
 	content := replaceRegion(base, presetRegion(matches))
 	if err := w.Write(fallowPath, []byte(content)); err != nil {
-		return err
+		return Facts{}, err
 	}
 
 	eslintPath := filepath.Join(p.Root, project.Dir, ownedEslint)
 	if err := w.Write(eslintPath, []byte(ownedEslintConfig(p, preset.Layers(matches)))); err != nil {
-		return err
+		return Facts{}, err
 	}
 	if err := ensureShared(p, w, ownedEslint); err != nil {
-		return err
+		return Facts{}, err
 	}
 
-	return w.WriteJSON(filepath.Join(p.Root, project.Dir, ownedRules), DefaultThresholds())
+	return Facts{}, w.WriteJSON(filepath.Join(p.Root, project.Dir, ownedRules), DefaultThresholds())
 }
 
 // ------------------------------------------------------------- extends
@@ -240,8 +309,8 @@ func (fallowExtendsStep) Delegated(p project.Project) (string, bool) {
 		fallowConfig), true
 }
 
-func (fallowExtendsStep) Apply(p project.Project, w *Writer) error {
-	return wireFallowExtends(p, w)
+func (fallowExtendsStep) Apply(p project.Project, w *Writer, _ io.Writer) (Facts, error) {
+	return Facts{}, wireFallowExtends(p, w)
 }
 
 type lefthookExtendsStep struct{}
@@ -276,8 +345,8 @@ func (lefthookExtendsStep) Delegated(p project.Project) (string, bool) {
 		lefthookConfig), true
 }
 
-func (lefthookExtendsStep) Apply(p project.Project, w *Writer) error {
-	return wireLefthookExtends(p, w)
+func (lefthookExtendsStep) Apply(p project.Project, w *Writer, _ io.Writer) (Facts, error) {
+	return Facts{}, wireLefthookExtends(p, w)
 }
 
 // -------------------------------------------------------- eslint extends
@@ -424,25 +493,25 @@ func malformedEslintMarkerPair(raw string) (why string, malformed bool) {
 // anything is written, so an unparseable result never reaches disk at all
 // (design decision 6); Writer.Undo remains the backstop for steps that ran
 // earlier in this same applySteps call, not for this file.
-func (eslintExtendsStep) Apply(p project.Project, w *Writer) error {
+func (eslintExtendsStep) Apply(p project.Project, w *Writer, _ io.Writer) (Facts, error) {
 	path := eslintFlatConfig(p.Source)
 	if path == "" {
-		return wireEslintExtends(p, w)
+		return Facts{}, wireEslintExtends(p, w)
 	}
 
 	src, err := os.ReadFile(path)
 	if err != nil {
-		return fmt.Errorf("read %s before splicing: %w", filepath.Base(path), err)
+		return Facts{}, fmt.Errorf("read %s before splicing: %w", filepath.Base(path), err)
 	}
 
 	candidate, err := spliceEslintConfig(p, path, src)
 	if err != nil {
-		return err
+		return Facts{}, err
 	}
 	if err := verifyEslintCandidate(candidate); err != nil {
-		return fmt.Errorf("%s: %w", filepath.Base(path), err)
+		return Facts{}, fmt.Errorf("%s: %w", filepath.Base(path), err)
 	}
-	return w.Write(path, candidate)
+	return Facts{}, w.Write(path, candidate)
 }
 
 // --------------------------------------------------- boundaries owner
@@ -465,7 +534,7 @@ func (eslintExtendsStep) Apply(p project.Project, w *Writer) error {
 type boundariesOwnerStep struct{}
 
 func (boundariesOwnerStep) ID() string {
-	return "resolve the two architectures this project declares"
+	return "resolve the keys this project and dharness both declare"
 }
 
 // collidingKeys is this step's whole rule: matches' contributed keys plus
@@ -503,6 +572,158 @@ func (boundariesOwnerStep) Satisfied(p project.Project) bool {
 	return len(colliding) == 0
 }
 
+// resolvedConfig asks fallow which value it actually runs for each key, or
+// reports that it could not be asked. Two outcomes and no third: a resolved
+// map, or nothing. Nothing is never an error this run reports — a missing
+// measurement is not a failed sync (§20).
+//
+// The probe runs first and its own exit code decides everything: --path
+// exits 3 on a project with no fallow config at all, and --format json
+// never exits non-zero even then — it prints defaults, so it is useless for
+// detecting absence (measured against the reference project, design.md
+// Decision 5). Any other exit from the probe collapses to the same absence,
+// and the resolve call never runs at all — the short circuit is on any
+// non-nil error, not only on code 3.
+//
+// Resolution is local-only and this is deliberate, not an oversight:
+// p.LocalBinary(tool.Fallow) is the only path in, with no remote-executor
+// fallback, per the resolved question round and the network rule
+// internal/tool/tool.go:101-103 already records for every routine path.
+func resolvedConfig(p project.Project) (map[string]json.RawMessage, bool) {
+	localBinary := p.LocalBinary(tool.Fallow)
+	if localBinary == "" {
+		return nil, false
+	}
+
+	probe := tool.Installed(tool.Fallow, localBinary, p.Source, tool.FallowConfigPath()...)
+	if err := runner.Run(probe, io.Discard, io.Discard); err != nil {
+		return nil, false
+	}
+
+	var stdout bytes.Buffer
+	resolve := tool.Installed(tool.Fallow, localBinary, p.Source, tool.FallowConfigJSON()...)
+	if err := runner.Run(resolve, &stdout, io.Discard); err != nil {
+		return nil, false
+	}
+
+	var resolved map[string]json.RawMessage
+	if err := json.Unmarshal(stdout.Bytes(), &resolved); err != nil {
+		return nil, false
+	}
+	return resolved, true
+}
+
+// Collisions computes each colliding key once: the value both the report's
+// collision block and boundariesOwnerStep.Delegated are rendered from.
+// Exported as a package function rather than reached through the Step
+// interface, matching UncheckableConfigNote/UncertainPresetNote/
+// eslintResidue at their own call site (collectNotes, notes.go) — so no
+// requirement about Delegated's (why string, ok bool) contract is reopened
+// and nothing type-asserts on a step.
+//
+// Slice 3 computed this value; describeBoundaries/delegateBoundaries are
+// wired to render from it, replacing their own walk, in this slice
+// (design.md Decision 4's explicit ordering note — landing the two apart
+// would leave a window where a key renders twice).
+func Collisions(p project.Project) []report.Collision {
+	colliding, matches := boundaryCollision(p)
+	if len(colliding) == 0 {
+		return nil
+	}
+
+	resolved, ok := resolvedConfig(p)
+	path := fallowConfigPath(p.Source)
+	// Theirs.Path is rendered directly in the human collision block (gap 1),
+	// so it is stated the same root-relative way Ours.Path and
+	// Report.Source already are — fallowConfigPath itself returns an
+	// absolute filesystem path, which is unreadable there (measured against
+	// a real project during verification: "project
+	// C:\Users\...\frontend\.fallowrc.json"). declaredAt still reads from
+	// the real absolute path; only the displayed value is relativised.
+	displayPath := path
+	if rel, err := filepath.Rel(p.Root, path); err == nil {
+		displayPath = rel
+	}
+
+	collisions := make([]report.Collision, 0, len(colliding))
+	for _, key := range colliding {
+		collision := report.Collision{
+			ID:   "sync:collision/" + key,
+			Key:  key,
+			Ours: ourDeclared(p, key, matches),
+			Theirs: report.Declared{
+				Path: filepath.ToSlash(displayPath),
+				Line: declaredAt(path, key),
+			},
+			// Resolutions is always the same pair, whether or not effective
+			// was ever measured: deleting the project's own declaration or
+			// moving it into the file dharness owns are the only two ways
+			// any collision on a key dharness also owns can be resolved —
+			// unlike effective, this fact needs no measurement to state
+			// (gap 11: the field existed on the model since slice 1 and was
+			// never populated here).
+			Resolutions: collisionResolutions,
+		}
+
+		if ok {
+			if raw, present := resolved[key]; present {
+				theirsValue := json.RawMessage(raw)
+				collision.Theirs.Value = &theirsValue
+
+				effective := "theirs"
+				if bytes.Equal(bytes.TrimSpace(raw), bytes.TrimSpace(*collision.Ours.Value)) {
+					effective = "ours"
+				}
+				collision.Effective = &effective
+			}
+		}
+
+		collisions = append(collisions, collision)
+	}
+	return collisions
+}
+
+// collisionResolutions are the two ways any config collision on a key
+// dharness also owns can be resolved. There is no third: both sides declare
+// the same key, and fallow's `extends` can only ever honour one of them.
+var collisionResolutions = []string{"delete-theirs", "move-into-ours"}
+
+// ourDeclared reports dharness's own side of a collision: the value it
+// wrote, or is about to write, into the file it owns — reported whole, per
+// the "colliding value is reported whole or not at all" requirement — and
+// where that file is: the owned fallow.jsonc always, and the line inside it
+// that declares key when the file already exists on disk (gap 10 — Path was
+// left empty, so the human view's "dharness: <value>" had nowhere to point
+// a reader). By the time boundariesOwnerStep is evaluated inside setup.Run,
+// ownedFilesStep has already applied earlier in Plan() order and written
+// this same file, so the line is measured from the real file, not guessed
+// at; declaredAt's own documented sentinel (0, omitted by Declared.Line's
+// json tag) covers the case where it does not exist yet, matching Theirs'
+// own already-established absent-line behaviour.
+//
+// A matched preset's composed fact already marshals to JSON through
+// ownedValue's own json.Marshal; boundaries' own case has no fixed value
+// yet — it is agent-authored — so ownedValue's prose is carried as a JSON
+// string instead of guessed at as structured data.
+//
+// json.Marshal of a Go string cannot fail — it has no channel, function or
+// cycle to reject — so there is no error branch here to check for one.
+func ourDeclared(p project.Project, key string, matches []preset.Match) report.Declared {
+	value := ownedValue(key, matches)
+	raw := json.RawMessage(value)
+	if !json.Valid(raw) {
+		encoded, _ := json.Marshal(value)
+		raw = json.RawMessage(encoded)
+	}
+
+	ownedPath := filepath.Join(p.Root, project.Dir, ownedFallow)
+	return report.Declared{
+		Path:  filepath.ToSlash(filepath.Join(project.Dir, ownedFallow)),
+		Line:  declaredAt(ownedPath, key),
+		Value: &raw,
+	}
+}
+
 // boundariesFallbackDescribe/Why are the single-key text this step always
 // produced before this slice widened it. They are the fallback the empty
 // intersection reaches, not a stale duplicate: the golden fixtures render
@@ -516,27 +737,22 @@ const boundariesFallbackDescribe = "Move the zones and rules from %s into %s, or
 const boundariesFallbackWhy = "%s declares its own `boundaries`, and fallow's `extends` replaces that key\nrather than merging it — the project's block replaces the one dharness owns\nentirely, without an error. Only one architecture is being enforced, and the\nconfiguration does not say which."
 
 func (boundariesOwnerStep) Describe(p project.Project) string {
-	colliding, matches := boundaryCollision(p)
-	return describeBoundaries(p, colliding, matches)
+	colliding, _ := boundaryCollision(p)
+	return describeBoundaries(p, colliding)
 }
 
 // describeBoundaries and delegateBoundaries build the step's report from an
-// already-computed collision set and match list, split out for the same
-// reason collidingKeys is: the real registry contributes nothing beyond
-// "boundaries" until slice 5, so the multi-key rendering rule is tested
-// against stub matches instead of the real one.
-func describeBoundaries(p project.Project, colliding []string, matches []preset.Match) string {
+// already-computed collision set. The empty-intersection fallback stays a
+// fixed pair of constants (Decision 6, guarded by
+// TestBoundariesFallbackConstantsStayByteIdentical); the non-empty case
+// renders from Collisions(p) — the same computed value the report carries
+// on StepResult.Collisions (design.md Decision 4) — rather than walking the
+// colliding keys a second time.
+func describeBoundaries(p project.Project, colliding []string) string {
 	if len(colliding) == 0 {
 		return fmt.Sprintf(boundariesFallbackDescribe, fallowConfig, filepath.ToSlash(filepath.Join(project.Dir, ownedFallow)))
 	}
-
-	var b strings.Builder
-	b.WriteString("Move each of these into the file dharness owns, or delete the project's own\nand keep dharness's. Either is a valid answer per key; having both is not,\nbecause fallow's `extends` replaces a key rather than merging it and the\nfile gives no sign of which value runs.\n")
-	for _, key := range colliding {
-		fmt.Fprintf(&b, "\n`%s` — dharness: %s\n%s declares: %s\n",
-			key, ownedValue(key, matches), fallowConfig, declaredValue(fallowConfigPath(p.Source), key))
-	}
-	return b.String()
+	return renderCollisions(Collisions(p))
 }
 
 // Delegated always returns ok == true where the step is unsatisfied: two
@@ -545,20 +761,37 @@ func describeBoundaries(p project.Project, colliding []string, matches []preset.
 // values per colliding key, not only the key, so the agent does not have to
 // open two files before deciding.
 func (boundariesOwnerStep) Delegated(p project.Project) (string, bool) {
-	colliding, matches := boundaryCollision(p)
-	return delegateBoundaries(p, colliding, matches), true
+	colliding, _ := boundaryCollision(p)
+	return delegateBoundaries(p, colliding), true
 }
 
-func delegateBoundaries(p project.Project, colliding []string, matches []preset.Match) string {
+func delegateBoundaries(p project.Project, colliding []string) string {
 	if len(colliding) == 0 {
 		return fmt.Sprintf(boundariesFallbackWhy, fallowConfig)
 	}
+	return renderCollisions(Collisions(p))
+}
+
+// renderCollisions is the only place a Collision becomes prose (design.md
+// Decision 4). Delegated calls it, through delegateBoundaries; the report's
+// own WriteHuman/WriteJSON render StepResult.Collisions directly and never
+// call it, so one colliding key has exactly one prose form and one
+// structured form — never two independently-walked renderers that could
+// drift apart (defects 6, 7).
+func renderCollisions(cs []report.Collision) string {
+	keys := make([]string, len(cs))
+	for i, c := range cs {
+		keys[i] = c.Key
+	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s declares its own value for %s, and fallow's `extends` replaces each of\nthose keys rather than merging it — the project's value replaces dharness's\nentirely, without an error. Only one value per key is being enforced, and\nthe configuration does not say which:\n", fallowConfig, quotedKeys(colliding))
-	for _, key := range colliding {
-		fmt.Fprintf(&b, "\n`%s` — dharness: %s; %s: %s",
-			key, ownedValue(key, matches), fallowConfig, declaredValue(fallowConfigPath(p.Source), key))
+	fmt.Fprintf(&b, "%s declares its own value for %s, and fallow's `extends` replaces each of\nthose keys rather than merging it — the project's value replaces dharness's\nentirely, without an error. Only one value per key is being enforced, and\nthe configuration does not say which:\n", fallowConfig, quotedKeys(keys))
+	for _, c := range cs {
+		theirs := declaredValueUnknown
+		if c.Theirs.Value != nil {
+			theirs = string(*c.Theirs.Value)
+		}
+		fmt.Fprintf(&b, "\n`%s` — dharness: %s; %s: %s", c.Key, string(*c.Ours.Value), fallowConfig, theirs)
 	}
 	return b.String()
 }
@@ -612,12 +845,12 @@ func uncertainNotes(matches []preset.Match) string {
 	return strings.Join(notes, "\n\n")
 }
 
-// EslintResidueNote reports the six dharness/* severities and the
-// RulesPackage plugin declaration a repository adopted before this change
-// still carries in doctor.config.json, left behind by the mechanism this
-// version retires (design decision 8) — or "" when there is nothing to
-// report, which is every project adopted under this version and any older
-// one hand-cleaned.
+// eslintResidue reports the six dharness/* severities and the RulesPackage
+// plugin declaration a repository adopted before this change still carries
+// in doctor.config.json, left behind by the mechanism this version retires
+// (design decision 8) — entries found, the path they were found in, and why
+// they are inert, or (nil, "", "") when there is nothing to report, which is
+// every project adopted under this version and any older one hand-cleaned.
 //
 // It is a note beside the plan, not a step, for UncheckableConfigNote's exact
 // reason: dharness cannot tell its own earlier write apart from a value the
@@ -625,25 +858,22 @@ func uncertainNotes(matches []preset.Match) string {
 // project can reach that clears it — and a step with no completion state is
 // not pending work. Unlike UncheckableConfigNote's blind spot, this is not an
 // unknown: dharness can read the file fine and knows exactly what it holds,
-// so it names what it found rather than saying the answer is unknown.
-func EslintResidueNote(p project.Project) string {
+// so it reports the found entries as structured data (report.Note.Entries)
+// rather than folding them into the reason's prose a second time.
+func eslintResidue(p project.Project) (entries []string, path string, reason string) {
 	if !p.HasSource() {
-		return ""
+		return nil, "", ""
 	}
 
-	path := filepath.Join(p.Source, "doctor.config.json")
+	path = filepath.Join(p.Source, "doctor.config.json")
 	candidates := append([]string{RulesPackage}, RuleIDs()...)
 	found := declaredKeys(path, candidates)
 	if len(found) == 0 {
-		return ""
+		return nil, "", ""
 	}
 
-	// One per line rather than joined: the list is as long as the project's
-	// residue, and a sentence that grows with it stops being readable at the
-	// width the rest of this output is written to (§16).
-	return fmt.Sprintf(
-		"doctor.config.json still declares these, left behind by the mechanism\nthis version retires:\n\n    %s\n\ndharness does not edit or delete them — it cannot tell its own earlier\nwrite apart from a value the project set into the same file afterwards\n(§05) — and they are inert now: the gate's react-doctor invocation runs\nwith `--staged`, and a plugin's rules do not fire under that flag\n(measured against react-doctor 0.5.7).",
-		strings.Join(found, "\n    "))
+	reason = "dharness does not edit or delete them — it cannot tell its own earlier\nwrite apart from a value the project set into the same file afterwards\n(§05) — and they are inert now: the gate's react-doctor invocation runs\nwith `--staged`, and a plugin's rules do not fire under that flag\n(measured against react-doctor 0.5.7)."
+	return found, path, reason
 }
 
 // ownedValue names what dharness itself would write for key: the
@@ -664,16 +894,14 @@ func ownedValue(key string, matches []preset.Match) string {
 	return "its preset default"
 }
 
-// declaredValue is a best-effort display of what the project itself wrote,
-// falling back to a generic phrase when declaredLine finds no single line to
-// show (a value declaredKeys still detected but that spans lines it does not
-// follow).
-func declaredValue(path, key string) string {
-	if line := declaredLine(path, key); line != "" {
-		return line
-	}
-	return "a value of its own"
-}
+// declaredValueUnknown is renderCollisions's fallback for a colliding key
+// whose project-declared value fallow could not resolve (no local binary,
+// a failed probe, or the key absent from what --format json returned) — the
+// honest "could not be shown" answer the "reported whole or not at all"
+// requirement asks for, never the truncated textual fragment
+// ("\"duplicates\": {") declaredValue used to show before design.md
+// Decision 5 removed it from the collision path entirely (defect 8).
+const declaredValueUnknown = "a value of its own"
 
 // quotedKeys renders a list of keys the way this file already names fallow
 // keys elsewhere — backticked, not Go-quoted.
@@ -687,8 +915,8 @@ func quotedKeys(keys []string) string {
 
 // Apply is unreachable: Delegated always answers ok == true, so applySteps
 // never calls it. Kept as a contract assertion, matching architectureStep.
-func (boundariesOwnerStep) Apply(project.Project, *Writer) error {
-	return fmt.Errorf("%s is delegated and must not be applied", boundariesOwnerStep{}.ID())
+func (boundariesOwnerStep) Apply(project.Project, *Writer, io.Writer) (Facts, error) {
+	return Facts{}, fmt.Errorf("%s is delegated and must not be applied", boundariesOwnerStep{}.ID())
 }
 
 // ------------------------------------------------ legacy lint config
@@ -742,8 +970,8 @@ func (legacyLintConfigStep) Delegated(project.Project) (string, bool) {
 
 // Apply is unreachable: Delegated always answers ok == true, so applySteps
 // never calls it. Kept as a contract assertion, matching architectureStep.
-func (legacyLintConfigStep) Apply(project.Project, *Writer) error {
-	return fmt.Errorf("%s is delegated and must not be applied", legacyLintConfigStep{}.ID())
+func (legacyLintConfigStep) Apply(project.Project, *Writer, io.Writer) (Facts, error) {
+	return Facts{}, fmt.Errorf("%s is delegated and must not be applied", legacyLintConfigStep{}.ID())
 }
 
 // ----------------------------------------------------------------- mcp
@@ -773,13 +1001,13 @@ func (mcpStep) Describe(project.Project) string {
 // it belongs to the project instead.
 func (mcpStep) Delegated(project.Project) (string, bool) { return "", false }
 
-func (mcpStep) Apply(p project.Project, w *Writer) error {
+func (mcpStep) Apply(p project.Project, w *Writer, _ io.Writer) (Facts, error) {
 	path := filepath.Join(p.Root, mcpConfig)
 
 	config := mcpConfigFile{Servers: map[string]mcpServer{}}
 	if raw, err := os.ReadFile(path); err == nil {
 		if err := json.Unmarshal(raw, &config); err != nil {
-			return fmt.Errorf("%s is not readable as JSON, so it cannot be merged: %w", mcpConfig, err)
+			return Facts{}, fmt.Errorf("%s is not readable as JSON, so it cannot be merged: %w", mcpConfig, err)
 		}
 		if config.Servers == nil {
 			config.Servers = map[string]mcpServer{}
@@ -793,7 +1021,7 @@ func (mcpStep) Apply(p project.Project, w *Writer) error {
 		Command: binary.Name,
 		Args:    binary.Args,
 	}
-	return w.WriteJSON(path, config)
+	return Facts{}, w.WriteJSON(path, config)
 }
 
 type mcpConfigFile struct {
@@ -850,9 +1078,9 @@ func (hookInstallStep) Delegated(p project.Project) (string, bool) {
 	}
 }
 
-func (hookInstallStep) Apply(p project.Project, w *Writer) error {
+func (hookInstallStep) Apply(p project.Project, w *Writer, out io.Writer) (Facts, error) {
 	if hookManager(p) == managerHusky {
-		return appendHuskyGate(p, w)
+		return Facts{}, appendHuskyGate(p, w)
 	}
 
 	path := p.LocalBinary("lefthook")
@@ -860,7 +1088,7 @@ func (hookInstallStep) Apply(p project.Project, w *Writer) error {
 	if path != "" {
 		command = tool.Installed("lefthook", path, p.Root, "install")
 	}
-	return runner.Run(command, os.Stdout, os.Stderr)
+	return Facts{}, runner.Run(command, out, out)
 }
 
 // --------------------------------------------------------- agent skill
@@ -892,8 +1120,8 @@ func (agentSkillStep) Delegated(project.Project) (string, bool) {
 
 // Apply is unreachable: Delegated always answers ok == true, so applySteps
 // never calls it. Kept as a contract assertion — see TestAgentSkillApplyIsUnreachable.
-func (agentSkillStep) Apply(project.Project, *Writer) error {
-	return fmt.Errorf("%s is delegated and must not be applied", agentSkillStep{}.ID())
+func (agentSkillStep) Apply(project.Project, *Writer, io.Writer) (Facts, error) {
+	return Facts{}, fmt.Errorf("%s is delegated and must not be applied", agentSkillStep{}.ID())
 }
 
 // -------------------------------------------------------- architecture
@@ -921,8 +1149,8 @@ func (architectureStep) Delegated(project.Project) (string, bool) {
 
 // Apply is unreachable: Delegated always answers ok == true, so applySteps
 // never calls it. Kept as a contract assertion, matching agentSkillStep.
-func (architectureStep) Apply(project.Project, *Writer) error {
-	return fmt.Errorf("%s is delegated and must not be applied", architectureStep{}.ID())
+func (architectureStep) Apply(project.Project, *Writer, io.Writer) (Facts, error) {
+	return Facts{}, fmt.Errorf("%s is delegated and must not be applied", architectureStep{}.ID())
 }
 
 func dedupe(values []string) []string {

@@ -157,6 +157,23 @@ func FallowDupes() []string {
 	return []string{"dupes"}
 }
 
+// FallowConfigPath prints the resolved config file path, and exits 3 when
+// the project has no fallow config at all. It is the probe: --format json
+// exits 0 even with no config file (it prints defaults), so it can never be
+// used to detect absence. Measured against the reference project: local
+// binary roughly 350 ms.
+func FallowConfigPath() []string {
+	return []string{"config", "--path"}
+}
+
+// FallowConfigJSON prints the fully resolved config — `extends` already
+// applied — as JSON on stdout. Measured against the reference project: 26
+// top-level keys, and the `loaded config: <path>` preamble goes to stderr,
+// so stdout needs no stripping. Roughly 350 ms on a local binary.
+func FallowConfigJSON() []string {
+	return []string{"config", "--format", "json"}
+}
+
 // runner returns the --testRunner argument, or nothing when the project's own
 // configuration already answers it.
 //

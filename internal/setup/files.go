@@ -121,25 +121,27 @@ func fallowConfigPath(source string) string {
 	return ""
 }
 
-// declaredLine is a best-effort display of what the project itself wrote for
-// key: the first line that declares it in quoted form, trimmed. A value
-// spanning more than one line only shows its opening line — an honest limit
-// of a textual technique that reads a line, not a parser that reads a value.
-// The step this feeds is delegated either way, and the agent can open the
-// file for the rest.
-func declaredLine(path, key string) string {
+// declaredAt is declaredLine's stated location, no longer its stated value:
+// the first 1-based line number that declares key in quoted form, or the
+// documented sentinel 0 when key is not declared at all. Locating a key by a
+// textual scan is sound — that part of declaredLine is kept exactly;
+// *showing a value* with the same scan was defect 8 (a value spanning more
+// than one line only ever showed its opening fragment), and declaredAt no
+// longer tries. Feeds report.Declared.Line, whose own json tag omits a zero
+// line rather than encoding it.
+func declaredAt(path, key string) int {
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return ""
+		return 0
 	}
 
 	needle := `"` + key + `"`
-	for _, line := range strings.Split(string(raw), "\n") {
+	for i, line := range strings.Split(string(raw), "\n") {
 		if strings.Contains(line, needle) {
-			return strings.TrimSpace(line)
+			return i + 1
 		}
 	}
-	return ""
+	return 0
 }
 
 // gateInstalled reports whether git will actually run the gate, which is a
