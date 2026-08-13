@@ -24,15 +24,18 @@ COMMANDS
                             breaking. Use it once those tests are green.
                             A path can name lines instead of the whole file,
                             as src/thing.ts:12-40, and the verdict then covers
-                            exactly those lines. Installs Stryker at @latest in
-                            the project, which is the only place it can resolve
-                            the project's own TypeScript.
+                            exactly those lines. Runs the Stryker the project
+                            installed, which is the only place it can resolve
+                            the project's own TypeScript, and adds it at @latest
+                            only when the project declares none.
   version                   Print version
 
 FLAGS
   --dry-run                 mutate only: measure how many tests a scoped run
                             executes, without mutating anything
   --concurrency <n>         mutate only: Stryker workers (default 2)
+  --upgrade                 mutate only: bring Stryker to @latest, rewriting
+                            the version the project declares
   --help, -h                Show this message; every command also accepts help
 
 dharness owns invocation only. Each wrapped tool keeps its own configuration,

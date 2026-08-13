@@ -2,6 +2,7 @@ package tool
 
 import (
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -96,5 +97,49 @@ func TestInstalledBuildsTheLocalHelperCommand(t *testing.T) {
 
 	if command.Label != "lefthook" || command.Name != `C:\project\node_modules\.bin\lefthook.cmd` || command.Dir != `C:\project` || !slices.Equal(command.Args, []string{"install"}) {
 		t.Errorf("Installed() = %+v", command)
+	}
+}
+
+func TestPackageNameStripsTheTagFromScopedNames(t *testing.T) {
+	cases := map[string]string{
+		"@stryker-mutator/core@latest": "@stryker-mutator/core",
+		"fallow@latest":                "fallow",
+		"@stryker-mutator/core":        "@stryker-mutator/core",
+		"react-doctor":                 "react-doctor",
+		// A one-character name puts the tag's @ at index 1, which is the
+		// boundary the guard against a leading scope @ has to clear.
+		"a@latest": "a",
+	}
+
+	for spec, want := range cases {
+		if got := PackageName(spec); got != want {
+			t.Errorf("PackageName(%q) = %q, want %q", spec, got, want)
+		}
+	}
+}
+
+// Restoring is `install`, never `add`. `add` resolves a version and writes it
+// back even with no tag, which turns an exact pin into a caret range.
+func TestRestoreDeclaredInstallsTheManifestWithoutNamingAVersion(t *testing.T) {
+	cases := map[string][]string{
+		"npm":  {"npm", "install"},
+		"pnpm": {"pnpm", "install"},
+		"yarn": {"yarn", "install"},
+		"bun":  {"bun", "install"},
+	}
+
+	for manager, want := range cases {
+		t.Run(manager, func(t *testing.T) {
+			command := RestoreDeclared(manager, `C:\project`)
+
+			if command.Name != want[0] || !slices.Equal(command.Args, want[1:]) {
+				t.Errorf("RestoreDeclared() = %s %v, want %s %v", command.Name, command.Args, want[0], want[1:])
+			}
+			for _, arg := range command.Args {
+				if strings.Contains(arg, "@") {
+					t.Errorf("restore named a version: %v", command.Args)
+				}
+			}
+		})
 	}
 }

@@ -54,6 +54,7 @@ func RunMutate(args []string, stdout io.Writer) error {
 	flags := newFlagSet("mutate <path...>", stdout, "Run mutation testing over the given files, or over given lines as src/thing.ts:12-40. Use it once their tests are green.")
 	concurrency := flags.Int("concurrency", defaultConcurrency, "Stryker workers")
 	dryRun := flags.Bool("dry-run", false, "measure how many tests a scoped run executes, without mutating anything")
+	upgrade := flags.Bool("upgrade", false, "bring Stryker to @latest, rewriting the version the project declares")
 	paths, err := parseInterspersed(flags, args)
 	if err != nil {
 		return err
@@ -102,7 +103,7 @@ func RunMutate(args []string, stdout io.Writer) error {
 		testRunnerArg = ""
 	}
 
-	binary, err := ensureStryker(p, selection, stdout)
+	binary, err := ensureStryker(p, selection, *upgrade, stdout)
 	if err != nil {
 		return err
 	}
@@ -230,7 +231,7 @@ func (e *StrykerUnavailableError) Unwrap() error { return e.err }
 // because a gate runs on every commit; mutate is invoked when a unit of work is
 // finished, so the install is paid once per finished unit and costs 436ms when
 // there is nothing to do.
-func ensureStryker(p project.Project, selection project.StrykerSelection, stdout io.Writer) (string, error) {
+func ensureStryker(p project.Project, selection project.StrykerSelection, upgrade bool, stdout io.Writer) (string, error) {
 	packages, err := tool.StrykerPackages(p.PackageManager, p.YarnPnP, selection.TestRunner)
 	if err != nil {
 		return "", err
@@ -239,9 +240,32 @@ func ensureStryker(p project.Project, selection project.StrykerSelection, stdout
 		return &StrykerUnavailableError{Packages: packages, Install: tool.InstallCommand(p.PackageManager), err: cause}
 	}
 
-	fmt.Fprintf(stdout, "Resolving %s in the project, so Stryker reads the project's own compiler.\n",
-		strings.Join(packages, " "))
-	if err := runner.Run(tool.InstallPackages(p.PackageManager, p.Source, packages), stdout, stdout); err != nil {
+	// Only what the project has not already decided on is added at @latest.
+	//
+	// A declared package carries a version the project chose, and `add` rewrites
+	// it whether or not a tag is passed: measured on 2026-08-13 against a real
+	// repository, an exact "9.6.1" came back "^9.6.1". §05 governs a manifest the
+	// same as it governs a config file, and in a mutation engine the cost is not
+	// cosmetic — a minor arriving on its own can move the verdict over a tree
+	// nobody touched, which is the noise an exact pin exists to prevent.
+	var missing []string
+	for _, spec := range packages {
+		if upgrade || !p.Declares(tool.PackageName(spec)) {
+			missing = append(missing, spec)
+		}
+	}
+
+	install := tool.RestoreDeclared(p.PackageManager, p.Source)
+	switch {
+	case len(missing) > 0:
+		install = tool.InstallPackages(p.PackageManager, p.Source, missing)
+		fmt.Fprintf(stdout, "Adding %s to the project, so Stryker reads the project's own compiler.\n",
+			strings.Join(missing, " "))
+	default:
+		fmt.Fprintf(stdout, "Restoring the Stryker the project already declares, so its versions stay as chosen.\n")
+	}
+
+	if err := runner.Run(install, stdout, stdout); err != nil {
 		return "", unavailable(err)
 	}
 

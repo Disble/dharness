@@ -55,6 +55,34 @@ func InstallPackages(packageManager, dir string, packages []string) runner.Comma
 	return dependencyCommand(installExecutors, packageManager, dir, packages)
 }
 
+// restoreExecutors install exactly what the manifest already declares.
+//
+// This is `install`, never `add`: `add` resolves a version and writes it back,
+// so even without a tag it turns an exact pin into a caret range. The
+// distinction is the whole of §05 here — one command reads the project's
+// decision, the other overwrites it.
+var restoreExecutors = map[string][]string{
+	"bun":  {"bun", "install"},
+	"pnpm": {"pnpm", "install"},
+	"yarn": {"yarn", "install"},
+	"npm":  {"npm", "install"},
+}
+
+// RestoreDeclared installs the manifest as it stands, touching no version.
+func RestoreDeclared(packageManager, dir string) runner.Command {
+	exec := packageExecutor(restoreExecutors, packageManager)
+	return command(exec[0], exec[0], dir, exec[1:]...)
+}
+
+// PackageName strips the version tag from a spec, scoped names included:
+// @stryker-mutator/core@latest names @stryker-mutator/core.
+func PackageName(spec string) string {
+	if at := strings.LastIndex(spec, "@"); at > 0 {
+		return spec[:at]
+	}
+	return spec
+}
+
 // RemovePackages compensates InstallPackages for the same exact package set.
 func RemovePackages(packageManager, dir string, packages []string) runner.Command {
 	return dependencyCommand(removeExecutors, packageManager, dir, packages)

@@ -213,3 +213,26 @@ func write(t *testing.T, path, contents string) {
 		t.Fatal(err)
 	}
 }
+
+// Which list a package sits in is not a question dharness has an opinion
+// about: it asks whether the project already decided on this package at all.
+func TestDeclaresFindsBothDependencyLists(t *testing.T) {
+	root := t.TempDir()
+	manifest := `{"dependencies":{"react":"19.0.0"},"devDependencies":{"@stryker-mutator/core":"9.6.1"}}`
+	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(manifest), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p := Describe(root)
+
+	for _, name := range []string{"react", "@stryker-mutator/core"} {
+		if !p.Declares(name) {
+			t.Errorf("Declares(%q) = false, want true", name)
+		}
+	}
+	if p.Declares("vitest") {
+		t.Error("Declares() found a package the manifest never names")
+	}
+	if (Project{}).Declares("react") {
+		t.Error("a project with no source declared something")
+	}
+}
