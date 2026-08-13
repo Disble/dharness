@@ -2086,3 +2086,134 @@ func TestWriteJSONKeepsCollisionValuesWholeWhileHumanNarrows(t *testing.T) {
 		}
 	}
 }
+
+// TestWriteHumanBoundsEveryLineInEveryBlock is the width invariant for the
+// whole report, and it exists because scoping it per block failed three
+// times running.
+//
+// Each earlier width test pinned one function, so every new overflow landed
+// in a block no test measured: the collision value at 345 runes, then the
+// delegated reason at 71 to 73, then — introduced by the fix for a wording
+// defect, in a commit whose own task claimed "every line is within 70
+// runes" — the hidden-key note at 88. Each was found by running the binary
+// while the suite stayed green. On its first run this test found three more
+// nobody had reported: an unwrapped failure message at 195 runes, and a
+// rollback verdict at 109 because a retracted step's ID is a whole
+// sentence.
+//
+// One report exercising every block is the shape that cannot be out-scoped
+// by the next block someone adds.
+func TestWriteHumanBoundsEveryLineInEveryBlock(t *testing.T) {
+	ours := jsonRaw(`{"mode":"semantic","shared":1,"threshold":3}`)
+	theirs := jsonRaw(`{"enabled":true,"mode":"weak","shared":1,"threshold":5.0,"near":false,"minTokens":50}`)
+	effective := "theirs"
+	// One distinct long text per block, each ending in its own marker word.
+	// A single shared string cannot detect a truncation: the words survive
+	// in the output through whichever other block still renders them, and
+	// the assertion below passes while a block silently drops everything
+	// after its first wrapped line.
+	longFor := func(marker string) string {
+		return "nothing answers: there is no lefthook config, no .husky/ and no " +
+			"lefthook binary. Choosing a hook manager is a decision this project " +
+			"has not made, and not a default dharness gets to pick " + marker
+	}
+	errorText, whyText := longFor("erroronly"), longFor("whyonly")
+	evidenceText, reasonText := longFor("evidenceonly"), longFor("reasononly")
+
+	r := Report{
+		Version: "1.2.0", Root: "/w", Source: "frontend",
+		PackageManager: "bun", TestRunner: "vitest", OwnedDir: ".dharness/",
+		Summary: Summary{Steps: 8, Applied: 1, Delegated: 2, Satisfied: 1, Failed: 1, Retracted: 2, MS: 6100},
+		Steps: []StepResult{
+			{N: 1, ID: "install what this project is missing", Status: Applied, MS: 5560,
+				Installed: []string{"dharness-eslint-plugin@0.3.0"},
+				Wrote:     []FileChange{{Path: "frontend/package.json", Kind: Modified}}},
+			{N: 2, ID: "write the files dharness owns", Status: Failed, Error: errorText},
+			{N: 3, ID: "point .fallowrc.json at the file dharness owns", Status: Retracted},
+			// A second retracted step so the closing block's "including
+			// ..." line is long enough to wrap. With one name it fits on a
+			// single line and a loop that stops after the first line is
+			// indistinguishable from one that does not.
+			{N: 8, ID: "point lefthook.yml at the file dharness owns", Status: Retracted},
+			// The collision step carries no Why on purpose: Decision 4 makes
+			// the two mutually exclusive in rendering, so a Why here would
+			// never reach the output and the assertion below would read its
+			// absence as a truncation. The reason text gets its own
+			// delegated step instead.
+			{N: 4, ID: "resolve the keys this project and dharness both declare", Status: Delegated,
+				Collisions: []Collision{{
+					ID: "sync:collision/duplicates", Key: "duplicates", Effective: &effective,
+					Ours:        Declared{Path: ".dharness/fallow.jsonc", Line: 4, Value: &ours},
+					Theirs:      Declared{Path: "frontend/.fallowrc.json", Line: 2, Value: &theirs},
+					Resolutions: []string{"delete-theirs", "move-into-ours"},
+				}}},
+			{N: 5, ID: "wire the gate into git", Status: Delegated, Why: whyText},
+			{N: 6, ID: "install react-doctor's agent skill", Status: Satisfied, Evidence: evidenceText},
+			{N: 7, ID: "decide this project's architecture", Status: NotReached},
+		},
+		Notes: []Note{{Kind: "residue", Path: "frontend/doctor.config.json", Reason: reasonText,
+			Entries: []string{"dharness-eslint-plugin", "dharness/max-file-lines"}}},
+	}
+
+	var buf bytes.Buffer
+	if err := WriteHuman(&buf, r); err != nil {
+		t.Fatalf("WriteHuman() = %v", err)
+	}
+
+	// Two accepted exceptions, both because the content is not dharness's
+	// to reshape: the header line carries an absolute filesystem path whose
+	// length dharness does not control and must not truncate, and a
+	// subprocess line is another tool's own bytes passed through verbatim
+	// (§16) — reflowing a wrapped tool's output would corrupt it, which is
+	// worse than a long line.
+	for i, line := range strings.Split(buf.String(), "\n") {
+		if strings.HasPrefix(line, "dharness ") && strings.Contains(line, r.Root) {
+			continue
+		}
+		if strings.Contains(line, glyphGutter) {
+			continue
+		}
+		if n := utf8.RuneCountInString(line); n > wrapWidth {
+			t.Errorf("line %d is %d runes, over the report width of %d: %q", i+1, n, wrapWidth, line)
+		}
+	}
+
+	// The bound must come from wrapping, never from dropping text. Without
+	// this half a loop that emits only its first wrapped line passes the
+	// width check above while silently truncating every long field in the
+	// report — the width is satisfied precisely because the content is
+	// gone.
+	out := buf.String()
+	for _, word := range strings.Fields(errorText + " " + whyText + " " + evidenceText + " " + reasonText + " defaults only fallow sets") {
+		if !strings.Contains(out, word) {
+			t.Errorf("a wrapped field lost %q — the width was met by dropping text:\n%s", word, out)
+		}
+	}
+}
+
+// TestWrapIsGreedyAndNeverStopsEarly pins wrap's own contract, where a
+// paragraph's boundaries are explicit and a rendered report's are not.
+//
+// The bound alone is only half of wrapping: a function that emitted one word
+// per line would satisfy "no line over width" perfectly and waste most of
+// every line. Greediness is the other half, and it is the half a width
+// constant that subtracts too much quietly breaks.
+func TestWrapIsGreedyAndNeverStopsEarly(t *testing.T) {
+	text := "nothing answers: there is no lefthook config, no .husky/ and no " +
+		"lefthook binary. Choosing a hook manager is a decision this project has not made."
+
+	for _, width := range []int{20, 33, 48, 61, 70} {
+		lines := wrap(text, width, 3)
+		for i := 0; i+1 < len(lines); i++ {
+			next := strings.Fields(lines[i+1])
+			if len(next) == 0 {
+				continue
+			}
+			joined := utf8.RuneCountInString(lines[i]) + 1 + utf8.RuneCountInString(next[0])
+			if joined <= width {
+				t.Errorf("wrap(width=%d) stopped early at line %d: %q could have taken %q within %d",
+					width, i+1, lines[i], next[0], width)
+			}
+		}
+	}
+}

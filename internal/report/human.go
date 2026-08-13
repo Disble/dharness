@@ -36,6 +36,25 @@ const (
 // not carry, and it would make the output depend on the reader's window —
 // untestable, and useless in the agent transcript that is the second
 // reader.
+//
+// Every caller that prints behind its own prefix subtracts that prefix from
+// the width it asks wrap for — `wrapWidth-3`, `wrapWidth-9`,
+// `wrapWidth-declaredSideIndent`. Getting one of those wrong in the *wider*
+// direction is a defect and dies in
+// TestWriteHumanBoundsEveryLineInEveryBlock.
+//
+// Getting it wrong in the narrower direction is a proven-equivalent mutant
+// class, recorded here rather than chased (mutation-tdd: disable only a
+// proven equivalent, at the narrowest location, with a written reason).
+// `wrapWidth-4` where `wrapWidth-3` was meant produces lines one rune
+// shorter; it violates no stated requirement, since the contract is a bound
+// and not a column. The only test that could kill it is one asserting the
+// exact wrap column, which pins layout — the mutation-hostile shape this
+// package avoids everywhere else, and the shape that lets a suite stay green
+// while the report rots. The behaviour that is genuinely at stake, that a
+// wrap never stops early, is pinned on wrap itself by
+// TestWrapIsGreedyAndNeverStopsEarly, where a paragraph's boundaries are
+// explicit and a rendered report's are not.
 const wrapWidth = 70
 
 // widths returns the column width each row must be padded to, measured in
@@ -312,8 +331,12 @@ func writeFailedBlock(b *strings.Builder, r Report) {
 	w := widths(rows)
 	for i, row := range rows {
 		fmt.Fprintf(b, " %s %-*s %-*s  %s\n", glyphFailed, w[0], row[0], w[1], row[1], row[2])
-		if steps[i].Error != "" {
-			fmt.Fprintf(b, "         %s\n", steps[i].Error)
+		// Wrapped at the width left once this block's own nine-space prefix
+		// is counted. A tool's failure message is as long as it is, and an
+		// unwrapped one ran to 195 runes in the block a reader reaches for
+		// first on a failed run.
+		for _, line := range wrap(steps[i].Error, wrapWidth-9, 0) {
+			fmt.Fprintf(b, "         %s\n", line)
 		}
 	}
 	b.WriteString("\n")
@@ -407,8 +430,17 @@ func writeCollision(b *strings.Builder, c Collision) {
 		// key identical. Measured live, all 13 keys hidden from a real
 		// fallow value were defaults dharness never declared, and a note
 		// reading "13 identical" was false about every one of them.
-		fmt.Fprintf(b, "%snote: %d key(s) hidden — same on both sides, or defaults only fallow sets\n",
-			strings.Repeat(" ", declaredSideIndent), hidden)
+		//
+		// Wrapped, not printed flat: the sentence plus this block's
+		// fifteen-space indent measured 88 runes live, in the same commit
+		// whose own task claimed every line was within 70. The width rule
+		// applies to the note that explains a shortening as much as to
+		// what it shortened.
+		note := fmt.Sprintf("note: %d key(s) hidden — same on both sides, or defaults only fallow sets", hidden)
+		indent := strings.Repeat(" ", declaredSideIndent)
+		for _, line := range wrap(note, wrapWidth-declaredSideIndent, 0) {
+			fmt.Fprintf(b, "%s%s\n", indent, line)
+		}
 	}
 	b.WriteString("\n")
 
@@ -674,7 +706,13 @@ func writeNotesBlock(b *strings.Builder, r Report) {
 		for _, entry := range note.Entries {
 			fmt.Fprintf(b, "   %s %s\n", glyphSeparator, entry)
 		}
-		for _, line := range wrap(note.Reason, wrapWidth, 3) {
+		// The 3 subtracted here is the 3 the Fprintf below adds. Third
+		// occurrence of one mistake: wrap is asked for the width the text
+		// gets, and the caller then prints it behind a prefix it never
+		// counted. The delegated block had it, the note line had it, and
+		// this had it — each found only when a report exercising every
+		// block was finally measured as a whole.
+		for _, line := range wrap(note.Reason, wrapWidth-3, 3) {
 			fmt.Fprintf(b, "   %s\n", line)
 		}
 	}
@@ -726,11 +764,18 @@ func writeFailureTally(b *strings.Builder, r Report) {
 		names[i] = step.ID
 	}
 
-	msg := "rolled back — nothing was applied"
+	// The verdict, its timing and its exit code stay on one line; the names
+	// it retracts follow underneath. A step ID in this product is a full
+	// sentence — "point .fallowrc.json at the file dharness owns" — so
+	// joining even one onto the verdict pushed it to 109 runes, on the line
+	// a reader looks at first when a run fails.
+	fmt.Fprintf(b, "%s rolled back — nothing was applied   %s  exit %d\n",
+		glyphFailed, formatMS(r.Summary.MS), r.Exit)
 	if len(names) > 0 {
-		msg += ", including " + strings.Join(names, ", ")
+		for _, line := range wrap("including "+strings.Join(names, ", "), wrapWidth-2, 0) {
+			fmt.Fprintf(b, "  %s\n", line)
+		}
 	}
-	fmt.Fprintf(b, "%s %s   %s  exit %d\n", glyphFailed, msg, formatMS(r.Summary.MS), r.Exit)
 	fmt.Fprintf(b, "\n  %d failed %s %d retracted %s %d not reached\n",
 		r.Summary.Failed, glyphSeparator, r.Summary.Retracted, glyphSeparator, len(stepsWithStatus(r.Steps, NotReached)))
 }
