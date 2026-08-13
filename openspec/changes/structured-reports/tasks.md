@@ -309,18 +309,18 @@ branch collapse land in slice 4, so a key still renders through the old path
 until then. Why here: the only slice that adds a subprocess and the only one
 touching §03 — the whole subject of its own review (design.md Decision 9).
 
-- [ ] **3.1** RED: `internal/tool/tool_test.go` —
+- [x] **3.1** RED: `internal/tool/tool_test.go` —
       `TestFallowConfigPathAndJSONArgs`: `FallowConfigPath() ==
       []string{"config", "--path"}`; `FallowConfigJSON() ==
       []string{"config", "--format", "json"}`. Pins the exact two
       argument lists Decision 5 measured (local ~350 ms, 26 top-level
       keys, `loaded config:` preamble on stderr only) — a mutant altering
       either flag string dies here.
-- [ ] **3.2** GREEN: `internal/tool/tool.go` — add `FallowConfigPath()
+- [x] **3.2** GREEN: `internal/tool/tool.go` — add `FallowConfigPath()
       []string` and `FallowConfigJSON() []string` beside `FallowAudit`/
       `FallowDupes`, each carrying Decision 5's measured-cost doc comment.
       Obs: 3.1 passes.
-- [ ] **3.3** RED: `internal/setup/steps_test.go` —
+- [x] **3.3** RED: `internal/setup/steps_test.go` —
       `TestResolvedConfigShortCircuitsOnNoLocalBinary`: `runner.SetForTest`
       recording every `Command`; a `project.Project` whose
       `LocalBinary(tool.Fallow)` returns `""`; call `resolvedConfig(p)`;
@@ -328,7 +328,7 @@ touching §03 — the whole subject of its own review (design.md Decision 9).
       `(nil, false)`. Pins the measurement layer's "probe short-circuits"
       row and "a project with no local fallow binary never reaches the
       network."
-- [ ] **3.4** RED: `TestResolvedConfigShortCircuitsOnExit3` —
+- [x] **3.4** RED: `TestResolvedConfigShortCircuitsOnExit3` —
       `runner.SetForTest` returns `*runner.ExitError{Code: 3}` for the
       `--path` command; assert exactly **one** command was recorded and
       `--format json` never ran; `resolvedConfig` returns `(nil, false)`.
@@ -337,36 +337,36 @@ touching §03 — the whole subject of its own review (design.md Decision 9).
       mutant that runs both commands still produces an absent `effective`
       through the unmarshal failure, so the assertion must be on command
       count, not on `effective` alone.
-- [ ] **3.5** RED: table-driven `TestResolvedConfigAbsenceHasOneShape` —
+- [x] **3.5** RED: table-driven `TestResolvedConfigAbsenceHasOneShape` —
       rows: non-zero non-3 exit from `--path`; non-JSON stdout from
       `--format json`; the colliding key missing from the resolved map.
       Each row asserts `resolvedConfig` returns `(_, false)`. Pins
       "`effective` is absent, never fabricated, whenever it cannot be
       measured"'s enumerated failure list.
-- [ ] **3.6** RED: `TestResolvedConfigSucceedsAfterExit0Probe` —
+- [x] **3.6** RED: `TestResolvedConfigSucceedsAfterExit0Probe` —
       `--path` exits 0; `--format json` returns a small valid JSON map;
       assert `--format json` is invoked exactly once and its map becomes
       the returned value. Pins "a project with a config present probes
       successfully and resolves."
-- [ ] **3.7** GREEN: `internal/setup/steps.go` — `func resolvedConfig(p
+- [x] **3.7** GREEN: `internal/setup/steps.go` — `func resolvedConfig(p
       project.Project) (map[string]json.RawMessage, bool)`, exactly
       Decision 5's order: `LocalBinary` check → `--path` probe (exit 3 or
       any other error → absent, no second command) → `--format json` (any
       error → absent) → `json.Unmarshal` (any error → absent); stderr
       discarded via `io.Discard`. Obs: 3.3–3.6 pass.
-- [ ] **3.8** RED: `internal/setup/files_test.go` —
+- [x] **3.8** RED: `internal/setup/files_test.go` —
       `TestDeclaredAtReturnsALineNumber`: reusing `declaredLine`'s
       fixtures, assert `declaredAt(path, key)` returns the correct 1-based
       line number when the key is present and a documented sentinel (0)
       when absent. Pins Decision 5: "locating a key by a textual scan is
       sound" — kept for what it is correct at.
-- [ ] **3.9** GREEN: `internal/setup/files.go` — `declaredLine(path, key)
+- [x] **3.9** GREEN: `internal/setup/files.go` — `declaredLine(path, key)
       string` → `declaredAt(path, key) int` (same scan, returns the
       1-based line number instead of the line's text); remove
       `declaredValue`'s line-fragment display path per Decision 5
       ("`declaredValue` leaves the collision path entirely, and with it
       the `"duplicates": {` fragment"). Obs: 3.8 passes.
-- [ ] **3.10** RED: `internal/setup/steps_test.go` —
+- [x] **3.10** RED: `internal/setup/steps_test.go` —
       `TestCollisionsComputesEachKeyOnce`: a fixture with two colliding
       keys (extending the existing `collidingKeys` fixtures); call
       `setup.Collisions(p)` with a stubbed `resolvedConfig` path exercised
@@ -376,28 +376,28 @@ touching §03 — the whole subject of its own review (design.md Decision 9).
       `Effective`/`Theirs.Value` populated only when the resolve
       succeeded. Pins "a collision is computed once and rendered from
       that one value in both views" at the computation layer.
-- [ ] **3.11** GREEN: `internal/setup/steps.go` — `func Collisions(p
+- [x] **3.11** GREEN: `internal/setup/steps.go` — `func Collisions(p
       project.Project) []report.Collision`: `colliding :=
       collidingKeys(...)`; `len(colliding) == 0` → `return nil` (no
       process at all); else call `resolvedConfig(p)` once and build one
       `report.Collision` per key. Obs: 3.10 passes.
-- [ ] **3.12** RED: `TestCollisionsSpawnsNoProcessWithNoCollidingKey` —
+- [x] **3.12** RED: `TestCollisionsSpawnsNoProcessWithNoCollidingKey` —
       `runner.SetForTest` recording commands; a project with zero
       colliding keys; call `Collisions(p)`; assert zero commands recorded.
       Pins Decision 5's "cheaper than the proposal's one cheap probe, and
       free (§13)" as its own dedicated assertion, distinct from 3.3's
       no-local-binary case.
-- [ ] **3.13** RED: `internal/setup/steps_test.go` —
+- [x] **3.13** RED: `internal/setup/steps_test.go` —
       `TestBoundariesOwnerStepIDMakesNoArchitectureClaim`:
       `boundariesOwnerStep{}.ID()` does not contain `"two architectures"`
       or `"architectures this project declares"`. Fails against today's
       string; pins spec's amended requirement (a) by content, not exact
       wording.
-- [ ] **3.14** GREEN: `internal/setup/steps.go:467-469` — change `ID()` to
+- [x] **3.14** GREEN: `internal/setup/steps.go:467-469` — change `ID()` to
       `"resolve the keys this project and dharness both declare"`
       (Decision 6's replacement — true for one key or several, asserts
       nothing about architectures). Obs: 3.13 passes.
-- [ ] **3.15** Golden: regenerate the four framework fixtures via `go test
+- [x] **3.15** Golden: regenerate the four framework fixtures via `go test
       ./internal/setup -run TestFrameworkGoldens -update`
       (`nextjs.txt`, `expo.txt`, `wails.txt`, `wails-nextjs.txt`); hand-edit
       the two generic fixtures (`generic-conventional.txt`,
@@ -405,13 +405,13 @@ touching §03 — the whole subject of its own review (design.md Decision 9).
       string — never via `-update`. Obs: `go test ./internal/setup/...`
       green; diff review confirms line 26 is the only line touched in all
       six files (six lines, six files — Decision 6's measured figure).
-- [ ] **3.16** RED (regression guard): re-run
+- [x] **3.16** RED (regression guard): re-run
       `TestGenericMechanismHasNoUpdatePath` explicitly after 3.15's hand
       edits, rather than assuming it — this is what proves editing a
       `.txt` fixture never touches `golden_test.go`'s own source. Obs: `go
       test ./internal/setup/... -run TestGenericMechanismHasNoUpdatePath`
       green; the test's own source is untouched by this slice.
-- [ ] **3.17** RED (regression guard):
+- [x] **3.17** RED (regression guard):
       `TestBoundariesFallbackConstantsStayByteIdentical` —
       `boundariesFallbackDescribe` and `boundariesFallbackWhy`
       (`internal/setup/steps.go:506-516`) compared against a literal
@@ -420,7 +420,7 @@ touching §03 — the whole subject of its own review (design.md Decision 9).
       golden impact" claim rests on these two constants staying
       byte-identical, since the generic fixtures reach only their
       fallback branches.
-- [ ] **3.18** GREEN: `docs/design-principles.md` — §03: record the
+- [x] **3.18** GREEN: `docs/design-principles.md` — §03: record the
       second local-resolution exception ("`sync` resolves fallow locally
       **or not at all**"), beside the existing 12 August 2026 ESLint
       exception, citing Decision 5's measurement (local ~347/358/349 ms;
@@ -428,14 +428,14 @@ touching §03 — the whole subject of its own review (design.md Decision 9).
       round's rejection of it, and `internal/tool/tool.go:101-103`'s
       network rule). Obs: the exception is named where the general rule
       is recorded, matching `eslint-integration`'s own precedent.
-- [ ] **3.19** GREEN: `docs/learning-log.md` — one dated line (12 August
+- [x] **3.19** GREEN: `docs/learning-log.md` — one dated line (12 August
       2026) for the `fallow config` cost and exit contract: local binary
       ~347/358/349 ms measured; `fallow config --path` exits 3 on a
       zero-config project; `fallow config --format json` never exits
       non-zero on a zero-config project (prints defaults), so it can
       never be used to detect absence. Obs: append-only, newest at the
       bottom, matching the file's existing convention.
-- [ ] **3.20** MUTATE + REFACTOR: `go run ./tools/mutationstaged` over
+- [x] **3.20** MUTATE + REFACTOR: `go run ./tools/mutationstaged` over
       `internal/setup`, `internal/tool` (floor 0.80) — verify the exit-3
       short-circuit branch (3.4) is killed, not merely covered, since
       design.md names it as the easiest of the four to leave unkilled;

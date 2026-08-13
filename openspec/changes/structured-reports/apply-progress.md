@@ -269,6 +269,108 @@ holds. `go run ./tools/mutationstaged` over the combined staged scope
 reports FAIL for the reason above; the two isolated-scope runs recorded
 above are the actual mutation evidence for this slice's own code.
 
-## Slices 3–4
+## Slice 3 — fallow measurement, `Collisions`, `declaredAt`, `boundariesOwnerStep.ID()` (complete)
 
-Not started. Tasks 3.1 onward remain unchecked in `tasks.md`.
+All 20 tasks (3.1–3.20) done. `internal/tool.FallowConfigPath()`/
+`FallowConfigJSON()` carry Decision 5's two measured argument lists.
+`internal/setup.resolvedConfig(p)` is the whole measurement: `LocalBinary`
+check → `--path` probe (any non-nil error, not only exit 3, short-circuits
+before `--format json` ever runs) → `--format json` → `json.Unmarshal`, every
+failure collapsing to `(nil, false)`. `internal/setup.Collisions(p)` computes
+one `report.Collision` per colliding key — `ID: "sync:collision/"+key`,
+`Ours` always populated from `ownedValue` (wrapped as a JSON string when it
+is prose, e.g. the `boundaries` fallback), `Effective`/`Theirs.Value`
+populated only when the resolve actually finds the key. `declaredLine`
+became `declaredAt(path, key) int` (a 1-based line number, sentinel 0),
+feeding `Declared.Line`. `boundariesOwnerStep.ID()` no longer claims "two
+architectures" — six golden lines moved, all at physical line 26, four
+regenerated via `-update`, two hand-edited.
+
+### RED → GREEN sequence followed
+
+Each task's own RED test was written and observed failing to compile (a
+missing symbol) before its GREEN implementation landed, task by task through
+3.1–3.14. No combined-GREEN deviation was needed this slice — unlike slices
+1 and 2, nothing here forced an atomic multi-symbol change: `FallowConfigPath`/
+`FallowConfigJSON`, `resolvedConfig`, `Collisions`/`ourDeclared`,
+`declaredAt`, and `ID()` each compile independently.
+
+### A deviation task 3.9's literal wording required, and why
+
+Task 3.9 says `declaredValue` "leaves the collision path entirely" — the
+function is removed — but `describeBoundaries`/`delegateBoundaries` (the
+*old* per-key rendering walk) still call it, and are not rewired to
+`Collisions`/`renderCollisions` until slice 4 (design.md Decision 4's own
+explicit ordering note: landing the branch collapse apart from slice 4's
+`Why`/`Collisions` exclusivity would let a key render twice). Removing
+`declaredValue` outright without a replacement would not compile.
+
+Resolved by replacing `declaredValue`'s single-line textual-fragment display
+(defect 8 — the `"duplicates": {` fragment) with a named constant,
+`declaredValueUnknown = "a value of its own"` — the same generic phrase
+`declaredValue`'s own no-match branch already used, now the only branch. This
+satisfies task 3.9's actual instruction (the fragment display leaves the
+collision path; the function's textual-scan technique does not survive
+`declaredLine`'s retyping to `declaredAt(path, key) int` either) without
+breaking the interim rendering path slice 4 has not replaced yet. Two
+existing tests from an earlier slice —
+`TestCollisionNamesEveryContributedKeyTheProjectDeclares` and
+`TestIgnorePatternsCollidesInTheMotivatingShape` — asserted the literal
+fragment text (`"dist/**"`) appeared in `describeBoundaries`/
+`delegateBoundaries` output; both were updated to assert
+`declaredValueUnknown` instead, since the behaviour they pinned is exactly
+what Decision 5 requires to change here. Disclosed rather than silently
+reinterpreted, matching slice 2's own precedent for task 2.3.
+
+### A deviation from task 3.5's literal test layer, and why
+
+Task 3.5 names a `TestResolvedConfigAbsenceHasOneShape` table test whose
+third row ("the colliding key missing from the resolved map") asserts on
+`resolvedConfig` returning `(_, false)` — but `resolvedConfig`'s own
+signature (design.md Decision 5) takes no key and returns a whole map; it
+cannot itself know a colliding key is missing from that map, only `Collisions`
+can. Implemented as designed: `TestResolvedConfigAbsenceHasOneShape` covers
+the two rows that genuinely belong to `resolvedConfig`'s own layer (non-zero
+non-3 `--path` exit; non-JSON `--format json` stdout), and the third row's
+fact — a key absent from an otherwise-valid resolved map leaves
+`Effective`/`Theirs.Value` nil rather than fabricated — is asserted at
+`Collisions`'s own layer, inside `TestCollisionsComputesEachKeyOnce`'s
+"absent" half testing a key that is not present. The full absence enumeration
+in spec.md's own requirement is covered across both tests; only which test
+function owns which row moved.
+
+### Gate, at commit time
+
+`go build ./...`, `go vet ./...`, `go test ./...`, `gofmt -l .` all clean.
+`go run ./tools/mutationstaged` over the staged scope (`internal/setup/files.go`,
+`internal/setup/steps.go`, `internal/tool/tool.go`): **32/32 killed, score
+1.00**, floor 0.80, exit 0 — no cross-file scope-leak concern this slice,
+since the staged scope spans only these two packages and the combined score
+already clears the floor by a wide margin. The exit-3 short-circuit branch
+(design.md's named easiest-to-leave-unkilled risk) is killed, confirmed by
+name in the mutation report rather than assumed from the aggregate score.
+
+Two mutation-driven fixes, both simplification over new pinning tests per the
+mutation-tdd skill's decision table:
+
+- `ourDeclared`'s defensive `if err == nil` after `json.Marshal(value)` was a
+  dead branch — `json.Marshal` of a Go `string` cannot fail — so the check
+  was removed rather than tested; the survived mutant is gone because the
+  branch it targeted no longer exists, not because a test now watches it.
+- `declaredAt`'s `err != nil` branch (an unreadable file, as opposed to a
+  readable file that never mentions the key) had no test reaching it at all —
+  `TestDeclaredAtReturnsALineNumber` gained a third case, a path that does
+  not exist, killing both the Integer Decrement (`0`→`-1`) and Integer
+  Increment (`0`→`1`) mutants on that `return 0`.
+
+All six golden fixtures moved exactly one line each (line 26, Decision 6's
+measured figure): `nextjs.txt`, `expo.txt`, `wails.txt`, `wails-nextjs.txt`
+regenerated via `-update`; `generic-conventional.txt`, `generic-split.txt`
+hand-edited. `TestGenericMechanismHasNoUpdatePath` re-run and green after the
+hand edits, per task 3.16. `TestBoundariesFallbackConstantsStayByteIdentical`
+(task 3.17) passes, pinning that Decision 6's "six lines is the complete
+golden impact" claim still holds.
+
+## Slice 4
+
+Not started. Tasks 4.1 onward remain unchecked in `tasks.md`.

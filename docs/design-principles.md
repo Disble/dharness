@@ -108,6 +108,21 @@ asumido de forma provisional — así que corre primero en el orden del gate, no
 al final; react-doctor y fallow conservan el orden relativo que ya tenían,
 que esta medición no revisó (`docs/learning-log.md`, 12 de agosto de 2026).
 
+*Enmendado el 12 de agosto de 2026 (segunda vez).* `sync` resuelve fallow
+localmente o no lo resuelve en absoluto — la segunda excepción registrada, con
+la misma forma que la de ESLint pero un desenlace distinto cuando el binario
+local falta. La medición de `effective` (el valor que fallow realmente
+resuelve para una clave en colisión) corre `fallow config --path` y `fallow
+config --format json` a través de `p.LocalBinary(tool.Fallow)` únicamente,
+sin volver al ejecutor remoto que `check.go` sigue usando para su propia fase
+de fallow: `bunx`/`npx`/`pnpm dlx` alcanzan la red, y la regla ya registrada en
+`internal/tool/tool.go:101-103` — que una ruta rutinaria no debe alcanzarla —
+gobierna también esta. Sin binario local, `effective` queda ausente y `sync`
+sigue saliendo 0 por esa sola razón; la ronda de preguntas resuelta del cambio
+rechazó explícitamente un fallback remoto. Medido contra el proyecto de
+referencia: el binario local corre en ~347/358/349 ms (`docs/learning-log.md`,
+12 de agosto de 2026).
+
 ### 04. Un comando que no se puede nombrar está haciendo dos cosas
 
 El nombre no es presentación, es diagnóstico. Cuando ninguno encaja, casi siempre
