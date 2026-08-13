@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.4.0](https://github.com/Disble/dharness/compare/v1.3.0...v1.4.0) (2026-08-13)
+
+
+### Features
+
+* **mutation:** refuse to score when the baseline suite is red ([b60b9a4](https://github.com/Disble/dharness/commit/b60b9a4f725f9514ea837d6489bb9e2da6b45419))
+
+
+### Bug Fixes
+
+* **mutate:** compare scope paths by slash on every platform ([b9be01b](https://github.com/Disble/dharness/commit/b9be01b34dc748780b2d54a7ba37eb7532e9b03a))
+* **mutate:** run the Stryker the project installed, never a transient one ([4beaba2](https://github.com/Disble/dharness/commit/4beaba2f13d44647282e05a9066192a76d189e37))
+* **mutate:** run the Stryker the project installed, never a transient one ([44a8fce](https://github.com/Disble/dharness/commit/44a8fce8f067ffc668a32c24e47bdff15746a997))
+* **mutation:** stop the wrapper and its fixtures from addressing another repository ([055ff96](https://github.com/Disble/dharness/commit/055ff96df81b3074c772e9c120d333736f4e38fc))
+
+
+### Performance Improvements
+
+* **mutation:** let ditto scope the run, and stop merging the ranges flat ([a659721](https://github.com/Disble/dharness/commit/a65972194a5dd8617a9aecad2fbe7e215aa5a6d7))
+
 ## [1.3.0](https://github.com/Disble/dharness/compare/v1.2.0...v1.3.0) (2026-08-13)
 
 
