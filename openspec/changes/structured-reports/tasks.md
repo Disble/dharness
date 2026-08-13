@@ -523,6 +523,74 @@ without an equivalent task.
       "files read this run" exists in the model); both disclosed in
       `writeHeaderBlock`'s own doc comment.
 
+      **Follow-up result, 13 August 2026.** A second measured pass against
+      the same reproduction shape found two more defects in the collision
+      block's value rendering specifically, both in `writeDeclaredSide`
+      (`internal/report/human.go`) — go test and the mutation gate were
+      green with both present, neither caught by the first pass's own
+      acceptance run because that run's fixture never populated a resolved
+      collision value long or distinguishable enough to expose them.
+
+      1. A colliding value's own line was unwrapped: fallow's real
+         `--format json` output for one key measured 345 characters live,
+         the widest line the whole report ever produced, breaking the
+         block's layout. `wrap` — already used for every other long field —
+         was not applied to this one. Fixed by wrapping the value at
+         `wrapWidth`, indented to the same column its own location line
+         starts a value at (`declaredSideIndent`). The realistic case
+         (fallow's JSON is compact, no internal whitespace) meant plain
+         word-wrap could not bound it either — `wrap` gained a
+         `hardSplitOverlongLines` fallback that carves an unbreakable
+         "word" into width-sized pieces once the greedy word-wrap above it
+         has already isolated that word onto a line of its own, so no
+         space is ever fabricated between real words. The `← this one
+         runs` marker is attached to the value's last wrapped line, not
+         printed on a line of its own — width for it is reserved by
+         narrowing the wrap width whenever the mark is present.
+      2. `setup.Collisions` always populates the project side
+         (`Collision.Theirs.Value`) from `fallow config --format json` —
+         the fully resolved config, every default filled in — never the
+         text the project actually wrote. Measured live: dharness's own
+         declared value carried 3 fields; fallow's resolved value for the
+         same key carried 15+. Printed with no distinction, a reader
+         expects the two sides to be directly comparable and cannot find
+         the difference. Fixed by labeling the project side
+         `(fallow-resolved)` on its location line whenever a resolved
+         value is present. Rejected alternative: narrowing the resolved
+         side to only the keys that differ from dharness's own value
+         (mirroring fallow's own `note: hid N clone groups` convention) —
+         more readable, but a second comparison feature with its own
+         logic and tests, not a one-line fix to a value that was already
+         correct, only unlabeled.
+
+      Both pinned with new tests before the fix (RED: a report containing
+      fallow's actual measured 325-character value, asserting no rendered
+      line exceeds `wrapWidth` in runes; RED: the resolved side states
+      "resolved", the declared side never does) and mutation-guarded after
+      (`go run ./tools/mutationstaged` over `internal/report`, staged
+      alone: 21/21 mutants killed, score 1.00 — three survivors from the
+      first pass at this file were each closed with a fixture that
+      actually discriminates the mutant, not merely re-running the
+      existing ones). Re-verified against a rebuilt binary, in a fresh
+      throwaway repository set up exactly as the first pass (`npm i -D
+      fallow`, real v3.15.0 binary, `frontend/.fallowrc.json` declaring
+      `duplicates` with `"mode":"weak"`): the collision block's own lines
+      all measure at or under 70 runes, the project side reads
+      `frontend/.fallowrc.json:1  (fallow-resolved)`, and the `← this one
+      runs` marker stays attached to the value's last line. `--format
+      json` still parses and still agrees with the human view (same
+      `effective`, same `ours`/`theirs` structured values).
+
+      **Disclosed, out of scope.** The same live run measured three more
+      lines over `wrapWidth` (71–73 runes) in the delegated block's `Why`
+      text (`writeDelegatedBlock`, e.g. steps 9–11's rationale) — a
+      structurally identical bug (the caller's own external 3-space prefix
+      is not subtracted from the width passed to `wrap`), but in code this
+      task's assigned scope never touched. Not fixed here; flagged for a
+      follow-up task, since this slice's own rule is that a mismatch found
+      live is a defect, not a note for later, but the team lead's mandate
+      for this pass was the collision block's value rendering specifically.
+
 - [x] **4.1** RED: `internal/setup/setup_test.go` —
       `TestRunReturnsAStepResultForEveryPlanStep`: an 11-step (or stubbed)
       plan mixing satisfied/delegated/applied steps; call `setup.Run(p)`;
