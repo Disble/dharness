@@ -33,6 +33,32 @@ model.** A command whose conclusion has to be read out of its output is broken �
 that is how Stryker exits 0 while reporting survivors. The agent edits; it never
 decides whether something passes.
 
+## The one that costs a whole pass when it is skipped
+
+**Never run `dharness` against this repository, and never trust the suite about
+what the binary prints.** Two rules, one habit.
+
+`sync` installs packages, writes `.dharness/`, edits config files and wires a git
+hook. Pointed here it modifies the tree it was built from, and every later
+`git status`, gate run and golden comparison reads its own leftovers. Build
+outside the repo and run it in a scratch project made for that run:
+
+    go build -o "$SCRATCH/dharness.exe" ./cmd/dharness
+
+The fixture: a tracked `frontend/package.json` and lockfile, `node_modules/` in
+`.gitignore`, and for the collision path, fallow installed locally with a
+`.fallowrc.json` whose `duplicates.mode` is `strict`, `mild`, `weak` or
+`semantic`. Anything else exits fallow 2 and the measured path degrades quietly,
+which looks like a dharness bug and is not one.
+
+And the reason it matters: `structured-reports` shipped four slices at 0.98–1.00
+mutation, gate green throughout, with eleven pieces of the approved report
+missing — including the entire body of the collision block, the thing the change
+existed for. All eleven appeared the moment the binary was built and run. Four
+more followed. **A green suite proves the suite agrees with itself.** When the
+deliverable is output, run it and read it, and put that in the task list rather
+than leaving it to whoever happens to be careful.
+
 ## Before proposing anything structural
 
 `docs/design-principles.md` holds twenty-one numbered principles, each traced to

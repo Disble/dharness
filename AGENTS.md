@@ -49,6 +49,32 @@ Windows-only. A change that cannot be run there is not finished.
 **Errors name the tool and the fix.** A failure that reports a resolved absolute
 path instead of the tool's name turns every message into a small puzzle.
 
+**Never run the dharness binary against this repository. Run it in a throwaway
+project.** `sync` installs packages, writes `.dharness/`, edits the project's own
+config files and wires a git hook. Pointed at this checkout it would modify the
+source tree it was built from, and every subsequent `git status`, gate run and
+golden comparison would be reading its own leftovers. Build to a path outside the
+repository and run it in a scratch git repo created for that run:
+
+    go build -o "$SCRATCH/dharness.exe" ./cmd/dharness
+
+The fixture needs a tracked `frontend/package.json` and lockfile, a `.gitignore`
+holding `node_modules/`, and — whenever the collision path is under test — fallow
+installed locally plus a `.fallowrc.json` whose `duplicates.mode` is one of
+`strict`, `mild`, `weak` or `semantic`. Any other value makes fallow exit 2 and
+the measured path degrades silently, which reads as a dharness defect and is not
+one.
+
+**Observable output is verified by running the binary, not by reading the
+suite.** A green suite proves the suite agrees with itself. For any change whose
+deliverable is what a person or an agent reads, that is not evidence: the
+`structured-reports` change shipped four slices with mutation scores of 0.98 to
+1.00 while the rendered report was missing eleven things its own approved shape
+specified, the whole body of its richest block among them. Every one was found by
+building the binary and looking at the output, and four more followed the same
+way. A slice that changes observable output carries running it as an explicit,
+blocking task — not as a reviewer's optional afterthought.
+
 **`docs/learning-log.md` is this repository's why-log.** It already follows P12
 below — one dated line, newest at the bottom, never rewritten — so P12 is
 covered natively and needs nothing added.
