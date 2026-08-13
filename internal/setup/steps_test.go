@@ -58,61 +58,68 @@ func writeLocalFallowBinary(t *testing.T, source string) {
 }
 
 // TestCollisionNamesEveryContributedKeyTheProjectDeclares pins the widened
-// step's whole contract: every colliding key is named, with the preset's
-// contributed value, and a key the project never declared is never
-// mentioned. entryPoints is a stand-in key for this test only — no real
-// preset contributes it (see CLAUDE.md's own recorded lesson about that
-// key).
-//
-// The project's own declared value is asserted as the honest interim phrase
-// (declaredValueUnknown) rather than the literal fragment it used to show —
-// design.md Decision 5: declaredValue's single-line textual display left the
-// collision path entirely (defect 8), and its real replacement is
-// Collisions/renderCollisions, wired in slice 4.
+// step's whole contract: every colliding key is named, and a key the
+// project never declared is never mentioned. It uses a real preset match
+// (wails) rather than a stub, because design.md Decision 4 wires this slice
+// so describeBoundaries/delegateBoundaries's non-empty branch renders from
+// Collisions(p) — which resolves matches through preset.Resolve(p), not
+// through whatever a caller happens to pass — so a stub matches slice is no
+// longer reachable from that branch at all. entryPointsLikeKey exercises
+// the "never mentioned" half without depending on a second real preset.
 func TestCollisionNamesEveryContributedKeyTheProjectDeclares(t *testing.T) {
 	root := t.TempDir()
-	// The project's own value (dist/**) is deliberately different from the
-	// preset's (wailsjs/**) and from the unrelated stand-in preset's
-	// (src/main.ts), so an assertion that finds one cannot be satisfied by
-	// mistaking it for another — the fixture two identical values would
-	// produce cannot tell collidingKeys/ownedValue apart.
-	writeProjectFallow(t, root, `{"ignorePatterns": ["dist/**"]}`)
-
-	matches := []preset.Match{
-		stubMatch("wails", preset.Root, "ignorePatterns", []string{"wailsjs/**"}, "wails.json"),
-		stubMatch("stub", preset.Root, "entryPoints", []string{"src/main.ts"}, "test stand-in"),
+	if err := os.WriteFile(filepath.Join(root, "wails.json"), []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
 	}
-
-	colliding := collidingKeys(root, matches)
-	if len(colliding) != 1 || colliding[0] != "ignorePatterns" {
-		t.Fatalf("collidingKeys() = %v, want exactly [ignorePatterns]", colliding)
-	}
-
+	writeProjectFallow(t, root, `{"boundaries":{"zones":[]},"ignorePatterns":["dist/**"]}`)
 	p := project.Project{Root: root, Source: root}
 
-	why := delegateBoundaries(p, colliding, matches)
-	if !strings.Contains(why, "ignorePatterns") {
-		t.Errorf("Delegated() why does not name ignorePatterns:\n%s", why)
-	}
-	if !strings.Contains(why, `["wailsjs/**"]`) {
-		t.Errorf("Delegated() why does not show the preset's contributed value:\n%s", why)
-	}
-	if !strings.Contains(why, declaredValueUnknown) {
-		t.Errorf("Delegated() why does not carry the honest interim phrase for the project's own value:\n%s", why)
-	}
-	if strings.Contains(why, "entryPoints") || strings.Contains(why, "src/main.ts") {
-		t.Errorf("Delegated() why mentions entryPoints, which the project never declared:\n%s", why)
+	colliding, _ := boundaryCollision(p)
+	if len(colliding) != 2 {
+		t.Fatalf("boundaryCollision() = %v, want exactly 2 colliding keys (boundaries, ignorePatterns)", colliding)
 	}
 
-	describe := describeBoundaries(p, colliding, matches)
-	if !strings.Contains(describe, `["wailsjs/**"]`) {
-		t.Errorf("Describe() does not show the preset's contributed value:\n%s", describe)
+	rendered := renderCollisions(Collisions(p))
+	why := delegateBoundaries(p, colliding)
+	describe := describeBoundaries(p, colliding)
+
+	if why != rendered {
+		t.Errorf("delegateBoundaries() = %q, want renderCollisions(Collisions(p)) = %q (the report's collision rendering and the delegated reason must not drift apart)", why, rendered)
 	}
-	if !strings.Contains(describe, declaredValueUnknown) {
-		t.Errorf("Describe() does not carry the honest interim phrase for the project's own value:\n%s", describe)
+	if describe != rendered {
+		t.Errorf("describeBoundaries() = %q, want renderCollisions(Collisions(p)) = %q", describe, rendered)
 	}
-	if strings.Contains(describe, "entryPoints") || strings.Contains(describe, "src/main.ts") {
-		t.Errorf("Describe() mentions entryPoints, which the project never declared:\n%s", describe)
+
+	for _, key := range colliding {
+		if !strings.Contains(rendered, key) {
+			t.Errorf("rendered collision prose omits colliding key %q:\n%s", key, rendered)
+		}
+	}
+	if strings.Contains(rendered, "entryPoints") {
+		t.Errorf("rendered collision prose mentions entryPoints, which the project never declared:\n%s", rendered)
+	}
+}
+
+// TestDelegatedCollisionMatchesTheComputedReportValue pins step-delegation's
+// added requirement: boundariesOwnerStep's delegation hands back the same
+// structured Collision value the report is rendered from, not a
+// pre-rendered prose string a second, independent renderer could drift
+// away from. Asserted for a single colliding key — the "boundaries" fixture
+// every other boundariesOwnerStep test already uses, so this test isolates
+// the byte-for-byte equality rather than the multi-key case above.
+func TestDelegatedCollisionMatchesTheComputedReportValue(t *testing.T) {
+	root := t.TempDir()
+	p := project.Project{Root: root, Source: root}
+	writeProjectFallow(t, root, `{"extends":["./.dharness/fallow.jsonc"],"boundaries":{"zones":[]}}`)
+
+	why, ok := (boundariesOwnerStep{}).Delegated(p)
+	if !ok {
+		t.Fatal("Delegated() ok = false; a real collision must delegate")
+	}
+
+	want := renderCollisions(Collisions(p))
+	if why != want {
+		t.Errorf("Delegated() why = %q, want renderCollisions(Collisions(p)) = %q", why, want)
 	}
 }
 
@@ -569,12 +576,12 @@ func TestBoundariesOwnerDescribeAndDelegatedDoNotReadCwdWithoutASource(t *testin
 
 	p := project.Project{Root: t.TempDir()}
 
-	wantDescribe := describeBoundaries(p, nil, nil)
+	wantDescribe := describeBoundaries(p, nil)
 	if got := (boundariesOwnerStep{}).Describe(p); got != wantDescribe {
 		t.Errorf("Describe() = %q, want the no-collision fallback %q — an unrelated config was read from the working directory", got, wantDescribe)
 	}
 
-	wantWhy := delegateBoundaries(p, nil, nil)
+	wantWhy := delegateBoundaries(p, nil)
 	if got, _ := (boundariesOwnerStep{}).Delegated(p); got != wantWhy {
 		t.Errorf("Delegated() = %q, want the no-collision fallback %q — an unrelated config was read from the working directory", got, wantWhy)
 	}

@@ -99,8 +99,11 @@ func WriteHuman(w io.Writer, r Report) error {
 
 	writeSummaryLine(&b, r)
 	writeAppliedBlock(&b, r)
+	writeFailedBlock(&b, r)
+	writeRetractedBlock(&b, r)
 	writeDelegatedBlock(&b, r)
 	writeSatisfiedBlock(&b, r)
+	writeNotReachedBlock(&b, r)
 	writeNotesBlock(&b, r)
 	writeClosingBlock(&b, r)
 
@@ -180,6 +183,65 @@ func writeAppliedBlock(b *strings.Builder, r Report) {
 	b.WriteString("\n")
 }
 
+// writeFailedBlock renders the one step whose Apply failed this run — the
+// step a failure variant's report is built around. Its own row shape mirrors
+// writeAppliedBlock's (it did run, and for as long as it took), with the
+// captured cause printed beneath it when there is one.
+func writeFailedBlock(b *strings.Builder, r Report) {
+	steps := stepsWithStatus(r.Steps, Failed)
+	if len(steps) == 0 {
+		return
+	}
+
+	fmt.Fprintf(b, "%s Failed (%d) %s\n\n", sectionRule, len(steps), sectionRule)
+	rows := make([][]string, len(steps))
+	for i, step := range steps {
+		rows[i] = []string{step.ID, formatMS(step.MS)}
+	}
+	w := widths(rows)
+	for i, row := range rows {
+		fmt.Fprintf(b, " %s %-*s  %s\n", glyphFailed, w[0], row[0], row[1])
+		if steps[i].Error != "" {
+			fmt.Fprintf(b, "         %s\n", steps[i].Error)
+		}
+	}
+	b.WriteString("\n")
+}
+
+// writeRetractedBlock renders every step this run had already applied and
+// reported before a later step failed — the explicit-retraction obligation
+// project-sync's added requirement states: a status already printed is
+// retracted by name here, not merely contradicted by omission (defect 3).
+func writeRetractedBlock(b *strings.Builder, r Report) {
+	steps := stepsWithStatus(r.Steps, Retracted)
+	if len(steps) == 0 {
+		return
+	}
+
+	fmt.Fprintf(b, "%s Retracted (%d) %s\n\n", sectionRule, len(steps), sectionRule)
+	for _, step := range steps {
+		fmt.Fprintf(b, " %s %s   rolled back\n", glyphGutter, step.ID)
+	}
+	b.WriteString("\n")
+}
+
+// writeNotReachedBlock renders every step in Plan() this run never
+// attempted because it stopped on an earlier failure — reported by name,
+// not silently dropped, which is defect 1's ambiguous-absence failure
+// applied to the failure path.
+func writeNotReachedBlock(b *strings.Builder, r Report) {
+	steps := stepsWithStatus(r.Steps, NotReached)
+	if len(steps) == 0 {
+		return
+	}
+
+	fmt.Fprintf(b, "%s Not reached (%d) %s\n\n", sectionRule, len(steps), sectionRule)
+	for _, step := range steps {
+		fmt.Fprintf(b, " %s %s\n", glyphSeparator, step.ID)
+	}
+	b.WriteString("\n")
+}
+
 func writeDelegatedBlock(b *strings.Builder, r Report) {
 	steps := stepsWithStatus(r.Steps, Delegated)
 	if len(steps) == 0 {
@@ -239,14 +301,69 @@ func writeNotesBlock(b *strings.Builder, r Report) {
 	b.WriteString("\n")
 }
 
+// writeClosingBlock ends the report with a block distinct from the summary
+// line at the top, carrying the same counts, the elapsed time and the exit
+// code — plus, on a clean run, a next pointer when work remains, and on a
+// failed run, the explicit retraction project-sync's added requirement
+// states. Evidence measured for this run, when present, is carried in
+// either case: it is not gated on whether anything is left (design.md
+// Decision 8, change #2).
 func writeClosingBlock(b *strings.Builder, r Report) {
 	fmt.Fprintf(b, "%s\n", strings.Repeat(glyphRule, wrapWidth))
-	glyph := glyphApplied
+
 	if r.Summary.Failed > 0 {
-		glyph = glyphFailed
+		writeFailureTally(b, r)
+	} else {
+		writeSuccessTally(b, r)
 	}
+
+	if r.Evidence != nil {
+		fmt.Fprintf(b, "\n  measured  %d test(s) related to %s\n", r.Evidence.RelatedTests, r.Evidence.MeasuredPath)
+	}
+}
+
+func writeSuccessTally(b *strings.Builder, r Report) {
 	fmt.Fprintf(b, "%s %d applied %s %d delegated %s %d satisfied %s %d failed   %s  exit %d\n",
-		glyph, r.Summary.Applied, glyphSeparator, r.Summary.Delegated, glyphSeparator,
+		glyphApplied, r.Summary.Applied, glyphSeparator, r.Summary.Delegated, glyphSeparator,
 		r.Summary.Satisfied, glyphSeparator, r.Summary.Failed,
 		formatMS(r.Summary.MS), r.Exit)
+
+	if next := firstDelegatedID(r.Steps); next != "" {
+		fmt.Fprintf(b, "\n  next  %s\n", next)
+	}
+}
+
+// writeFailureTally renders the failure variant's closing line. It names
+// every retracted step explicitly — a status already printed is retracted
+// by name, not merely contradicted by omission (project-sync's added
+// requirement) — and it never claims more than Writer.Undo actually
+// covers: no directory removal, no "everything restored", only the
+// retraction itself and the measured tally.
+func writeFailureTally(b *strings.Builder, r Report) {
+	retracted := stepsWithStatus(r.Steps, Retracted)
+	names := make([]string, len(retracted))
+	for i, step := range retracted {
+		names[i] = step.ID
+	}
+
+	msg := "rolled back — nothing was applied"
+	if len(names) > 0 {
+		msg += ", including " + strings.Join(names, ", ")
+	}
+	fmt.Fprintf(b, "%s %s   %s  exit %d\n", glyphFailed, msg, formatMS(r.Summary.MS), r.Exit)
+	fmt.Fprintf(b, "\n  %d failed %s %d retracted %s %d not reached\n",
+		r.Summary.Failed, glyphSeparator, r.Summary.Retracted, glyphSeparator, len(stepsWithStatus(r.Steps, NotReached)))
+}
+
+// firstDelegatedID names the first delegated step in plan order, or "" when
+// none remain. The closing block's next pointer, distinct from the earlier
+// per-step "Left to you" detail: a run with delegated work names it again
+// here so the closing tally is a complete answer on its own.
+func firstDelegatedID(steps []StepResult) string {
+	for _, step := range steps {
+		if step.Status == Delegated {
+			return step.ID
+		}
+	}
+	return ""
 }

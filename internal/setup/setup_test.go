@@ -220,6 +220,248 @@ func TestApplyWritesOnlyToTheGivenSink(t *testing.T) {
 	}
 }
 
+// TestRunReturnsAStepResultForEveryPlanStep pins "every step in Plan()
+// carries exactly one status, and none is an ambiguous absence": Run(p),
+// over the real registry, returns one entry per Plan() step and every
+// entry's status is one of the six defined values.
+func TestRunReturnsAStepResultForEveryPlanStep(t *testing.T) {
+	p, _, _ := integrationProject(t)
+	t.Cleanup(runner.SetForTest(func(runner.Command, io.Writer, io.Writer) error { return nil }))
+
+	steps, _, err := Run(p)
+	if err != nil {
+		t.Fatalf("Run() = %v", err)
+	}
+	if len(steps) != len(Plan()) {
+		t.Fatalf("Run() returned %d steps, want %d (len(Plan()))", len(steps), len(Plan()))
+	}
+
+	valid := map[report.Status]bool{
+		report.Applied: true, report.Delegated: true, report.Satisfied: true,
+		report.Failed: true, report.NotReached: true, report.Retracted: true,
+	}
+	for _, step := range steps {
+		if !valid[step.Status] {
+			t.Errorf("step %q has status %q, want one of the six defined values, none empty or unrecognised", step.ID, step.Status)
+		}
+	}
+}
+
+// TestRunReadsNotesBeforeAnyByteChanges pins design.md Decision 8: notes are
+// read first inside Run, before the loop touches anything. A stub step
+// whose Apply writes .fallowrc.json would, if UncheckableConfigNote were
+// evaluated after it ran instead of before, make the blind spot look
+// resolved by the very run that could not see past it.
+func TestRunReadsNotesBeforeAnyByteChanges(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "fallow.toml"), []byte("ignorePatterns = [\"wailsjs/**\"]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p := project.Project{Root: root, Source: root}
+
+	step := stubWriteStep{id: "stub", paths: []string{filepath.Join(root, fallowConfig)}}
+
+	_, notes, err := run([]Step{step}, p)
+	if err != nil {
+		t.Fatalf("run() = %v", err)
+	}
+
+	found := false
+	for _, note := range notes {
+		if note.Kind == "not-checked" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("notes = %+v, want the not-checked note — it must be read before the stub step's Apply wrote .fallowrc.json, not after", notes)
+	}
+}
+
+// stubSatisfiedStep is a minimal Step whose Satisfied always answers true,
+// recording whether Delegated was ever asked of it.
+type stubSatisfiedStep struct {
+	delegatedCalled *bool
+}
+
+func (stubSatisfiedStep) ID() string                      { return "stub satisfied step" }
+func (stubSatisfiedStep) Describe(project.Project) string { return "already done" }
+func (stubSatisfiedStep) Satisfied(project.Project) bool  { return true }
+
+func (s stubSatisfiedStep) Delegated(project.Project) (string, bool) {
+	*s.delegatedCalled = true
+	return "should never be asked", true
+}
+
+func (stubSatisfiedStep) Apply(project.Project, *Writer, io.Writer) (Facts, error) {
+	return Facts{}, nil
+}
+
+// TestRunOrdersSatisfiedBeforeDelegated pins design.md Decision 8, change
+// #1: Satisfied is asked first, and Delegated is never asked of a step that
+// already answers true.
+func TestRunOrdersSatisfiedBeforeDelegated(t *testing.T) {
+	called := false
+	step := stubSatisfiedStep{delegatedCalled: &called}
+
+	steps, _, err := run([]Step{step}, project.Project{})
+	if err != nil {
+		t.Fatalf("run() = %v", err)
+	}
+	if called {
+		t.Error("Delegated() was called on a step Satisfied() already reported true")
+	}
+	if len(steps) != 1 || steps[0].Status != report.Satisfied {
+		t.Errorf("run() = %+v, want exactly one satisfied step", steps)
+	}
+	if steps[0].Evidence != "already done" {
+		t.Errorf("Evidence = %q, want the stub's single-line Describe() text unchanged", steps[0].Evidence)
+	}
+}
+
+// TestFirstLineTakesOnlyTheFirstLine pins the boundary firstLine exists
+// for: a single-line input passes through unchanged, and a multi-line one
+// is cut at its first newline, dropping everything after it.
+func TestFirstLineTakesOnlyTheFirstLine(t *testing.T) {
+	if got := firstLine("one line only"); got != "one line only" {
+		t.Errorf("firstLine(%q) = %q, want the input unchanged", "one line only", got)
+	}
+	if got := firstLine("first\nsecond\nthird"); got != "first" {
+		t.Errorf("firstLine(%q) = %q, want %q", "first\nsecond\nthird", got, "first")
+	}
+}
+
+// TestSatisfiedStepCarriesEvidenceNotBareStatus pins the same requirement's
+// second scenario: a satisfied step's entry names the fact that satisfied
+// it, not merely the status word.
+func TestSatisfiedStepCarriesEvidenceNotBareStatus(t *testing.T) {
+	root := t.TempDir()
+	p := project.Project{Root: root, Source: root}
+	if err := wireFallowExtends(p, &Writer{}); err != nil {
+		t.Fatal(err)
+	}
+	if !(fallowExtendsStep{}).Satisfied(p) {
+		t.Fatal("fixture is not satisfied; fix the test before trusting its assertion")
+	}
+
+	steps, _, err := run([]Step{fallowExtendsStep{}}, p)
+	if err != nil {
+		t.Fatalf("run() = %v", err)
+	}
+	if len(steps) != 1 {
+		t.Fatalf("run() returned %d steps, want 1", len(steps))
+	}
+	if steps[0].Status != report.Satisfied {
+		t.Fatalf("status = %q, want satisfied", steps[0].Status)
+	}
+	if steps[0].Evidence == "" {
+		t.Error("Evidence is empty for a satisfied step, want a status word plus a supporting fact")
+	}
+	if want := firstLine((fallowExtendsStep{}).Describe(p)); steps[0].Evidence != want {
+		t.Errorf("Evidence = %q, want the step's own detection fact %q", steps[0].Evidence, want)
+	}
+}
+
+// TestSatisfiedBoundariesStepNeverReusesTheFallbackFixInstructions pins
+// satisfiedEvidence's own guard: boundariesOwnerStep.Describe's no-collision
+// branch is boundariesFallbackDescribe, a fixed instruction for the
+// unsatisfied case ("move the zones and rules from... or delete the
+// block..."), which must never surface as evidence that the step is
+// already satisfied — that would tell a reader to do something they do not
+// need to do.
+func TestSatisfiedBoundariesStepNeverReusesTheFallbackFixInstructions(t *testing.T) {
+	root := t.TempDir()
+	p := project.Project{Root: root, Source: root}
+	writeProjectFallow(t, root, `{"extends":["./.dharness/fallow.jsonc"]}`)
+
+	if !(boundariesOwnerStep{}).Satisfied(p) {
+		t.Fatal("fixture is not satisfied; fix the test before trusting its assertion")
+	}
+
+	steps, _, err := run([]Step{boundariesOwnerStep{}}, p)
+	if err != nil {
+		t.Fatalf("run() = %v", err)
+	}
+	if len(steps) != 1 || steps[0].Status != report.Satisfied {
+		t.Fatalf("run() = %+v, want exactly one satisfied step", steps)
+	}
+	if strings.Contains(steps[0].Evidence, "Move the zones and rules") {
+		t.Errorf("Evidence = %q, reuses the unsatisfied-case fix instructions as if they were a fact", steps[0].Evidence)
+	}
+	if steps[0].Evidence == "" {
+		t.Error("Evidence is empty for a satisfied step")
+	}
+}
+
+// stubApplyStep is a minimal Step that is never satisfied and never
+// delegated, calling an injected fn so a test can control success or
+// failure at a chosen plan index.
+type stubApplyStep struct {
+	id string
+	fn func(*Writer, io.Writer) (Facts, error)
+}
+
+func (s stubApplyStep) ID() string                             { return s.id }
+func (stubApplyStep) Describe(project.Project) string          { return "" }
+func (stubApplyStep) Satisfied(project.Project) bool           { return false }
+func (stubApplyStep) Delegated(project.Project) (string, bool) { return "", false }
+
+func (s stubApplyStep) Apply(_ project.Project, w *Writer, out io.Writer) (Facts, error) {
+	return s.fn(w, out)
+}
+
+// TestFailureRetractsEarlierStepsAndMarksRemainingNotReached pins the
+// failure-variant requirement's both scenarios together: step 2 fails in an
+// 11-step stub plan, so step 1 (already applied and reported) is retracted
+// rather than left standing as applied, and the nine steps after step 2
+// that this run never attempted are each not-reached — none of them simply
+// absent, and the report's step count still equals the plan's length.
+func TestFailureRetractsEarlierStepsAndMarksRemainingNotReached(t *testing.T) {
+	ok := func(*Writer, io.Writer) (Facts, error) { return Facts{}, nil }
+
+	plan := make([]Step, 11)
+	plan[0] = stubApplyStep{id: "step 1", fn: ok}
+	plan[1] = stubApplyStep{id: "step 2", fn: func(*Writer, io.Writer) (Facts, error) {
+		return Facts{}, errors.New("step 2 broke")
+	}}
+	for i := 2; i < 11; i++ {
+		plan[i] = stubApplyStep{id: fmt.Sprintf("step %d", i+1), fn: ok}
+	}
+
+	steps, notes, err := run(plan, project.Project{})
+	if err == nil {
+		t.Fatal("run() = nil, want the step 2 failure to surface")
+	}
+	if notes != nil {
+		t.Errorf("run() notes = %+v on failure, want nil — the report's narrative is the caller's job, not a second copy here", notes)
+	}
+	if len(steps) != 11 {
+		t.Fatalf("run() returned %d steps, want 11 — the plan's own length, not merely as far as this run reached", len(steps))
+	}
+
+	if steps[0].Status != report.Retracted {
+		t.Errorf("step 1 status = %q, want retracted — it is not left standing as applied once step 2 fails", steps[0].Status)
+	}
+	if steps[1].Status != report.Failed {
+		t.Errorf("step 2 status = %q, want failed", steps[1].Status)
+	}
+	for i := 2; i < 11; i++ {
+		if steps[i].Status != report.NotReached {
+			t.Errorf("step %d status = %q, want not-reached — never attempted, never silently absent", i+1, steps[i].Status)
+		}
+	}
+
+	var retracted []string
+	for _, s := range steps {
+		if s.Status == report.Retracted {
+			retracted = append(retracted, s.ID)
+		}
+	}
+	rollback := report.Rollback{Retracted: retracted}
+	if !slices.Equal(rollback.Retracted, []string{"step 1"}) {
+		t.Errorf("the retracted step names = %v, want [step 1] — what Rollback.Retracted must name", rollback.Retracted)
+	}
+}
+
 func TestInstallStepPlansOnlyMissingIntegrationPackages(t *testing.T) {
 	p, _, _ := integrationProject(t)
 	want := []string{RulesPackage}

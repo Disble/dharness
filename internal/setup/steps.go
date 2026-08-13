@@ -554,18 +554,17 @@ func resolvedConfig(p project.Project) (map[string]json.RawMessage, bool) {
 }
 
 // Collisions computes each colliding key once: the value both the report's
-// collision block and boundariesOwnerStep.Delegated are meant to be
-// rendered from. Exported as a package function rather than reached through
-// the Step interface, matching UncheckableConfigNote/UncertainPresetNote/
-// EslintResidueNote at the same call site (internal/cli/sync.go) — so no
+// collision block and boundariesOwnerStep.Delegated are rendered from.
+// Exported as a package function rather than reached through the Step
+// interface, matching UncheckableConfigNote/UncertainPresetNote/
+// eslintResidue at their own call site (collectNotes, notes.go) — so no
 // requirement about Delegated's (why string, ok bool) contract is reopened
 // and nothing type-asserts on a step.
 //
-// Slice 3 computes this value; describeBoundaries/delegateBoundaries are
-// wired to render from it, replacing their own walk, in slice 4
+// Slice 3 computed this value; describeBoundaries/delegateBoundaries are
+// wired to render from it, replacing their own walk, in this slice
 // (design.md Decision 4's explicit ordering note — landing the two apart
-// would leave a window where a key renders twice). Nothing in the applied
-// product path calls this function yet.
+// would leave a window where a key renders twice).
 func Collisions(p project.Project) []report.Collision {
 	colliding, matches := boundaryCollision(p)
 	if len(colliding) == 0 {
@@ -638,27 +637,22 @@ const boundariesFallbackDescribe = "Move the zones and rules from %s into %s, or
 const boundariesFallbackWhy = "%s declares its own `boundaries`, and fallow's `extends` replaces that key\nrather than merging it — the project's block replaces the one dharness owns\nentirely, without an error. Only one architecture is being enforced, and the\nconfiguration does not say which."
 
 func (boundariesOwnerStep) Describe(p project.Project) string {
-	colliding, matches := boundaryCollision(p)
-	return describeBoundaries(p, colliding, matches)
+	colliding, _ := boundaryCollision(p)
+	return describeBoundaries(p, colliding)
 }
 
 // describeBoundaries and delegateBoundaries build the step's report from an
-// already-computed collision set and match list, split out for the same
-// reason collidingKeys is: the real registry contributes nothing beyond
-// "boundaries" until slice 5, so the multi-key rendering rule is tested
-// against stub matches instead of the real one.
-func describeBoundaries(p project.Project, colliding []string, matches []preset.Match) string {
+// already-computed collision set. The empty-intersection fallback stays a
+// fixed pair of constants (Decision 6, guarded by
+// TestBoundariesFallbackConstantsStayByteIdentical); the non-empty case
+// renders from Collisions(p) — the same computed value the report carries
+// on StepResult.Collisions (design.md Decision 4) — rather than walking the
+// colliding keys a second time.
+func describeBoundaries(p project.Project, colliding []string) string {
 	if len(colliding) == 0 {
 		return fmt.Sprintf(boundariesFallbackDescribe, fallowConfig, filepath.ToSlash(filepath.Join(project.Dir, ownedFallow)))
 	}
-
-	var b strings.Builder
-	b.WriteString("Move each of these into the file dharness owns, or delete the project's own\nand keep dharness's. Either is a valid answer per key; having both is not,\nbecause fallow's `extends` replaces a key rather than merging it and the\nfile gives no sign of which value runs.\n")
-	for _, key := range colliding {
-		fmt.Fprintf(&b, "\n`%s` — dharness: %s\n%s declares: %s\n",
-			key, ownedValue(key, matches), fallowConfig, declaredValueUnknown)
-	}
-	return b.String()
+	return renderCollisions(Collisions(p))
 }
 
 // Delegated always returns ok == true where the step is unsatisfied: two
@@ -667,20 +661,37 @@ func describeBoundaries(p project.Project, colliding []string, matches []preset.
 // values per colliding key, not only the key, so the agent does not have to
 // open two files before deciding.
 func (boundariesOwnerStep) Delegated(p project.Project) (string, bool) {
-	colliding, matches := boundaryCollision(p)
-	return delegateBoundaries(p, colliding, matches), true
+	colliding, _ := boundaryCollision(p)
+	return delegateBoundaries(p, colliding), true
 }
 
-func delegateBoundaries(p project.Project, colliding []string, matches []preset.Match) string {
+func delegateBoundaries(p project.Project, colliding []string) string {
 	if len(colliding) == 0 {
 		return fmt.Sprintf(boundariesFallbackWhy, fallowConfig)
 	}
+	return renderCollisions(Collisions(p))
+}
+
+// renderCollisions is the only place a Collision becomes prose (design.md
+// Decision 4). Delegated calls it, through delegateBoundaries; the report's
+// own WriteHuman/WriteJSON render StepResult.Collisions directly and never
+// call it, so one colliding key has exactly one prose form and one
+// structured form — never two independently-walked renderers that could
+// drift apart (defects 6, 7).
+func renderCollisions(cs []report.Collision) string {
+	keys := make([]string, len(cs))
+	for i, c := range cs {
+		keys[i] = c.Key
+	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s declares its own value for %s, and fallow's `extends` replaces each of\nthose keys rather than merging it — the project's value replaces dharness's\nentirely, without an error. Only one value per key is being enforced, and\nthe configuration does not say which:\n", fallowConfig, quotedKeys(colliding))
-	for _, key := range colliding {
-		fmt.Fprintf(&b, "\n`%s` — dharness: %s; %s: %s",
-			key, ownedValue(key, matches), fallowConfig, declaredValueUnknown)
+	fmt.Fprintf(&b, "%s declares its own value for %s, and fallow's `extends` replaces each of\nthose keys rather than merging it — the project's value replaces dharness's\nentirely, without an error. Only one value per key is being enforced, and\nthe configuration does not say which:\n", fallowConfig, quotedKeys(keys))
+	for _, c := range cs {
+		theirs := declaredValueUnknown
+		if c.Theirs.Value != nil {
+			theirs = string(*c.Theirs.Value)
+		}
+		fmt.Fprintf(&b, "\n`%s` — dharness: %s; %s: %s", c.Key, string(*c.Ours.Value), fallowConfig, theirs)
 	}
 	return b.String()
 }
@@ -734,12 +745,12 @@ func uncertainNotes(matches []preset.Match) string {
 	return strings.Join(notes, "\n\n")
 }
 
-// EslintResidueNote reports the six dharness/* severities and the
-// RulesPackage plugin declaration a repository adopted before this change
-// still carries in doctor.config.json, left behind by the mechanism this
-// version retires (design decision 8) — or "" when there is nothing to
-// report, which is every project adopted under this version and any older
-// one hand-cleaned.
+// eslintResidue reports the six dharness/* severities and the RulesPackage
+// plugin declaration a repository adopted before this change still carries
+// in doctor.config.json, left behind by the mechanism this version retires
+// (design decision 8) — entries found, the path they were found in, and why
+// they are inert, or (nil, "", "") when there is nothing to report, which is
+// every project adopted under this version and any older one hand-cleaned.
 //
 // It is a note beside the plan, not a step, for UncheckableConfigNote's exact
 // reason: dharness cannot tell its own earlier write apart from a value the
@@ -747,25 +758,22 @@ func uncertainNotes(matches []preset.Match) string {
 // project can reach that clears it — and a step with no completion state is
 // not pending work. Unlike UncheckableConfigNote's blind spot, this is not an
 // unknown: dharness can read the file fine and knows exactly what it holds,
-// so it names what it found rather than saying the answer is unknown.
-func EslintResidueNote(p project.Project) string {
+// so it reports the found entries as structured data (report.Note.Entries)
+// rather than folding them into the reason's prose a second time.
+func eslintResidue(p project.Project) (entries []string, path string, reason string) {
 	if !p.HasSource() {
-		return ""
+		return nil, "", ""
 	}
 
-	path := filepath.Join(p.Source, "doctor.config.json")
+	path = filepath.Join(p.Source, "doctor.config.json")
 	candidates := append([]string{RulesPackage}, RuleIDs()...)
 	found := declaredKeys(path, candidates)
 	if len(found) == 0 {
-		return ""
+		return nil, "", ""
 	}
 
-	// One per line rather than joined: the list is as long as the project's
-	// residue, and a sentence that grows with it stops being readable at the
-	// width the rest of this output is written to (§16).
-	return fmt.Sprintf(
-		"doctor.config.json still declares these, left behind by the mechanism\nthis version retires:\n\n    %s\n\ndharness does not edit or delete them — it cannot tell its own earlier\nwrite apart from a value the project set into the same file afterwards\n(§05) — and they are inert now: the gate's react-doctor invocation runs\nwith `--staged`, and a plugin's rules do not fire under that flag\n(measured against react-doctor 0.5.7).",
-		strings.Join(found, "\n    "))
+	reason = "dharness does not edit or delete them — it cannot tell its own earlier\nwrite apart from a value the project set into the same file afterwards\n(§05) — and they are inert now: the gate's react-doctor invocation runs\nwith `--staged`, and a plugin's rules do not fire under that flag\n(measured against react-doctor 0.5.7)."
+	return found, path, reason
 }
 
 // ownedValue names what dharness itself would write for key: the
@@ -786,15 +794,13 @@ func ownedValue(key string, matches []preset.Match) string {
 	return "its preset default"
 }
 
-// declaredValueUnknown is what describeBoundaries/delegateBoundaries show
-// for the project's own side of a collision, in place of the single-line
-// textual fragment ("\"duplicates\": {") declaredValue used to show — defect
-// 8, and the reason declaredValue leaves the collision path entirely
-// (design.md Decision 5). The real fix, showing the value fallow actually
-// resolves, arrives with Collisions/renderCollisions in slice 4
-// (design.md Decision 4's explicit ordering note); until then this constant
-// is the honest interim answer — the same generic phrase declaredValue's own
-// no-match branch already used, now the only branch.
+// declaredValueUnknown is renderCollisions's fallback for a colliding key
+// whose project-declared value fallow could not resolve (no local binary,
+// a failed probe, or the key absent from what --format json returned) — the
+// honest "could not be shown" answer the "reported whole or not at all"
+// requirement asks for, never the truncated textual fragment
+// ("\"duplicates\": {") declaredValue used to show before design.md
+// Decision 5 removed it from the collision path entirely (defect 8).
 const declaredValueUnknown = "a value of its own"
 
 // quotedKeys renders a list of keys the way this file already names fallow

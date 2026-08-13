@@ -103,10 +103,3 @@ func noSourceMessage(p project.Project) string {
 		p.Root,
 	)
 }
-
-func orNotDetected(value string) string {
-	if value == "" {
-		return "not detected"
-	}
-	return value
-}

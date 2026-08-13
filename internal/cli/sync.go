@@ -3,8 +3,11 @@ package cli
 import (
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/Disble/dharness/internal/project"
+	"github.com/Disble/dharness/internal/report"
+	"github.com/Disble/dharness/internal/runner"
 	"github.com/Disble/dharness/internal/setup"
 )
 
@@ -16,13 +19,22 @@ import (
 // at any time and useful long after adoption: a hook rewritten, a package
 // removed, a runner swapped, a `boundaries` block written by hand — each one
 // makes its step reappear or disappear on its own.
+//
+// setup.Run builds one report.Report — the single analysis both the human
+// view and --format json render (design.md Decision 8). Neither writer
+// reads the repository a second time or recomputes anything; the flag only
+// picks which of the two already-built renderings reaches stdout.
 func RunSync(args []string, stdout io.Writer) error {
 	flags := newFlagSet("sync", stdout, "Set this project up: apply what dharness can, then hand the rest to the\nagent. Derived from the repository as it is right now, so re-running it is\nsafe and reports drift.")
+	format := flags.String("format", "human", "output format: human or json")
 	if err := parseFlags(flags, args); err != nil {
 		return err
 	}
 	if helpRequested(args) {
 		return nil
+	}
+	if *format != "human" && *format != "json" {
+		return fmt.Errorf("unknown --format %q; expected human or json", *format)
 	}
 
 	dir, err := workingDirectory()
@@ -40,111 +52,74 @@ func RunSync(args []string, stdout io.Writer) error {
 				"nothing to commit .dharness/ to. Run it from inside a repository.",
 			dir)
 	}
-
-	fmt.Fprintf(stdout, "# dharness in %s\n\n", p.Root)
 	if !p.HasSource() {
 		fmt.Fprintln(stdout, noSourceMessage(p))
 		return nil
 	}
-	if rel := p.SourceRel(); rel != "" {
-		fmt.Fprintf(stdout, "JS project: %s/ — the repository root keeps the hook.\n", rel)
+
+	start := time.Now()
+	steps, notes, runErr := setup.Run(p)
+	ms := time.Since(start).Milliseconds()
+
+	rpt := report.Report{
+		Root:    p.Root,
+		Source:  p.SourceRel(),
+		Summary: summarizeSteps(steps, ms),
+		Steps:   steps,
+		Notes:   notes,
+		Exit:    runner.ExitCode(runErr),
 	}
-	fmt.Fprintf(stdout, "Package manager: %s. Test runner: %s.\n\n", orNotDetected(p.PackageManager), orNotDetected(p.TestRunner))
+	if measured := p.ReadEvidence().ScopedMutation; measured != nil {
+		rpt.Evidence = &report.Evidence{RelatedTests: measured.RelatedTests, MeasuredPath: measured.MeasuredPath}
+	}
+	if retracted := retractedStepNames(steps); len(retracted) > 0 {
+		rpt.Rollback = &report.Rollback{Retracted: retracted}
+	}
 
-	// Read before applying, because it is a property of the repository as
-	// found. Adoption writes a .fallowrc.json of its own, which would make the
-	// blind spot look like it had been resolved by the very run that could not
-	// see past it.
-	uncheckable := setup.UncheckableConfigNote(p)
-
-	// Same reasoning, for a matched preset that could not read its own
-	// configuration: it still contributed a default (see Match.Uncertain), so
-	// this is what it guessed from, not a step nothing can clear.
-	uncertain := setup.UncertainPresetNote(p)
-
-	// Read before applying for the same reason as uncheckable above, though
-	// nothing here writes doctor.config.json any more: consistency, not a
-	// dependency. A repository adopted before this version may still carry
-	// six dharness/* severities and RulesPackage in that file, which dharness
-	// leaves exactly as found (§05) but does not stay quiet about.
-	residue := setup.EslintResidueNote(p)
-
-	if pending := setup.Pending(p); hasApplicable(pending, p) {
-		fmt.Fprintln(stdout, "Applying:")
-		if err := setup.Apply(p, stdout); err != nil {
+	if *format == "json" {
+		if err := report.WriteJSON(stdout, rpt); err != nil {
 			return err
 		}
-		fmt.Fprintln(stdout)
+	} else if err := report.WriteHuman(stdout, rpt); err != nil {
+		return err
 	}
 
-	// What is left after applying is what no command performs here. It is
-	// listed with the reason, because "ask a person" without a reason is a
-	// shrug. Nothing is printed for a step that is now satisfied (§15): the
-	// loop reads setup.Pending(p) again, which excludes it on its own.
-	//
-	// The terminal answer is decided here rather than before applying, because
-	// what a re-run wants to know is what is still outstanding, not what was
-	// outstanding a moment ago. installStep is never satisfied in a JS project
-	// — it defers to the package manager instead of guessing — so a check made
-	// before applying would never find a project with nothing pending.
-	left := 0
-	for _, step := range setup.Pending(p) {
-		why, ok := step.Delegated(p)
-		if !ok {
-			continue
-		}
-		left++
-		fmt.Fprintf(stdout, "## Left to you: %s\n\n", step.ID())
-		fmt.Fprintf(stdout, "dharness cannot run this: %s\n\n%s\n\n", why, step.Describe(p))
-	}
-
-	// Printed beside the plan rather than in it. A config dharness cannot read
-	// textually is a blind spot with no resolution the project can reach, so
-	// it is not pending work — but staying quiet about it would report a check
-	// that never ran as a check that passed.
-	if uncheckable != "" {
-		fmt.Fprintf(stdout, "## Not checked\n\n%s\n\n", uncheckable)
-	}
-
-	// A separate heading, not a second "Not checked", because it answers a
-	// different question. The block above says a check did not run; this one
-	// says a check did run and used a documented default because the project's
-	// own answer could not be read. Two sections sharing one title read as one
-	// section repeated.
-	if uncertain != "" {
-		fmt.Fprintf(stdout, "## Assumed\n\n%s\n\n", uncertain)
-	}
-
-	// A third heading, because this is neither of the other two: "Not
-	// checked" says a check did not run, and "Assumed" says a check ran on a
-	// default because the project's own answer could not be read. This one
-	// says the opposite of both — dharness read the file just fine and knows
-	// exactly what is in it. It is not pending work either (§15): there is no
-	// state the project reaches that clears it, since dharness will never
-	// remove what it finds.
-	if residue != "" {
-		fmt.Fprintf(stdout, "## Residue\n\n%s\n\n", residue)
-	}
-
-	if left == 0 {
-		fmt.Fprintln(stdout, "Nothing to do: everything this project needs is in place.")
-		if measured := p.ReadEvidence().ScopedMutation; measured != nil {
-			fmt.Fprintf(stdout, "Scoped mutation ran %d test(s) for %s when it was measured.\n",
-				measured.RelatedTests, measured.MeasuredPath)
-		}
-	}
-
-	return nil
+	return runErr
 }
 
-// hasApplicable reports whether at least one pending step is dharness's to
-// run. Without this check the "Applying:" header would print ahead of a run
-// where every pending step is delegated, claiming work that never happens.
-func hasApplicable(pending []setup.Step, p project.Project) bool {
-	for _, step := range pending {
-		if _, ok := step.Delegated(p); !ok {
-			return true
+// summarizeSteps counts steps by status — the same counts both renderings
+// read from Report.Summary, computed once here rather than by either
+// writer (design.md Property 2: the verdict, and every count that feeds
+// it, is assigned, never recomputed downstream).
+func summarizeSteps(steps []report.StepResult, ms int64) report.Summary {
+	s := report.Summary{Steps: len(steps), MS: ms}
+	for _, step := range steps {
+		switch step.Status {
+		case report.Applied:
+			s.Applied++
+		case report.Delegated:
+			s.Delegated++
+		case report.Satisfied:
+			s.Satisfied++
+		case report.Failed:
+			s.Failed++
+		case report.Retracted:
+			s.Retracted++
 		}
 	}
-	return false
+	return s
+}
+
+// retractedStepNames names every step setup.Run marked retracted, which is
+// what Report.Rollback is built from — the explicit-retraction obligation
+// project-sync's added requirement states, carried by the report rather
+// than by the error a second time (design.md Decision 8, change #3).
+func retractedStepNames(steps []report.StepResult) []string {
+	var names []string
+	for _, step := range steps {
+		if step.Status == report.Retracted {
+			names = append(names, step.ID)
+		}
+	}
+	return names
 }

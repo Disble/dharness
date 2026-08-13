@@ -319,6 +319,109 @@ func TestWriteHumanOmitsEmptyBlockHeadings(t *testing.T) {
 	}
 }
 
+// TestWhyAndCollisionsAreMutuallyExclusiveInRendering pins design.md
+// Decision 4's "seam that makes a second renderer impossible, rather than
+// absent": a StepResult carrying both a non-empty Why and a non-empty
+// Collisions slice — an adversarial value no production caller in this
+// package builds, but the renderer must still be correct against it — must
+// render the collision block and never the Why text. A mutant collapsing
+// this to "always print Why" dies here.
+func TestWhyAndCollisionsAreMutuallyExclusiveInRendering(t *testing.T) {
+	r := Report{
+		Steps: []StepResult{
+			{
+				ID:         "resolve the keys this project and dharness both declare",
+				Status:     Delegated,
+				Why:        "this prose must never reach the output",
+				Collisions: []Collision{{Key: "duplicates"}},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := WriteHuman(&buf, r); err != nil {
+		t.Fatalf("WriteHuman() = %v", err)
+	}
+	out := buf.String()
+
+	if !strings.Contains(out, "duplicates") {
+		t.Errorf("output missing the collision block:\n%s", out)
+	}
+	if strings.Contains(out, r.Steps[0].Why) {
+		t.Errorf("output renders Why even though Collisions is non-empty; the two must be mutually exclusive:\n%s", out)
+	}
+}
+
+// TestFailureVariantRendersEveryNonTerminalStatus pins the six-value status
+// enumeration's failure-variant scenarios together: a report whose steps
+// carry failed, retracted and not-reached is rendered with one line per
+// step, the retracted step is named in the closing block as included in
+// the rollback, and the tally sums to the plan's length.
+func TestFailureVariantRendersEveryNonTerminalStatus(t *testing.T) {
+	r := Report{
+		Summary: Summary{Steps: 4, Failed: 1, Retracted: 1},
+		Steps: []StepResult{
+			{N: 1, ID: "install what this project is missing", Status: Retracted},
+			{N: 2, ID: "write the files dharness owns", Status: Failed, Error: "permission denied"},
+			{N: 3, ID: "point .fallowrc.json at the file dharness owns", Status: NotReached},
+			{N: 4, ID: "wire the gate into git", Status: NotReached},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := WriteHuman(&buf, r); err != nil {
+		t.Fatalf("WriteHuman() = %v", err)
+	}
+	out := buf.String()
+
+	for _, step := range r.Steps {
+		if !strings.Contains(out, step.ID) {
+			t.Errorf("output missing step %q, want every non-terminal status rendered with its own line:\n%s", step.ID, out)
+		}
+	}
+
+	ruleAt := strings.LastIndex(out, strings.Repeat(glyphRule, wrapWidth))
+	if ruleAt < 0 {
+		t.Fatalf("closing separator not found in output:\n%s", out)
+	}
+	closing := out[ruleAt:]
+	if !strings.Contains(closing, r.Steps[0].ID) {
+		t.Errorf("closing block does not name the retracted step as included in the rollback:\n%s", closing)
+	}
+
+	tally := r.Summary.Failed + r.Summary.Retracted + len(stepsWithStatus(r.Steps, NotReached))
+	if tally != len(r.Steps) {
+		t.Errorf("tally = %d, want it to sum to the plan's length %d", tally, len(r.Steps))
+	}
+}
+
+// TestClosingBlockNamesTheDelegatedStepAsNext pins "a run with delegated
+// work names a next step": the closing block adds its own mention of the
+// delegated step's identifier, distinct from the earlier per-step "Left to
+// you" detail already asserted elsewhere.
+func TestClosingBlockNamesTheDelegatedStepAsNext(t *testing.T) {
+	r := Report{
+		Steps: []StepResult{
+			{ID: "resolve the keys this project and dharness both declare", Status: Delegated, Why: "two owners"},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := WriteHuman(&buf, r); err != nil {
+		t.Fatalf("WriteHuman() = %v", err)
+	}
+	out := buf.String()
+
+	ruleAt := strings.LastIndex(out, strings.Repeat(glyphRule, wrapWidth))
+	if ruleAt < 0 {
+		t.Fatalf("closing separator not found in output:\n%s", out)
+	}
+	closing := out[ruleAt:]
+	if !strings.Contains(closing, r.Steps[0].ID) {
+		t.Errorf("closing block does not name the delegated step as next:\n%s", closing)
+	}
+}
+
 // TestWriteClosingBlockGlyphReflectsFailure pins the closing block's glyph
 // choice to the actual failure count, not a hardcoded success mark: a run
 // with a failed step must not close on the same glyph as a clean run.
