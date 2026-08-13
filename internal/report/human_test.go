@@ -403,7 +403,14 @@ func TestWriteHumanCollisionValueWrapsWithinReportWidth(t *testing.T) {
 	if n := utf8.RuneCountInString(string(theirs)); n <= wrapWidth {
 		t.Fatalf("fixture sanity check failed: value is %d runes, want more than wrapWidth (%d)", n, wrapWidth)
 	}
-	ours := jsonRaw(`{"minOccurrences":3,"mode":"semantic","threshold":3}`)
+	// dharness's own side is deliberately left unmeasured, so narrowing
+	// cannot apply and this value reaches the renderer whole. Narrowing
+	// (narrowToDifferences) would legitimately drop most of these keys —
+	// they are fallow's defaults — and this test is not about that: it is
+	// about a long value being bounded by the width and surviving the
+	// wrap intact. Those are separate rules and they get separate
+	// fixtures, so neither can silently start passing because the other
+	// changed.
 	r := Report{
 		Steps: []StepResult{
 			{
@@ -412,7 +419,7 @@ func TestWriteHumanCollisionValueWrapsWithinReportWidth(t *testing.T) {
 				Collisions: []Collision{{
 					ID:     "sync:collision/duplicates",
 					Key:    "duplicates",
-					Ours:   Declared{Path: ".dharness/fallow.jsonc", Line: 4, Value: &ours},
+					Ours:   Declared{Path: ".dharness/fallow.jsonc", Line: 4},
 					Theirs: Declared{Path: "frontend/.fallowrc.json", Line: 2, Value: &theirs},
 				}},
 			},
@@ -444,7 +451,10 @@ func TestWriteHumanCollisionValueWrapsWithinReportWidth(t *testing.T) {
 // wrapWidth with the mark appended, not only without it.
 func TestEffectiveMarkStaysAttachedWhenTheValueWraps(t *testing.T) {
 	theirs := jsonRaw(`{"enabled":true,"mode":"weak","near":false,"minTokens":50,"minLines":5,"minOccurrences":2,"threshold":5.0,"ignore":[],"ignoredClones":[],"ignoreDefaults":true,"skipLocal":false,"crossLanguage":false,"ignoreImports":true,"normalization":{},"minCorpusSizeForShingleFilter":1024,"minCorpusSizeForTokenCache":5000}`)
-	ours := jsonRaw(`{"minOccurrences":3,"mode":"semantic","threshold":3}`)
+	// Left unmeasured on dharness's side on purpose, so narrowing cannot
+	// apply and the mark has a genuinely long, whole value to stay
+	// attached to. Which keys narrowing keeps is a different rule with
+	// its own test.
 	effective := "theirs"
 	r := Report{
 		Steps: []StepResult{
@@ -454,7 +464,7 @@ func TestEffectiveMarkStaysAttachedWhenTheValueWraps(t *testing.T) {
 				Collisions: []Collision{{
 					ID:        "sync:collision/duplicates",
 					Key:       "duplicates",
-					Ours:      Declared{Path: ".dharness/fallow.jsonc", Value: &ours},
+					Ours:      Declared{Path: ".dharness/fallow.jsonc"},
 					Theirs:    Declared{Path: "frontend/.fallowrc.json", Value: &theirs},
 					Effective: &effective,
 				}},
@@ -1733,5 +1743,261 @@ func TestWriteHumanWrappedContinuationLinesCarryTheConfiguredIndent(t *testing.T
 					delta, first, second, wrapped)
 			}
 		})
+	}
+}
+
+// TestWriteHumanCollisionNarrowsToDifferingKeys pins the one thing the
+// collision block exists to do: let a reader see how the two values differ.
+//
+// Measured against a real project, dharness's side carried 3 keys and
+// fallow's resolved side carried 15, twelve of which were identical
+// defaults. Printed whole, the difference — one key, one word — was buried
+// in nine wrapped lines of JSON split mid-token. The keys that agree carry
+// no information for a decision about the keys that do not.
+func TestWriteHumanCollisionNarrowsToDifferingKeys(t *testing.T) {
+	ours := jsonRaw(`{"mode":"semantic","minOccurrences":3,"threshold":3}`)
+	theirs := jsonRaw(`{"mode":"weak","minOccurrences":3,"threshold":3,"near":false}`)
+	r := Report{
+		Steps: []StepResult{{
+			ID:     "resolve the keys this project and dharness both declare",
+			Status: Delegated,
+			Collisions: []Collision{{
+				ID:     "sync:collision/duplicates",
+				Key:    "duplicates",
+				Ours:   Declared{Path: ".dharness/fallow.jsonc", Value: &ours},
+				Theirs: Declared{Path: "frontend/.fallowrc.json", Value: &theirs},
+			}},
+		}},
+	}
+
+	var buf bytes.Buffer
+	if err := WriteHuman(&buf, r); err != nil {
+		t.Fatalf("WriteHuman() = %v", err)
+	}
+	out := buf.String()
+
+	// The key that disagrees survives, with both of its values.
+	for _, want := range []string{`"mode"`, `"semantic"`, `"weak"`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output dropped %s, which is what the reader has to decide about:\n%s", want, out)
+		}
+	}
+
+	// Keys that agree are gone from both sides, and so is a key only the
+	// resolved side carries: `near` is one of fallow's own defaults, not
+	// something the project chose and not something dharness disagrees
+	// with. Counting it as a difference is what made the first version of
+	// this rule fall back to the whole value on the very case it was
+	// written for — measured live, dharness declared 3 keys against
+	// fallow's 16, and all three shared keys differed, so "differs on
+	// both sides" alone hid nothing at all.
+	for _, gone := range []string{"minOccurrences", "threshold", "near"} {
+		if strings.Contains(out, gone) {
+			t.Errorf("output still carries %q, which carries no decision:\n%s", gone, out)
+		}
+	}
+
+	// And it says how many it left out, rather than silently shortening.
+	if !strings.Contains(out, "3 identical") {
+		t.Errorf("output hides 3 keys without saying so:\n%s", out)
+	}
+}
+
+// TestWriteHumanCollisionKeepsWholeValuesWhenItCannotNarrowHonestly pins the
+// fallback. Narrowing is only meaningful between two JSON objects; a side
+// that was never measured, or that is not an object, has no keys to compare,
+// and shortening the other side against nothing would hide information while
+// claiming a comparison happened.
+func TestWriteHumanCollisionKeepsWholeValuesWhenItCannotNarrowHonestly(t *testing.T) {
+	cases := map[string]struct{ ours, theirs *json.RawMessage }{
+		"the project's side was never measured": {ptrRaw(`{"mode":"semantic","threshold":3}`), nil},
+		"dharness's side was never measured":    {nil, ptrRaw(`{"mode":"weak","threshold":3}`)},
+		"a side is not an object":               {ptrRaw(`{"mode":"semantic","threshold":3}`), ptrRaw(`"weak"`)},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			r := Report{Steps: []StepResult{{
+				ID:     "resolve the keys this project and dharness both declare",
+				Status: Delegated,
+				Collisions: []Collision{{
+					ID:     "sync:collision/duplicates",
+					Key:    "duplicates",
+					Ours:   Declared{Path: ".dharness/fallow.jsonc", Value: tc.ours},
+					Theirs: Declared{Path: "frontend/.fallowrc.json", Value: tc.theirs},
+				}},
+			}}}
+
+			var buf bytes.Buffer
+			if err := WriteHuman(&buf, r); err != nil {
+				t.Fatalf("WriteHuman() = %v", err)
+			}
+			out := buf.String()
+
+			// The measured side keeps every key it arrived with.
+			if tc.ours != nil && !strings.Contains(out, "threshold") {
+				t.Errorf("a value that could not be compared was shortened anyway:\n%s", out)
+			}
+			if strings.Contains(out, "hidden") {
+				t.Errorf("claimed it hid keys when it never compared two objects:\n%s", out)
+			}
+		})
+	}
+}
+
+// TestWriteHumanCollisionSaysNothingWhenNoKeyIsIdentical pins the other edge
+// of the same rule: the note reports work that happened, so two objects that
+// share no identical key must not carry a note saying zero were hidden.
+func TestWriteHumanCollisionSaysNothingWhenNoKeyIsIdentical(t *testing.T) {
+	ours := jsonRaw(`{"mode":"semantic"}`)
+	theirs := jsonRaw(`{"mode":"weak"}`)
+	r := Report{Steps: []StepResult{{
+		ID:     "resolve the keys this project and dharness both declare",
+		Status: Delegated,
+		Collisions: []Collision{{
+			ID:     "sync:collision/duplicates",
+			Key:    "duplicates",
+			Ours:   Declared{Path: ".dharness/fallow.jsonc", Value: &ours},
+			Theirs: Declared{Path: "frontend/.fallowrc.json", Value: &theirs},
+		}},
+	}}}
+
+	var buf bytes.Buffer
+	if err := WriteHuman(&buf, r); err != nil {
+		t.Fatalf("WriteHuman() = %v", err)
+	}
+	if out := buf.String(); strings.Contains(out, "hidden") {
+		t.Errorf("printed a hidden-key note when nothing was hidden:\n%s", out)
+	}
+}
+
+// ptrRaw is jsonRaw's addressable form, for table cases that need a nil side.
+func ptrRaw(s string) *json.RawMessage {
+	raw := jsonRaw(s)
+	return &raw
+}
+
+// TestWriteHumanDelegatedWhyStaysWithinReportWidth pins the width of the
+// delegated block's reason text, which nothing pinned before.
+//
+// Found live, not by the suite: three delegated steps rendered lines of 71
+// to 73 runes in a report whose every other block holds 70. The cause was
+// that wrap was handed the full width while the caller then added its own
+// three-space prefix, so the bound was applied to the text and not to the
+// line that reaches the reader. The suite was green throughout, because no
+// test measured this block's lines at all.
+func TestWriteHumanDelegatedWhyStaysWithinReportWidth(t *testing.T) {
+	// A real reason, long enough to wrap several times: this is
+	// hookInstallStep's own text, the step whose rendering was measured
+	// over width.
+	why := "nothing answers: there is no lefthook config, no .husky/ and no " +
+		"lefthook binary. Choosing a hook manager is a decision this project " +
+		"has not made, and not a default dharness gets to pick."
+
+	r := Report{
+		Summary: Summary{Steps: 1, Delegated: 1},
+		Steps: []StepResult{{
+			N: 1, ID: "wire the gate into git", Status: Delegated, Why: why,
+		}},
+	}
+
+	var buf bytes.Buffer
+	if err := WriteHuman(&buf, r); err != nil {
+		t.Fatalf("WriteHuman() = %v", err)
+	}
+	out := buf.String()
+
+	for _, line := range strings.Split(out, "\n") {
+		if n := utf8.RuneCountInString(line); n > wrapWidth {
+			t.Errorf("delegated reason line exceeds the report width of %d runes (%d): %q", wrapWidth, n, line)
+		}
+	}
+
+	// The bound must come from wrapping, never from dropping text: every
+	// word of the reason has to survive somewhere in the block.
+	for _, word := range strings.Fields(why) {
+		if !strings.Contains(out, word) {
+			t.Errorf("wrapping the reason lost %q:\n%s", word, out)
+		}
+	}
+}
+
+// TestWriteHumanCollisionKeyOrderIsStableAcrossRuns pins determinism.
+// narrowToDifferences walks two Go maps, and Go randomises map iteration
+// order deliberately, so without an explicit sort the same collision would
+// render its keys in a different order on every run — a report that cannot
+// be diffed against itself, and a golden that could never be frozen.
+// Rendering the same report many times must produce one answer.
+func TestWriteHumanCollisionKeyOrderIsStableAcrossRuns(t *testing.T) {
+	ours := jsonRaw(`{"alpha":1,"beta":2,"gamma":3,"delta":4,"epsilon":5,"same":0}`)
+	theirs := jsonRaw(`{"alpha":9,"beta":8,"gamma":7,"delta":6,"epsilon":5,"same":0}`)
+	r := Report{Steps: []StepResult{{
+		ID:     "resolve the keys this project and dharness both declare",
+		Status: Delegated,
+		Collisions: []Collision{{
+			ID:     "sync:collision/duplicates",
+			Key:    "duplicates",
+			Ours:   Declared{Path: ".dharness/fallow.jsonc", Value: &ours},
+			Theirs: Declared{Path: "frontend/.fallowrc.json", Value: &theirs},
+		}},
+	}}}
+
+	render := func() string {
+		var buf bytes.Buffer
+		if err := WriteHuman(&buf, r); err != nil {
+			t.Fatalf("WriteHuman() = %v", err)
+		}
+		return buf.String()
+	}
+
+	first := render()
+	for i := 0; i < 24; i++ {
+		if got := render(); got != first {
+			t.Fatalf("render %d differs from the first — key order is not deterministic:\n%s\n---\n%s", i, first, got)
+			return
+		}
+	}
+
+	// And the order is the sorted one, not merely a stable accident.
+	alpha := strings.Index(first, `"alpha"`)
+	beta := strings.Index(first, `"beta"`)
+	gamma := strings.Index(first, `"gamma"`)
+	if alpha < 0 || beta < 0 || gamma < 0 || !(alpha < beta && beta < gamma) {
+		t.Errorf("differing keys are not rendered in sorted order (alpha=%d beta=%d gamma=%d):\n%s", alpha, beta, gamma, first)
+	}
+}
+
+// TestWriteHumanCollisionComparesValuesNotTheirFormatting pins that two
+// sides are compared as JSON rather than as text. dharness writes its own
+// files indented; fallow's `--format json` is compact with no internal
+// whitespace at all. The same value from those two sources differs byte for
+// byte and agrees completely, and a text comparison would report every key
+// as a disagreement — the report would then show fifteen "differences" and
+// hide none of them.
+func TestWriteHumanCollisionComparesValuesNotTheirFormatting(t *testing.T) {
+	ours := jsonRaw(`{ "mode" : "semantic" , "threshold" : 3 }`)
+	theirs := jsonRaw(`{"mode":"weak","threshold":3}`)
+	r := Report{Steps: []StepResult{{
+		ID:     "resolve the keys this project and dharness both declare",
+		Status: Delegated,
+		Collisions: []Collision{{
+			ID:     "sync:collision/duplicates",
+			Key:    "duplicates",
+			Ours:   Declared{Path: ".dharness/fallow.jsonc", Value: &ours},
+			Theirs: Declared{Path: "frontend/.fallowrc.json", Value: &theirs},
+		}},
+	}}}
+
+	var buf bytes.Buffer
+	if err := WriteHuman(&buf, r); err != nil {
+		t.Fatalf("WriteHuman() = %v", err)
+	}
+	out := buf.String()
+
+	if strings.Contains(out, "threshold") {
+		t.Errorf("threshold is 3 on both sides and differs only in spacing, so it carries no decision:\n%s", out)
+	}
+	if !strings.Contains(out, "1 identical") {
+		t.Errorf("the whitespace-only difference was not recognised as agreement:\n%s", out)
 	}
 }

@@ -1,8 +1,11 @@
 package report
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"unicode/utf8"
 )
@@ -365,7 +368,13 @@ func writeDelegatedBlock(b *strings.Builder, r Report) {
 				writeCollision(b, collision)
 			}
 		case step.Why != "":
-			for _, line := range wrap(step.Why, wrapWidth, 3) {
+			// The 3 subtracted here is the same 3 the Fprintf below adds:
+			// wrap is asked for the width that is actually left once this
+			// block's own prefix is accounted for. Passing wrapWidth whole
+			// and then prefixing produced lines of wrapWidth+3 — measured
+			// live at 71 to 73 runes across three delegated steps, in a
+			// report whose every other block holds 70.
+			for _, line := range wrap(step.Why, wrapWidth-3, 3) {
 				fmt.Fprintf(b, "   %s\n", line)
 			}
 		}
@@ -388,8 +397,13 @@ const collisionValueUnavailable = "could not be shown"
 func writeCollision(b *strings.Builder, c Collision) {
 	fmt.Fprintf(b, "\n   `%s` has two owners        id  %s\n\n", c.Key, c.ID)
 
-	writeDeclaredSide(b, "dharness", c.Ours, effectiveMark(c, "ours"), false)
-	writeDeclaredSide(b, "project", c.Theirs, effectiveMark(c, "theirs"), true)
+	ours, theirs, hidden := narrowToDifferences(c.Ours.Value, c.Theirs.Value)
+	writeDeclaredSide(b, "dharness", c.Ours, ours, effectiveMark(c, "ours"), false)
+	writeDeclaredSide(b, "project", c.Theirs, theirs, effectiveMark(c, "theirs"), true)
+	if hidden > 0 {
+		fmt.Fprintf(b, "%snote: %d identical key(s) hidden\n",
+			strings.Repeat(" ", declaredSideIndent), hidden)
+	}
 	b.WriteString("\n")
 
 	if len(c.Resolutions) > 0 {
@@ -442,7 +456,7 @@ const resolvedNote = "  (fallow-resolved)"
 // fallow's measured, fully resolved config rather than declared text) and
 // its value, or collisionValueUnavailable when it could not be measured,
 // plus mark when a measurement says this is the side that runs.
-func writeDeclaredSide(b *strings.Builder, label string, d Declared, mark string, resolved bool) {
+func writeDeclaredSide(b *strings.Builder, label string, d Declared, value, mark string, resolved bool) {
 	location := d.Path
 	if d.Line > 0 {
 		location = fmt.Sprintf("%s:%d", d.Path, d.Line)
@@ -452,11 +466,6 @@ func writeDeclaredSide(b *strings.Builder, label string, d Declared, mark string
 		note = resolvedNote
 	}
 	fmt.Fprintf(b, "     %-8s  %s%s\n", label, location, note)
-
-	value := collisionValueUnavailable
-	if d.Value != nil {
-		value = string(*d.Value)
-	}
 
 	// A colliding value can be hundreds of characters long — fallow's own
 	// resolved config for one key measured 345 characters live against a
@@ -491,6 +500,105 @@ func writeDeclaredSide(b *strings.Builder, label string, d Declared, mark string
 		}
 		fmt.Fprintf(b, "%s%s%s\n", valueIndent, line, suffix)
 	}
+}
+
+// narrowToDifferences renders each side of a collision carrying only the
+// keys the two sides disagree on, and reports how many identical keys it
+// left out. It falls back to the whole value — returning 0 hidden — for
+// anything it cannot narrow honestly: a side that was never measured, a
+// value that is not a JSON object, or two objects that share no key at all.
+//
+// This is what the block is for. Measured against a real project,
+// dharness's side carried 3 keys and fallow's resolved side carried 15,
+// twelve of them identical defaults; the single word that differed was
+// buried in nine wrapped lines. The keys that agree carry no information
+// for a decision about the keys that do not, and hiding them is the same
+// move fallow makes in its own dupes report (`note: hid 8 clone groups
+// below minOccurrences=3`) — shorten, then say what was shortened.
+//
+// Only the human view narrows. The JSON twin keeps both values whole,
+// because a machine reading `theirs` wants the value that runs, not a
+// diff computed for a person.
+func narrowToDifferences(ours, theirs *json.RawMessage) (string, string, int) {
+	whole := func(raw *json.RawMessage) string {
+		if raw == nil {
+			return collisionValueUnavailable
+		}
+		return string(*raw)
+	}
+
+	o, oOK := objectFields(ours)
+	t, tOK := objectFields(theirs)
+	if !oOK || !tOK {
+		return whole(ours), whole(theirs), 0
+	}
+
+	var keys []string
+	for key := range o {
+		keys = append(keys, key)
+	}
+	for key := range t {
+		if _, both := o[key]; !both {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+
+	var keptOurs, keptTheirs []string
+	hidden := 0
+	for _, key := range keys {
+		ov, inOurs := o[key]
+		tv, inTheirs := t[key]
+		if inOurs && inTheirs && ov == tv {
+			hidden++
+			continue
+		}
+		// A key only the resolved side carries is one of fallow's own
+		// defaults, not something the project chose and not something
+		// dharness disagrees with. Measured live: dharness declared 3
+		// keys, fallow's resolved value carried 15, and the 12 extras
+		// were every default fallow fills in. Counting them as
+		// differences is what made the first narrowing rule fall back to
+		// the whole value on the one case it was written for.
+		if !inOurs {
+			hidden++
+			continue
+		}
+		if inOurs {
+			keptOurs = append(keptOurs, fmt.Sprintf("%q:%s", key, ov))
+		}
+		if inTheirs {
+			keptTheirs = append(keptTheirs, fmt.Sprintf("%q:%s", key, tv))
+		}
+	}
+	if hidden == 0 {
+		return whole(ours), whole(theirs), 0
+	}
+	return "{" + strings.Join(keptOurs, ",") + "}",
+		"{" + strings.Join(keptTheirs, ",") + "}",
+		hidden
+}
+
+// objectFields decodes one side into its top-level keys with each value
+// left as the text it arrived as, so two sides are compared as JSON rather
+// than as Go values dharness does not own the types for.
+func objectFields(raw *json.RawMessage) (map[string]string, bool) {
+	if raw == nil {
+		return nil, false
+	}
+	var decoded map[string]json.RawMessage
+	if err := json.Unmarshal(*raw, &decoded); err != nil {
+		return nil, false
+	}
+	fields := map[string]string{}
+	for key, value := range decoded {
+		var buf bytes.Buffer
+		if err := json.Compact(&buf, value); err != nil {
+			return nil, false
+		}
+		fields[key] = buf.String()
+	}
+	return fields, true
 }
 
 // effectiveMark names which side a measurement says actually runs, or ""
