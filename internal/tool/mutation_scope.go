@@ -2,7 +2,6 @@ package tool
 
 import (
 	"io"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -70,13 +69,24 @@ func (s MutationScope) Argument() string {
 	return s.Path + ":" + strconv.Itoa(s.Start) + "-" + strconv.Itoa(s.End)
 }
 
+// slashed normalises a path for comparison, and deliberately does not use
+// filepath.ToSlash.
+//
+// ToSlash is a no-op wherever the separator is already "/", so on Linux a
+// backslash path stays a backslash path and silently matches nothing — which
+// here means "no survivors", a false pass, the exact failure this file exists
+// to remove. Caught by CI on ubuntu after passing on Windows.
+func slashed(path string) string {
+	return strings.ReplaceAll(path, `\`, "/")
+}
+
 // covers reports whether a survivor belongs to what this argument asked about.
 //
 // Columns are deliberately ignored. They narrow which mutants Stryker creates,
 // and a mutant it never created cannot survive; carrying the distinction into
 // the verdict would add arithmetic that no measurement asked for.
 func (s MutationScope) covers(file string, line int) bool {
-	if filepath.ToSlash(s.Path) != filepath.ToSlash(file) {
+	if slashed(s.Path) != slashed(file) {
 		return false
 	}
 	if s.Start == 0 && s.End == 0 {
