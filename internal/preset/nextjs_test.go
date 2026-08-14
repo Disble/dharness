@@ -61,12 +61,72 @@ func TestNextjsContributesNoIgnorePatterns(t *testing.T) {
 
 // TestNextjsContributesESLintConfigLayer pins the requirement's own
 // scenario ("a Next.js project's owned config layers the framework's own
-// package first"): eslint-config-next, namespaced under "dharnessNext" so
-// it cannot collide with a project's own "import next from ...", verified
-// against Next.js's own ESLint documentation rather than invented.
+// package first"): the framework's own recommended flat config first, then
+// react-doctor's Next.js preset, each namespaced so neither can collide with
+// a project's own import of the same package, verified against Next.js's and
+// react-doctor's own documentation rather than invented.
+//
+// The specifier is the core-web-vitals subpath, which is what Next.js calls
+// "Recommended for most projects" — the bare package this preset used to
+// contribute is the weaker base config.
 func TestNextjsContributesESLintConfigLayer(t *testing.T) {
 	assertLayerContribution(t, nextjs{}.Detect,
-		`{"dependencies":{"next":"^14.0.0"}}`, "eslint-config-next", "dharnessNext")
+		`{"dependencies":{"next":"^14.0.0"}}`, []wantLayer{
+			{pkg: "eslint-config-next/core-web-vitals", binding: "dharnessNext", spread: true},
+			{pkg: "eslint-plugin-react-doctor", binding: "dharnessReactDoctor", accessor: []string{"configs", "recommended"}},
+			{pkg: "eslint-plugin-react-doctor", binding: "dharnessReactDoctor", accessor: []string{"configs", "next"}},
+		})
+}
+
+// TestNextjsAddsTheTypeScriptConfigOnlyForATypeScriptProject pins the one
+// conditional layer in the registry. Next.js documents
+// eslint-config-next/typescript as a companion "for TypeScript projects", so
+// contributing it to a JavaScript one would add rules the framework does not
+// ask for — and a tsconfig.json is the direct signal for that question.
+func TestNextjsAddsTheTypeScriptConfigOnlyForATypeScriptProject(t *testing.T) {
+	root := t.TempDir()
+	writeWailsFixtureFile(t, root, "package.json", `{"dependencies":{"next":"^14.0.0"}}`)
+
+	match, _ := nextjs{}.Detect(project.At(root, root))
+	for _, layer := range match.Manifest.Layers {
+		if layer.Package == "eslint-config-next/typescript" {
+			t.Fatal("nextjs contributed the TypeScript config to a project with no tsconfig.json")
+		}
+	}
+
+	writeWailsFixtureFile(t, root, "tsconfig.json", `{"compilerOptions":{"strict":true}}`)
+
+	match, _ = nextjs{}.Detect(project.At(root, root))
+	var found bool
+	for _, layer := range match.Manifest.Layers {
+		if layer.Package == "eslint-config-next/typescript" {
+			found = true
+			if !layer.Spread {
+				t.Error("the TypeScript config is an array Next.js's own example spreads; Spread = false")
+			}
+		}
+	}
+	if !found {
+		t.Errorf("Manifest.Layers = %+v, want the TypeScript config once tsconfig.json exists", match.Manifest.Layers)
+	}
+	if err := match.Manifest.Validate(); err != nil {
+		t.Errorf("manifest fails Validate(): %v", err)
+	}
+}
+
+// TestNextjsTypeScriptLayerInstallsTheBasePackage pins the split subpaths
+// force: three distinct import specifiers, one package name to install.
+func TestNextjsTypeScriptLayerInstallsTheBasePackage(t *testing.T) {
+	root := t.TempDir()
+	writeWailsFixtureFile(t, root, "package.json", `{"dependencies":{"next":"^14.0.0"}}`)
+	writeWailsFixtureFile(t, root, "tsconfig.json", `{}`)
+
+	match, _ := nextjs{}.Detect(project.At(root, root))
+	for _, layer := range match.Manifest.Layers {
+		if strings.HasPrefix(layer.Package, "eslint-config-next") && layer.InstallName() != "eslint-config-next" {
+			t.Errorf("Layer{Package: %q}.InstallName() = %q, want %q", layer.Package, layer.InstallName(), "eslint-config-next")
+		}
+	}
 }
 
 // TestNextjsSeedsNameStructureNotZones pins §21's framing: a seed offers

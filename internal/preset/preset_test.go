@@ -2,6 +2,7 @@ package preset
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Disble/dharness/internal/project"
@@ -24,9 +25,14 @@ func TestMatchCarriesUncertain(t *testing.T) {
 	}
 }
 
+// TestSchemaConstant pins the manifest shape presets contribute. v2 is the
+// first bump: Layer gained Accessor and Spread, because the forms the
+// frameworks actually document are not all "default export, spread" —
+// eslint-config-expo/flat is a single object and eslint-plugin-react-doctor's
+// presets are read off `configs`.
 func TestSchemaConstant(t *testing.T) {
-	if Schema != "dharness.preset/v1" {
-		t.Errorf("Schema = %q, want %q", Schema, "dharness.preset/v1")
+	if Schema != "dharness.preset/v2" {
+		t.Errorf("Schema = %q, want %q", Schema, "dharness.preset/v2")
 	}
 }
 
@@ -306,30 +312,102 @@ func TestLayerValidateRequiresEvidence(t *testing.T) {
 	}
 }
 
-// TestNoBindingIsContributedTwice is TestNoScalarKeyIsContributedTwice's
-// (internal/setup/owned_test.go) counterpart for Layer.Binding: unlike a
-// scalar Fact, no rule picks a winner when two matches contribute the same
-// binding — the design's argument is that the collision is unreachable with
-// today's registry (nextjs and expo contribute one each, under different
-// bindings), and this test is what keeps that true rather than assumed. A
-// future fifth preset that collides here must fail loudly instead of
-// silently emitting a duplicate `const` into the generated import region.
-func TestNoBindingIsContributedTwice(t *testing.T) {
+// TestNoBindingNamesTwoPackages is TestNoScalarKeyIsContributedTwice's
+// (internal/setup/owned_test.go) counterpart for Layer.Binding: no rule picks
+// a winner when two matches bind one identifier to two different packages,
+// and the generated import region would emit two import declarations under
+// one identifier — a SyntaxError.
+//
+// A binding repeating for the *same* package is a different case and is
+// legal: eslint-plugin-react-doctor is one module every framework preset
+// reads a different preset off, so nextjs and expo both name
+// dharnessReactDoctor. The import region dedupes it to one declaration
+// (eslintImportRegion) while each layer keeps its own expression. The rule
+// this test pins is therefore Binding -> Package being a function, not
+// Binding being unique.
+func TestNoBindingNamesTwoPackages(t *testing.T) {
 	root := t.TempDir()
 	writeWailsFixtureFile(t, root, "package.json", `{"dependencies":{"next":"^14.0.0","expo":"~51.0.0"}}`)
 
 	matches := Resolve(project.At(root, root))
 	layers := Layers(matches)
-	if len(layers) != 2 {
-		t.Fatalf("Layers() = %+v, want exactly the nextjs and expo layers", layers)
+	if len(layers) == 0 {
+		t.Fatal("Layers() returned nothing to check")
 	}
 
 	seen := map[string]string{}
 	for _, layer := range layers {
-		if owner, ok := seen[layer.Binding]; ok {
-			t.Fatalf("Layers() contributed binding %q twice, from %q and %q — a future preset must degrade visibly instead", layer.Binding, owner, layer.Package)
+		if pkg, ok := seen[layer.Binding]; ok && pkg != layer.Package {
+			t.Fatalf("Layers() bound %q to both %q and %q — two import declarations under one identifier is a SyntaxError", layer.Binding, pkg, layer.Package)
 		}
 		seen[layer.Binding] = layer.Package
+	}
+}
+
+// TestLayerValidateRejectsAnEmptyAccessorSegment pins the one authoring bug
+// an accessor can carry that the renderer cannot recover from: a segment
+// that names no property renders `x.` or `x[""]`, neither of which reads the
+// preset the layer meant to name.
+func TestLayerValidateRejectsAnEmptyAccessorSegment(t *testing.T) {
+	m := Manifest{Schema: Schema, Layers: []Layer{{
+		Package:  "eslint-plugin-react-doctor",
+		Binding:  "dharnessReactDoctor",
+		Accessor: []string{"configs", ""},
+		Because:  "test",
+	}}}
+	if err := m.Validate(); err == nil {
+		t.Error("Validate() = nil for an accessor with an empty segment, want an error")
+	}
+}
+
+// TestLayerAccessorWithNonIdentifierSegmentValidates triangulates the rule
+// above. "react-native" is not a JavaScript identifier and must still be
+// accepted: the renderer subscripts it (configs["react-native"]) rather than
+// dotting it, which is exactly the spelling react-doctor's own documentation
+// uses. Rejecting it would refuse the preset Expo projects need.
+func TestLayerAccessorWithNonIdentifierSegmentValidates(t *testing.T) {
+	m := Manifest{Schema: Schema, Layers: []Layer{{
+		Package:  "eslint-plugin-react-doctor",
+		Binding:  "dharnessReactDoctor",
+		Accessor: []string{"configs", "react-native"},
+		Because:  "test",
+	}}}
+	if err := m.Validate(); err != nil {
+		t.Errorf("Validate() = %v for a hyphenated accessor segment, want nil", err)
+	}
+}
+
+// TestInstallNameStripsTheSubpath pins the split every framework flat config
+// forced: ESLint imports "eslint-config-next/core-web-vitals" and npm
+// installs "eslint-config-next". Installing the specifier verbatim asks the
+// registry for a package that does not exist.
+func TestInstallNameStripsTheSubpath(t *testing.T) {
+	cases := []struct {
+		name, pkg, want string
+	}{
+		{"unscoped subpath", "eslint-config-next/core-web-vitals", "eslint-config-next"},
+		{"unscoped deep subpath", "eslint-config-expo/flat/extra", "eslint-config-expo"},
+		{"unscoped bare", "eslint-plugin-react-doctor", "eslint-plugin-react-doctor"},
+		{"scoped subpath", "@org/eslint-config/flat", "@org/eslint-config"},
+		{"scoped bare", "@org/eslint-config", "@org/eslint-config"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := (Layer{Package: c.pkg}).InstallName(); got != c.want {
+				t.Errorf("Layer{Package: %q}.InstallName() = %q, want %q", c.pkg, got, c.want)
+			}
+		})
+	}
+}
+
+// TestInstallNameOfALoneScopeIsUnchanged pins the boundary the scoped branch
+// draws. "@org" alone is not a package name npm would accept, but splitting
+// it into a two-segment name is not something this function can invent
+// either — it returns what it was given so the malformed name reaches the
+// registry error rather than being silently reshaped into a different one.
+func TestInstallNameOfALoneScopeIsUnchanged(t *testing.T) {
+	if got := (Layer{Package: "@org"}).InstallName(); got != "@org" {
+		t.Errorf("InstallName() = %q, want %q unchanged", got, "@org")
 	}
 }
 
@@ -342,34 +420,57 @@ func containsKey(keys []string, want string) bool {
 	return false
 }
 
+// wantLayer is the shape assertLayerContribution compares against: every
+// field that reaches generated JavaScript. Because is checked for being
+// non-empty rather than for its text, which is prose that will be re-quoted
+// whenever the upstream page is re-read.
+type wantLayer struct {
+	pkg      string
+	binding  string
+	accessor []string
+	spread   bool
+}
+
 // assertLayerContribution pins the whole Layer contract for one framework
-// preset: exactly one layer, the package it names, the namespaced binding,
-// a non-empty Because, and a manifest that validates.
+// preset: the exact ordered list of layers, each one's package, binding,
+// accessor and spread, a non-empty Because on all of them, and a manifest
+// that validates.
 //
-// The two framework presets differ by a dependency, a package and a binding
-// and by nothing else, so writing the assertions out twice meant a rule
-// tightened in one could silently not apply to the other.
-func assertLayerContribution(t *testing.T, detect func(project.Project) (Match, bool), dependency, wantPackage, wantBinding string) {
+// The framework presets differ by a dependency and by their layer list and
+// by nothing else, so writing the assertions out per preset meant a rule
+// tightened in one could silently not apply to the other. Order is asserted
+// because flat config resolves rules last-wins: the sequence is a decision,
+// not a listing.
+func assertLayerContribution(t *testing.T, detect func(project.Project) (Match, bool), dependency string, want []wantLayer) {
 	t.Helper()
 
 	root := t.TempDir()
 	writeWailsFixtureFile(t, root, "package.json", dependency)
 
 	match, _ := detect(project.At(root, root))
-	if len(match.Manifest.Layers) != 1 {
-		t.Fatalf("Manifest.Layers = %+v, want exactly one contributed layer", match.Manifest.Layers)
+	if len(match.Manifest.Layers) != len(want) {
+		t.Fatalf("Manifest.Layers = %+v, want %d layers", match.Manifest.Layers, len(want))
 	}
 
-	layer := match.Manifest.Layers[0]
-	if layer.Package != wantPackage {
-		t.Errorf("Layer.Package = %q, want %q", layer.Package, wantPackage)
+	for i, w := range want {
+		layer := match.Manifest.Layers[i]
+		if layer.Package != w.pkg {
+			t.Errorf("Layers[%d].Package = %q, want %q", i, layer.Package, w.pkg)
+		}
+		if layer.Binding != w.binding {
+			t.Errorf("Layers[%d].Binding = %q, want the namespaced %q", i, layer.Binding, w.binding)
+		}
+		if strings.Join(layer.Accessor, ".") != strings.Join(w.accessor, ".") {
+			t.Errorf("Layers[%d].Accessor = %q, want %q", i, layer.Accessor, w.accessor)
+		}
+		if layer.Spread != w.spread {
+			t.Errorf("Layers[%d].Spread = %v, want %v", i, layer.Spread, w.spread)
+		}
+		if layer.Because == "" {
+			t.Errorf("Layers[%d].Because is empty, want a checkable observable", i)
+		}
 	}
-	if layer.Binding != wantBinding {
-		t.Errorf("Layer.Binding = %q, want the namespaced %q", layer.Binding, wantBinding)
-	}
-	if layer.Because == "" {
-		t.Error("Layer.Because is empty, want a checkable observable")
-	}
+
 	if err := match.Manifest.Validate(); err != nil {
 		t.Errorf("manifest fails Validate(): %v", err)
 	}

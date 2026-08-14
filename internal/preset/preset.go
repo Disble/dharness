@@ -28,7 +28,15 @@ import (
 // Schema versions the manifest shape a preset contributes. It is checked by
 // Manifest.Validate, not by a run: a schema mismatch is an authoring bug,
 // caught by the registry test that walks every preset before it ships.
-const Schema = "dharness.preset/v1"
+//
+// v2 bumped it. v1's Layer could express exactly one form — a default export
+// spread into the config array — and that turned out to be the minority of
+// what the frameworks document about themselves: eslint-config-expo/flat is
+// a single config object included directly, and eslint-plugin-react-doctor's
+// presets are read off a `configs` property. Layer gained Accessor and
+// Spread rather than the presets rendering their own JavaScript, which would
+// have moved code generation into the package that holds no writer.
+const Schema = "dharness.preset/v2"
 
 // Scope says which of project.Project's two directories a preset's signal
 // lives in. It is answered before Detect so a Source-scope preset is never
@@ -132,10 +140,56 @@ type Layer struct {
 	// import into a file the project also writes imports into, and two
 	// import declarations binding one identifier in an ES module are a
 	// SyntaxError.
+	//
+	// Two layers may share a Binding only when they share a Package: one
+	// module, one import declaration, several presets read off it. Binding
+	// is therefore a function of Package, not a unique key.
 	Binding string
+
+	// Accessor is the property path the config sits at inside the imported
+	// module, or nil when the module's own default export is the config.
+	// {"configs", "next"} renders as `.configs.next`; a segment that is not
+	// a JavaScript identifier is subscripted instead, so {"configs",
+	// "react-native"} renders as `.configs["react-native"]` — the spelling
+	// react-doctor's own documentation uses.
+	//
+	// It is a path rather than a string of JavaScript because this package
+	// holds no JS syntax: the segments are names, and internal/setup decides
+	// how to spell them.
+	Accessor []string
+
+	// Spread reports whether the value is a config array, which flat config
+	// requires spread into the exported array, or a single config object,
+	// which is included as-is.
+	//
+	// There is no safe default. eslint-config-next/core-web-vitals is an
+	// array and eslint-config-expo/flat is one object; each framework
+	// documents its own answer and the preset carries it rather than the
+	// renderer guessing from a shape it cannot see at build time.
+	Spread bool
 
 	// Because names the observable, exactly as Fact.Because does.
 	Because string
+}
+
+// InstallName is the package to install for this layer: Package with any
+// subpath removed. The two diverge because the frameworks publish their flat
+// configs behind subpath exports — "eslint-config-next/core-web-vitals" is
+// what ESLint imports and "eslint-config-next" is what npm installs — and a
+// preset that carried both as separate fields could state them inconsistently.
+//
+// The split follows npm's own package-name rule rather than one dharness
+// invented (§09): a scoped name keeps two segments, an unscoped name keeps
+// one, and everything after that is the subpath.
+func (l Layer) InstallName() string {
+	segments := strings.Split(l.Package, "/")
+	if strings.HasPrefix(l.Package, "@") {
+		if len(segments) < 2 {
+			return l.Package
+		}
+		return segments[0] + "/" + segments[1]
+	}
+	return segments[0]
 }
 
 // Manifest is an ordered set of facts, seeds and layers. A slice, not a map:
@@ -217,6 +271,11 @@ func (m Manifest) Validate() error {
 		}
 		if !strings.HasPrefix(layer.Binding, dharnessBindingPrefix) {
 			return fmt.Errorf("layer binding %q is not namespaced to dharness — two import declarations under one identifier in an ES module is a SyntaxError", layer.Binding)
+		}
+		for i, segment := range layer.Accessor {
+			if segment == "" {
+				return fmt.Errorf("layer %q's accessor segment %d is empty; it names no property", layer.Package, i)
+			}
 		}
 	}
 	return nil

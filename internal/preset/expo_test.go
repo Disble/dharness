@@ -46,13 +46,36 @@ func TestExpoNoMatchWithoutDependency(t *testing.T) {
 }
 
 // TestExpoContributesESLintConfigLayer is TestNextjsContributesESLintConfigLayer's
-// counterpart for Expo: eslint-config-expo, namespaced under "dharnessExpo",
-// verified against Expo's own "Using ESLint" guide rather than invented —
-// unlike Facts and Seeds, this is a checkable observable this change could
-// verify, so it ships even though expo otherwise stays detection-only.
+// counterpart for Expo: eslint-config-expo/flat then react-doctor's
+// react-native preset, both namespaced, verified against Expo's own "Using
+// ESLint" guide and react-doctor's plugin page rather than invented — unlike
+// Facts and Seeds, these are checkable observables, so they ship even though
+// expo otherwise stays detection-only.
+//
+// Neither is spread. Expo's own example includes eslint-config-expo/flat
+// directly because it is one config object, and react-doctor's presets are
+// single objects too. Spreading either is a TypeError at ESLint startup, not
+// a Go failure, which is why the sandbox run is what proves this.
 func TestExpoContributesESLintConfigLayer(t *testing.T) {
 	assertLayerContribution(t, expo{}.Detect,
-		`{"dependencies":{"expo":"~51.0.0"}}`, "eslint-config-expo", "dharnessExpo")
+		`{"dependencies":{"expo":"~51.0.0"}}`, []wantLayer{
+			{pkg: "eslint-config-expo/flat", binding: "dharnessExpo"},
+			{pkg: "eslint-plugin-react-doctor", binding: "dharnessReactDoctor", accessor: []string{"configs", "recommended"}},
+			{pkg: "eslint-plugin-react-doctor", binding: "dharnessReactDoctor", accessor: []string{"configs", "react-native"}},
+		})
+}
+
+// TestExpoLayerInstallsTheBasePackage is the subpath split over Expo's own
+// specifier: ESLint imports eslint-config-expo/flat, npm installs
+// eslint-config-expo.
+func TestExpoLayerInstallsTheBasePackage(t *testing.T) {
+	root := t.TempDir()
+	writeWailsFixtureFile(t, root, "package.json", `{"dependencies":{"expo":"~51.0.0"}}`)
+
+	match, _ := expo{}.Detect(project.At(root, root))
+	if got := match.Manifest.Layers[0].InstallName(); got != "eslint-config-expo" {
+		t.Errorf("InstallName() = %q, want %q", got, "eslint-config-expo")
+	}
 }
 
 func TestExpoManifestValidates(t *testing.T) {

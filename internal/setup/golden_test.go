@@ -66,6 +66,7 @@ func TestFrameworkGoldens(t *testing.T) {
 		{"wails", wailsProject},
 		{"nextjs", nextjsProject},
 		{"expo", expoProject},
+		{"expo-commonjs", expoCommonJSProject},
 		{"wails-nextjs", wailsNextjsProject},
 	}
 
@@ -303,6 +304,40 @@ func expoProject(t *testing.T) project.Project {
 	root := t.TempDir()
 	writeGoldenFixtureFile(t, root, "package.json", "{\n  \"name\": \"expo-app\",\n  \"dependencies\": {\n    \"expo\": \"~51.0.0\"\n  }\n}\n")
 	writeGoldenFixtureFile(t, root, "package-lock.json", "{\n  \"lockfileVersion\": 3\n}\n")
+
+	p := project.At(root, root)
+	p.InRepository = true
+	return p
+}
+
+// expoCommonJSProject is expoProject with the eslint.config.js `npx expo
+// lint` actually generates already in place — CommonJS, defineConfig
+// required rather than imported, module.exports rather than export default.
+//
+// It is a separate golden because it pins a different half of the mechanism:
+// expoProject has no config at all and takes the write-if-absent path, which
+// always renders ESM. This one takes the splice path over a dialect dharness
+// does not choose, so the golden holds the require() declarations, the
+// module.exports factory and the interop helper that only appear there.
+//
+// Before CommonJS support this project delegated with "no default export
+// found" — an Expo project, one of the two frameworks with a preset, never
+// got its layer wired at all.
+func expoCommonJSProject(t *testing.T) project.Project {
+	t.Helper()
+	root := t.TempDir()
+	writeGoldenFixtureFile(t, root, "package.json", "{\n  \"name\": \"expo-app\",\n  \"dependencies\": {\n    \"expo\": \"~51.0.0\"\n  }\n}\n")
+	writeGoldenFixtureFile(t, root, "package-lock.json", "{\n  \"lockfileVersion\": 3\n}\n")
+	writeGoldenFixtureFile(t, root, "eslint.config.js",
+		"const { defineConfig } = require('eslint/config');\n"+
+			"const expoConfig = require('eslint-config-expo/flat');\n"+
+			"\n"+
+			"module.exports = defineConfig([\n"+
+			"  expoConfig,\n"+
+			"  {\n"+
+			"    ignores: ['dist/*'],\n"+
+			"  },\n"+
+			"]);\n")
 
 	p := project.At(root, root)
 	p.InRepository = true

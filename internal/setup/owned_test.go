@@ -354,7 +354,7 @@ func TestApplyWritesTheOwnedEslintConfigAndDeclaresItShared(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Apply() did not write %s: %v", ownedEslint, err)
 	}
-	if want := ownedEslintConfig(p, preset.Layers(preset.Resolve(p))); string(raw) != want {
+	if want := ownedEslintConfig(p, preset.Layers(preset.Resolve(p)), projectEslintModule(p)); string(raw) != want {
 		t.Errorf("Apply() wrote %q, want %q", raw, want)
 	}
 

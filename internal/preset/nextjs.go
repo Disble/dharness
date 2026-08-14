@@ -23,10 +23,47 @@ const nextjsDocs = "https://nextjs.org/docs/app/getting-started/project-structur
 // `eslint-config-next`", the package this preset contributes.
 const nextjsESLintDocs = "https://nextjs.org/docs/app/api-reference/config/eslint"
 
-// eslintConfigNextPackage is what nextjsESLintDocs names — published and
-// versioned by Next.js itself (vercel/next.js, packages/eslint-config-next),
-// not a version dharness invents.
-const eslintConfigNextPackage = "eslint-config-next"
+// eslintConfigNextPackage is the flat config Next.js recommends, named by
+// nextjsESLintDocs — published and versioned by Next.js itself
+// (vercel/next.js, packages/eslint-config-next), not a version dharness
+// invents.
+//
+// It is the core-web-vitals subpath, not the bare package. The first version
+// of this preset contributed "eslint-config-next", which is the base config;
+// Next.js's own page calls core-web-vitals "Recommended for most projects"
+// and every flat-config example on it imports that subpath. Contributing the
+// base config shipped a weaker rule set than the framework recommends while
+// citing the page that says so.
+const eslintConfigNextPackage = "eslint-config-next/core-web-vitals"
+
+// eslintConfigNextTypeScriptPackage is the TypeScript companion the same
+// page documents: "Adds TypeScript-specific linting rules from
+// typescript-eslint. Use this alongside the base or core-web-vitals config."
+// It is contributed only when the project is TypeScript, read off tsconfig.json.
+const eslintConfigNextTypeScriptPackage = "eslint-config-next/typescript"
+
+// reactDoctorPluginPackage is the ESLint plugin react-doctor publishes so its
+// rules run inside ESLint.
+//
+// dharness needs it for a reason particular to this toolchain rather than a
+// general preference. react-doctor's CLI adopts an existing lint config only
+// when that config is JSON, and dharness writes flat config JavaScript — so
+// the policy dharness composes is not the policy the react-doctor CLI phase
+// of the gate evaluates. react-doctor's own documented answer is the inverse
+// direction: install the plugin and put its presets inside ESLint. That
+// makes the flat config the single place the rules live.
+const reactDoctorPluginPackage = "eslint-plugin-react-doctor"
+
+// reactDoctorPluginDocs is the page every react-doctor Layer's Because cites.
+const reactDoctorPluginDocs = "https://www.react.doctor/docs/configuration/eslint-and-oxlint-plugins"
+
+// reactDoctorBinding is the one identifier the plugin is imported under, no
+// matter how many presets read a config off it. Several framework presets
+// contribute a layer bound to it — nextjs reads configs.next, expo reads
+// configs["react-native"] — and internal/setup emits one import and one
+// destructured parameter for all of them, because two import declarations
+// binding one identifier in an ES module is a SyntaxError.
+const reactDoctorBinding = "dharnessReactDoctor"
 
 // nextjs is the Next.js preset: Source scope, because "next" is declared
 // where the JS project lives, not at the repository root.
@@ -93,17 +130,96 @@ func (nextjs) Detect(p project.Project) (Match, bool) {
 						`folders "have no special framework significance."`,
 				},
 			},
-			Layers: []Layer{
-				{
-					Package: eslintConfigNextPackage,
-					Binding: "dharnessNext",
-					Because: nextjsESLintDocs + `: "Next.js provides an ESLint configuration package, ` +
-						"`eslint-config-next`" + `" — published and versioned by Next.js itself, not a ` +
-						`version dharness invents`,
-				},
-			},
+			Layers: nextjsLayers(p),
 		},
 	}, true
+}
+
+// nextjsLayers is what a Next.js project's ESLint config is composed of:
+// the framework's own recommended flat config, its TypeScript companion when
+// the project is TypeScript, and react-doctor's Next.js preset.
+//
+// The order is the order they are rendered into the config array, and flat
+// config resolves rules last-wins, so it is a decision rather than a listing:
+// the framework's own rules come first and react-doctor layers on top,
+// because react-doctor is the specialist this toolchain runs the gate on.
+func nextjsLayers(p project.Project) []Layer {
+	layers := []Layer{
+		{
+			Package: eslintConfigNextPackage,
+			Binding: "dharnessNext",
+			Spread:  true,
+			Because: nextjsESLintDocs + `: "eslint-config-next/core-web-vitals: Includes everything ` +
+				`from the base config, plus upgrades rules that impact Core Web Vitals from warnings ` +
+				`to errors. Recommended for most projects." — published and versioned by Next.js ` +
+				`itself, not a version dharness invents`,
+		},
+	}
+
+	if declaresTypeScript(p.Source) {
+		layers = append(layers, Layer{
+			Package: eslintConfigNextTypeScriptPackage,
+			Binding: "dharnessNextTypeScript",
+			Spread:  true,
+			Because: nextjsESLintDocs + `: "eslint-config-next/typescript: Adds TypeScript-specific ` +
+				`linting rules from typescript-eslint. Use this alongside the base or core-web-vitals ` +
+				`config." — contributed because this project declares a tsconfig.json`,
+		})
+	}
+
+	return append(layers, reactDoctorRecommended, Layer{
+		Package:  reactDoctorPluginPackage,
+		Binding:  reactDoctorBinding,
+		Accessor: []string{"configs", "next"},
+		Because: reactDoctorPluginDocs + `: react-doctor publishes a "next" preset in its own ESLint ` +
+			`plugin. dharness runs react-doctor in the gate, and react-doctor's CLI adopts an existing ` +
+			`lint config only when that config is JSON — so a flat config's rules reach it through this ` +
+			`plugin or not at all`,
+	})
+}
+
+// reactDoctorRecommended is react-doctor's framework-independent rule set,
+// which every framework preset contributes alongside its own.
+//
+// It is a separate layer because the framework presets do not include it.
+// Measured against eslint-plugin-react-doctor 0.9.12 rather than read off
+// the documentation, which does not say either way: `recommended` carries
+// 581 rules, `next` carries 25 and `react-native` 40, and the overlap
+// between recommended and either of them is zero. A preset that contributed
+// only its framework config would ship 25 rules out of 606 and read as if it
+// had wired react-doctor up.
+//
+// The framework preset is rendered after it, so a framework-specific rule
+// wins where flat config resolves last-wins. Today that ordering decides
+// nothing, because the two sets are disjoint; a future react-doctor release
+// that overlaps them is what would make it matter, and this is where to look
+// when it does.
+var reactDoctorRecommended = Layer{
+	Package:  reactDoctorPluginPackage,
+	Binding:  reactDoctorBinding,
+	Accessor: []string{"configs", "recommended"},
+	Because: reactDoctorPluginDocs + `: "` + "`recommended`" + ` contains the framework-independent ` +
+		`rules" — the framework presets add to it rather than including it (measured against ` +
+		`eslint-plugin-react-doctor 0.9.12: 581 rules in recommended, none of them in next or ` +
+		`react-native)`,
+}
+
+// tsconfigFile is the file that answers "is this project TypeScript". It is
+// the direct signal (§09): TypeScript's own compiler locates a project by
+// this file, so its presence is what "TypeScript project" means rather than
+// a proxy like a .ts file somewhere in the tree.
+const tsconfigFile = "tsconfig.json"
+
+// declaresTypeScript reports whether source holds a tsconfig.json. A
+// malformed one still counts: the question is whether the project chose
+// TypeScript, and it did — parsing it would be answering a different one,
+// and tsconfig.json is JSONC besides, which encoding/json cannot read.
+func declaresTypeScript(source string) bool {
+	if source == "" {
+		return false
+	}
+	info, err := os.Stat(filepath.Join(source, tsconfigFile))
+	return err == nil && !info.IsDir()
 }
 
 // declaresDependency reports whether name is declared in either dependency
