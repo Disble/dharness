@@ -11,6 +11,13 @@ import (
 	"github.com/Disble/dharness/internal/tool"
 )
 
+// The two fallow stages are named after the subcommand each one runs, because
+// the binary alone cannot tell them apart and the gate's own output has to.
+const (
+	fallowAuditStage = tool.Fallow + " audit"
+	fallowDupesStage = tool.Fallow + " dupes"
+)
+
 // RunCheck is the commit gate.
 //
 // ESLint runs first: measured cheapest of the four stages against the same
@@ -117,10 +124,10 @@ func RunCheck(args []string, stdout io.Writer) error {
 		// build entirely. dupes measures the whole repository against the
 		// ceiling dharness writes — a ceiling audit does not enforce, which is
 		// the only reason this is a separate invocation rather than a flag.
-		audit := remoteStage(p, tool.Fallow, tool.FallowAudit()...)
+		audit := remoteStage(p, tool.Fallow, tool.FallowAudit()...).named(fallowAuditStage)
 		audit.command.Stdin = bytes.NewReader(diff)
 		stages = append(stages, audit,
-			remoteStage(p, tool.Fallow, tool.FallowDupes()...))
+			remoteStage(p, tool.Fallow, tool.FallowDupes()...).named(fallowDupesStage))
 	} else {
 		notices = append(notices, fmt.Sprintf(
 			"\n%s did not run: this repository has no commits yet, so there is\nno base to compare against. It runs from the next commit on.\n",
@@ -139,12 +146,12 @@ func RunCheck(args []string, stdout io.Writer) error {
 		// Two tools writing into one stream with nothing between them leaves
 		// whoever reads the gate — a person, or the model that ran it — to work
 		// out where one report ends and the next begins.
-		fmt.Fprintf(stdout, "\n── %s ──\n", stage.tool)
+		fmt.Fprintf(stdout, "\n── %s ──\n", stage.label)
 
 		if err := runner.Run(stage.command, stdout, stdout); err != nil {
 			if skipped := stages[index+1:]; len(skipped) > 0 {
 				fmt.Fprintf(stdout, "\n%s failed, so %s did not run. There may be more to fix behind it.\n",
-					stage.tool, names(skipped))
+					stage.label, names(skipped))
 			}
 			fmt.Fprint(stdout, pointer(stage.help))
 			return err
@@ -161,9 +168,27 @@ func RunCheck(args []string, stdout io.Writer) error {
 // recorded exception — a flat config imports the project's own plugins and
 // framework configs, which a transient environment cannot resolve).
 type stage struct {
-	tool    string
+	// label is what this stage is called in dharness's own output: the section
+	// header, the line naming what a failure skipped, and — through
+	// command.Label — the failure message runner reports.
+	//
+	// It is deliberately not the binary. Two stages run `fallow`, and naming
+	// both of them after it made the gate print "fallow failed, so fallow did
+	// not run", which describes something that did not happen. The binary is
+	// still in command.Name, where it belongs, and stage.help keeps the bare
+	// tool name because the sentence it appears in is about the tool rather
+	// than about one invocation of it.
+	label   string
 	command runner.Command
 	help    runner.Command
+}
+
+// named renames a stage for dharness's own output without changing a byte of
+// what runs.
+func (s stage) named(label string) stage {
+	s.label = label
+	s.command.Label = label
+	return s
 }
 
 // remoteStage builds a stage that resolves through the detected package
@@ -171,7 +196,7 @@ type stage struct {
 // resolution, unchanged by stage now carrying a command instead of args.
 func remoteStage(p project.Project, name string, args ...string) stage {
 	return stage{
-		tool:    name,
+		label:   name,
 		command: tool.RemoteLatest(p.PackageManager, name, p.Source, args...),
 		help:    tool.RemoteLatest(p.PackageManager, name, p.Source, "--help"),
 	}
@@ -182,7 +207,7 @@ func remoteStage(p project.Project, name string, args ...string) stage {
 // exception this file's own comment names.
 func localStage(p project.Project, name, path string, args ...string) stage {
 	return stage{
-		tool:    name,
+		label:   name,
 		command: tool.Installed(name, path, p.Source, args...),
 		help:    tool.Installed(name, path, p.Source, "--help"),
 	}
@@ -191,7 +216,7 @@ func localStage(p project.Project, name, path string, args ...string) stage {
 func names(stages []stage) string {
 	list := make([]string, 0, len(stages))
 	for _, stage := range stages {
-		list = append(list, stage.tool)
+		list = append(list, stage.label)
 	}
 	return strings.Join(list, " and ")
 }

@@ -161,9 +161,13 @@ func TestCheckRunsReactDoctorBeforeFallow(t *testing.T) {
 	// its base and its diff both come from the index — and dupes the
 	// whole-repository one. react-doctor stays first because --staged scopes
 	// it to the diff, so its cost tracks the change.
-	for _, i := range []int{1, 2} {
-		if got := toolOf(captured.commands[i]); got != "fallow" {
-			t.Errorf("command %d = %q, want fallow", i, got)
+	//
+	// Each is named after the subcommand it runs rather than after the binary.
+	// Two stages called "fallow" made the gate print "fallow failed, so fallow
+	// did not run", a sentence about an event that did not happen.
+	for i, want := range map[int]string{1: fallowAuditStage, 2: fallowDupesStage} {
+		if got := toolOf(captured.commands[i]); got != want {
+			t.Errorf("command %d = %q, want %q", i, got, want)
 		}
 	}
 }
@@ -184,8 +188,8 @@ func TestCheckRunsRemoteLatestEvenWhenWrappedToolsAreInstalled(t *testing.T) {
 
 	want := []runner.Command{
 		{Label: "react-doctor", Name: "npx", Args: append([]string{"--yes", "react-doctor@latest"}, tool.ReactDoctorStaged()...), Dir: root},
-		{Label: "fallow", Name: "npx", Args: append([]string{"--yes", "fallow@latest"}, tool.FallowAudit()...), Dir: root},
-		{Label: "fallow", Name: "npx", Args: []string{"--yes", "fallow@latest", "dupes"}, Dir: root},
+		{Label: fallowAuditStage, Name: "npx", Args: append([]string{"--yes", "fallow@latest"}, tool.FallowAudit()...), Dir: root},
+		{Label: fallowDupesStage, Name: "npx", Args: []string{"--yes", "fallow@latest", "dupes"}, Dir: root},
 	}
 	if len(captured.commands) != len(want) {
 		t.Fatalf("ran %d commands, want %d: %+v", len(captured.commands), len(want), captured.commands)
@@ -615,11 +619,38 @@ func TestCheckAttributesOutputAndSaysWhatItSkipped(t *testing.T) {
 	if !strings.Contains(text, "── react-doctor ──") {
 		t.Errorf("output does not say which tool ran:\n%s", text)
 	}
-	if !strings.Contains(text, "fallow did not run") {
-		t.Errorf("output does not say the gate stopped early:\n%s", text)
+	// Both skipped stages are named individually. "fallow did not run" was
+	// ambiguous while two stages shared that name, and whoever reads the gate
+	// to decide what to run next cannot act on an ambiguous name.
+	if !strings.Contains(text, fallowAuditStage+" and "+fallowDupesStage+" did not run") {
+		t.Errorf("output does not name both skipped stages:\n%s", text)
 	}
-	if strings.Contains(text, "── fallow ──") {
+	if strings.Contains(text, "── fallow") {
 		t.Errorf("output announces a tool that never ran:\n%s", text)
+	}
+}
+
+// A failing stage names its successor, never itself.
+//
+// Both fallow stages were called "fallow", so an audit failure printed "fallow
+// failed, so fallow did not run" — a sentence about an event that did not
+// occur, aimed at exactly the reader who has to decide what to do next.
+func TestAFailingStageNamesItsSuccessorNotItself(t *testing.T) {
+	captured, _ := stub(t, "src/a.ts\n")
+	captured.fail[fallowAuditStage] = &runner.ExitError{Command: fallowAuditStage, Code: 1}
+
+	var out bytes.Buffer
+	if err := RunCheck(nil, &out); err == nil {
+		t.Fatal("RunCheck() = nil, want the audit failure")
+	}
+
+	text := out.String()
+	want := fallowAuditStage + " failed, so " + fallowDupesStage + " did not run"
+	if !strings.Contains(text, want) {
+		t.Errorf("output does not contain %q:\n%s", want, text)
+	}
+	if strings.Contains(text, "fallow failed, so fallow did not run") {
+		t.Errorf("a stage reported that it blocked itself:\n%s", text)
 	}
 }
 
@@ -858,8 +889,8 @@ func TestCheckEnforcesTheDuplicationCeiling(t *testing.T) {
 	}
 
 	last := captured.commands[2]
-	if got := toolOf(last); got != "fallow" {
-		t.Errorf("third command = %q, want fallow", got)
+	if got := toolOf(last); got != fallowDupesStage {
+		t.Errorf("third command = %q, want %q", got, fallowDupesStage)
 	}
 	if !slices.Contains(last.Args, "dupes") {
 		t.Errorf("the third stage is not dupes: %+v", last)
