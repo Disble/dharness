@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"strings"
@@ -93,13 +94,32 @@ func RunCheck(args []string, stdout io.Writer) error {
 	// fix: this is the first commit, which is exactly when adoption ends. The
 	// cheapest way to run something is not to run it when it cannot answer.
 	if project.HasCommits(p.Root) {
-		// audit first, dupes second. audit is scoped to the changeset, so it
+		diff, err := p.StagedDiff()
+		if err != nil {
+			return err
+		}
+		// An empty diff is refused rather than passed on. fallow reads it as a
+		// scope that admits nothing and exits 0, so handing one over would buy
+		// a green verdict over an unexamined change — the failure this whole
+		// gate exists to prevent. The staged list above already returned early
+		// when nothing was staged, which makes this unreachable; it is here
+		// because the consequence of reaching it is silence, and silence is
+		// what nobody notices.
+		if len(diff) == 0 {
+			return fmt.Errorf(
+				"%s cannot run: %d staged file(s) produced an empty diff, and an empty scope would pass without auditing anything",
+				tool.Fallow, len(staged))
+		}
+
+		// audit first, dupes second. audit is scoped to the staged change — the
+		// base and the diff both come from here, see tool.FallowAudit — so it
 		// answers the cheaper question and, failing, spares the second graph
 		// build entirely. dupes measures the whole repository against the
 		// ceiling dharness writes — a ceiling audit does not enforce, which is
 		// the only reason this is a separate invocation rather than a flag.
-		stages = append(stages,
-			remoteStage(p, tool.Fallow, tool.FallowAudit()...),
+		audit := remoteStage(p, tool.Fallow, tool.FallowAudit()...)
+		audit.command.Stdin = bytes.NewReader(diff)
+		stages = append(stages, audit,
 			remoteStage(p, tool.Fallow, tool.FallowDupes()...))
 	} else {
 		notices = append(notices, fmt.Sprintf(

@@ -135,26 +135,59 @@ func ReactDoctorStaged() []string {
 	}
 }
 
-// FallowAudit reports on changed files and returns a pass/warn/fail verdict.
+// FallowAudit reports on the staged change and returns a pass/warn/fail
+// verdict.
 //
-// Verified against fallow 3.x by running it. Two behaviours matter and only one
-// of them needed a flag:
+// audit already exits 1 on a fail verdict and already ratchets — its --gate
+// default is new-only, so inherited findings are reported without affecting
+// the verdict. That part was right and is still not dharness's to build.
 //
-// audit already exits 1 on a fail verdict, and already attributes findings so
-// that only the ones this changeset introduced affect it — its --gate default
-// is new-only. The ratchet is theirs, not something dharness has to build.
+// What was wrong was leaving the base to audit. The claim this comment used to
+// carry — that bare audit is scoped to the changeset — held only in the
+// repository it was measured in, which had one changed file, so the branch's
+// diff and the staged change were the same set. fallow's --help states the
+// real rule: with no base flag the base is "the git merge-base against the
+// branch's upstream or the remote default". Measured against fallow 3.16.0 on
+// a branch of 24 files with one clean file staged, bare audit exited 1 on 24
+// complexity findings and 8 clone groups that the staged change did not touch.
+// new-only does not help, because "new" is measured against that same base.
 //
-// The base is left to audit as well, after trying to improve on it and being
-// wrong. Passing --changed-since HEAD looked safer for a repository with no
-// remote, but --changed-since resolves a commit range, and a staged change is
-// not a commit: in a fresh repository it failed outright on HEAD...HEAD.
+// Two flags, and each covers a hole the other leaves:
 //
-// Measured instead: in a local repository with no remote at all, bare audit
-// resolved "1 changed file vs master (local master)", saw the staged file, and
-// exited 1 on the finding. fallow's own installed pre-commit hook runs audit
-// with no base flag for the same reason.
+// --changed-since HEAD moves the base to the last commit, which is what the
+// ratchet needed all along. Measured: a harmless edit inside a file already
+// carrying debt now passes, because against HEAD that debt is correctly
+// inherited rather than introduced. The recorded objection to this flag — that
+// it "resolves a commit range that cannot see the index" — is false as
+// measured on 3.16.0, which reported "Audit scope: 1 changed file vs HEAD" for
+// a change that existed only in the index. What is true is that it needs a
+// commit to point at, and RunCheck already guards that with HasCommits.
+//
+// --diff-stdin takes the staged diff and is not a refinement. On its own,
+// --changed-since HEAD reported a finding in a file that was never staged —
+// the working tree is not the index, and dharness's gate is the index (see
+// NotAGitRepositoryError). The diff filter is what holds that line.
+//
+// The order matters in one direction only: --changed-since HEAD is the safety
+// net. Measured, a diff whose paths match nothing is ignored rather than
+// rejected, and scope falls back to the file level — which is still the staged
+// file set, not the branch. The reverse is the trap: an *empty* diff filters
+// everything and audit exits 0 over a genuinely bad staged change, which is
+// why RunCheck must never reach this stage with nothing staged.
+//
+// fallow notices the pair and says so on every run:
+//
+//	fallow: --diff-file precedes --changed-since for line-level filtering;
+//	--changed-since still scopes file discovery. Drop one of them to disable
+//	this combination.
+//
+// That notice is left where it is — dharness reports what a tool says rather
+// than editing it — but its closing advice is the one thing not to follow.
+// Both flags were measured, and dropping either reopens a hole the other was
+// covering: without --changed-since the base returns to the merge-base, and
+// without the diff the scope reaches the working tree.
 func FallowAudit() []string {
-	return []string{"audit"}
+	return []string{"audit", "--changed-since", "HEAD", "--diff-stdin"}
 }
 
 // FallowDupes enforces the duplication ceiling, which audit does not.

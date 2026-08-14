@@ -179,3 +179,55 @@ func TestEslintStagePathsPropagatesTheGitFailure(t *testing.T) {
 		t.Fatalf("StagedSourceFilesFromSource() = %v, want NotAGitRepositoryError", err)
 	}
 }
+
+// StagedDiff has to ask git from Source with --relative, because the tool that
+// reads the diff reads it from there. Measured against fallow 3.16.0: a diff
+// whose paths do not match is neither an error nor empty — the filter is
+// ignored and the scope silently widens to whole files, so a repository-rooted
+// path here would degrade the gate without failing it.
+func TestStagedDiffAsksFromSourceInSourceRelativePaths(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "frontend")
+
+	var askedIn string
+	var askedFor []string
+	t.Cleanup(SetGitOutputForTest(func(dir string, args ...string) ([]byte, error) {
+		askedIn, askedFor = dir, args
+		return []byte("diff --git a/src/a.ts b/src/a.ts\n"), nil
+	}))
+
+	diff, err := Project{Root: root, Source: source, InRepository: true}.StagedDiff()
+	if err != nil {
+		t.Fatalf("StagedDiff() = %v", err)
+	}
+	if string(diff) != "diff --git a/src/a.ts b/src/a.ts\n" {
+		t.Errorf("StagedDiff() = %q, want git's own bytes unchanged", diff)
+	}
+	if askedIn != source {
+		t.Errorf("asked git in %q, want the source directory %q", askedIn, source)
+	}
+	for _, want := range []string{"--cached", "--relative", "-U0", "--no-ext-diff", "--no-renames", "--diff-filter=ACMR"} {
+		if !slices.Contains(askedFor, want) {
+			t.Errorf("StagedDiff() asked git for %v, missing %q", askedFor, want)
+		}
+	}
+	if len(askedFor) < 2 || askedFor[0] != "-c" || askedFor[1] != "core.quotePath=false" {
+		t.Errorf("StagedDiff() asked git for %v, want core.quotePath=false ahead of the subcommand", askedFor)
+	}
+}
+
+// The same reasoning as StagedSourceFiles: a git failure that reads as an
+// empty diff would hand fallow a scope admitting nothing, and audit exits 0 on
+// that — a green gate over an unexamined change.
+func TestStagedDiffPropagatesTheGitFailure(t *testing.T) {
+	root := t.TempDir()
+	t.Cleanup(SetGitOutputForTest(func(string, ...string) ([]byte, error) {
+		return nil, errors.New("git failed")
+	}))
+
+	_, err := Project{Root: root, Source: root, InRepository: true}.StagedDiff()
+	var notAGitRepo *NotAGitRepositoryError
+	if !errors.As(err, &notAGitRepo) {
+		t.Fatalf("StagedDiff() = %v, want NotAGitRepositoryError", err)
+	}
+}
