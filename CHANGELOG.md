@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.5.0](https://github.com/Disble/dharness/compare/v1.4.1...v1.5.0) (2026-08-15)
+
+
+### Features
+
+* **jsconfig:** recognise a CommonJS flat config ([eeb6f58](https://github.com/Disble/dharness/commit/eeb6f585b4b6f279fd27aa7025d99925f7642093))
+* **preset:** ship the ESLint presets the frameworks recommend ([b8d5d4e](https://github.com/Disble/dharness/commit/b8d5d4e3195b194663b1d4e129877e626386acbb))
+* **preset:** ship the ESLint presets the frameworks recommend ([bbac419](https://github.com/Disble/dharness/commit/bbac4193c553d54228005f8999bdaae6910c736d))
+
+
+### Bug Fixes
+
+* **check:** name each stage after the subcommand it runs ([d9b53fb](https://github.com/Disble/dharness/commit/d9b53fbafa3142306edb79401ae3822020525648))
+* **check:** scope fallow audit to the staged change ([84dad03](https://github.com/Disble/dharness/commit/84dad03054cd76e549b2e2fb0eac67f0f198a5e2))
+
 ## [1.4.1](https://github.com/Disble/dharness/compare/v1.4.0...v1.4.1) (2026-08-13)
 
 
