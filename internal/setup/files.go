@@ -304,7 +304,7 @@ func wireEslintExtends(p project.Project, w *Writer) error {
 	layers := preset.Layers(preset.Resolve(p))
 
 	var b strings.Builder
-	b.WriteString(eslintImportRegion(p, p.Source, layers, "", "\n"))
+	b.WriteString(eslintImportRegion(p, p.Source, layers, jsconfig.ESM, "", "\n"))
 	b.WriteString("\n")
 	b.WriteString("export default [\n")
 	b.WriteString(eslintLayerRegion(layers, "  ", "\n"))
@@ -354,6 +354,7 @@ func spliceEslintConfig(p project.Project, path string, src []byte) ([]byte, err
 	layers := preset.Layers(preset.Resolve(p))
 	dir := filepath.Dir(path)
 	raw := string(src)
+	module := jsconfig.ModuleOf(src)
 
 	importFrom, importTo, importState := markerRegion(raw, eslintImportBegin, eslintImportEnd)
 	layerFrom, layerTo, layerState := markerRegion(raw, eslintLayerBegin, eslintLayerEnd)
@@ -364,7 +365,7 @@ func spliceEslintConfig(p project.Project, path string, src []byte) ([]byte, err
 		if !ok {
 			return nil, fmt.Errorf("%s: %s", filepath.Base(path), why)
 		}
-		importRegion := eslintImportRegion(p, dir, layers, "", anchor.LineEnding)
+		importRegion := eslintImportRegion(p, dir, layers, module, "", anchor.LineEnding)
 		layerRegion := eslintLayerRegion(layers, anchor.Indent, anchor.LineEnding)
 
 		candidate := spliceEslintRegion(src, anchor.LayerAt, layerRegion)
@@ -372,7 +373,7 @@ func spliceEslintConfig(p project.Project, path string, src []byte) ([]byte, err
 		return candidate, nil
 
 	case importState == markersPresent && layerState == markersPresent:
-		importRegion := eslintImportRegion(p, dir, layers, regionIndent(raw, importFrom), regionLineEnding(raw, importFrom))
+		importRegion := eslintImportRegion(p, dir, layers, module, regionIndent(raw, importFrom), regionLineEnding(raw, importFrom))
 		layerRegion := eslintLayerRegion(layers, regionIndent(raw, layerFrom), regionLineEnding(raw, layerFrom))
 
 		candidate := replaceRange(src, layerFrom, layerTo, layerRegion)

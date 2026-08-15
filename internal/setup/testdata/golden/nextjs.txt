@@ -6,7 +6,7 @@
    describe |
      This package provides dharness's project lint rules.
      
-         npm install --save-dev dharness-eslint-plugin eslint-config-next
+         npm install --save-dev dharness-eslint-plugin eslint-config-next eslint-plugin-react-doctor
 2  write the files dharness owns
    satisfied=false delegated=false
    why |
@@ -52,7 +52,7 @@
      ESLint's flat config has no `extends` of its own, so the layer arrives by
      import and spread instead. A new eslint.config.js is written:
      
-         import dharnessLayer from ".dharness/eslint.config.js";
+         import dharnessLayer from "./.dharness/eslint.config.js";
      
          export default [...dharnessLayer({ plugin: dharnessPlugin })];
 7  fix the lint config react-doctor silently drops
@@ -204,9 +204,11 @@
 // array because the packages it names are installed beside the project's
 // package.json, and a bare specifier resolves from the file that writes it
 // — which, in a split layout, is not this directory.
-export default function dharnessLayer({ plugin, dharnessNext }) {
+export default function dharnessLayer({ plugin, dharnessNext, dharnessReactDoctor }) {
   return [
     ...dharnessNext,
+    dharnessReactDoctor.configs.recommended,
+    dharnessReactDoctor.configs.next,
     {
       plugins: { dharness: plugin },
       rules: {
@@ -281,13 +283,14 @@ eslint.config.js
 ---
 // dharness:eslint-import begin — rewritten by `dharness sync`; edits here are lost.
 import dharnessPlugin from "dharness-eslint-plugin";
-import dharnessNext from "eslint-config-next";
-import dharnessLayer from ".dharness/eslint.config.js";
+import dharnessNext from "eslint-config-next/core-web-vitals";
+import dharnessReactDoctor from "eslint-plugin-react-doctor";
+import dharnessLayer from "./.dharness/eslint.config.js";
 // dharness:eslint-import end
 
 export default [
   // dharness:eslint-layer begin — rewritten by `dharness sync`; edits here are lost.
-  ...dharnessLayer({ plugin: dharnessPlugin, dharnessNext }),
+  ...dharnessLayer({ plugin: dharnessPlugin, dharnessNext, dharnessReactDoctor }),
   // dharness:eslint-layer end
 ];
 ---

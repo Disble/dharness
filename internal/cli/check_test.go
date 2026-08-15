@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -48,10 +49,40 @@ func gitStub(root, staged string) func(string, ...string) ([]byte, error) {
 			return []byte(root + "\n"), nil
 		case len(args) >= 1 && args[0] == "ls-files":
 			return []byte("package-lock.json\x00"), nil
+		case isStagedDiff(args):
+			return stagedDiff(staged), nil
 		default:
 			return []byte(strings.ReplaceAll(staged, "\n", "\x00")), nil
 		}
 	}
+}
+
+// isStagedDiff recognises StagedDiff's own request rather than any diff, so
+// the stub cannot answer a question the production code stopped asking. The
+// leading -c is what separates it from the --name-only list request.
+func isStagedDiff(args []string) bool {
+	return len(args) >= 3 && args[0] == "-c" && args[2] == "diff" && !slices.Contains(args, "--name-only")
+}
+
+// stagedDiff renders the staged paths as the unified diff git would produce
+// for them.
+//
+// The stub used to answer this with the NUL-separated file list, because it
+// answered everything that way. That matters now: the gate feeds this to
+// fallow on stdin as the audit's scope, and an empty or malformed diff is the
+// one input that makes audit exit 0 over an unexamined change. A test double
+// that returns the wrong shape here would agree with the suite and disagree
+// with git.
+func stagedDiff(staged string) []byte {
+	var diff bytes.Buffer
+	for path := range strings.SplitSeq(strings.TrimSpace(staged), "\n") {
+		if path == "" {
+			continue
+		}
+		fmt.Fprintf(&diff, "diff --git a/%s b/%s\n--- a/%s\n+++ b/%s\n@@ -1 +1 @@\n+export const staged = 1;\n",
+			path, path, path, path)
+	}
+	return diff.Bytes()
 }
 
 func stub(t *testing.T, staged string) (*record, string) {
@@ -126,12 +157,17 @@ func TestCheckRunsReactDoctorBeforeFallow(t *testing.T) {
 	if got := toolOf(captured.commands[0]); got != "react-doctor" {
 		t.Errorf("first command = %q, want react-doctor", got)
 	}
-	// Both fallow stages follow: audit answers the changeset-scoped question
-	// and dupes the whole-repository one. react-doctor stays first because
-	// --staged scopes it to the diff, so its cost tracks the change.
-	for _, i := range []int{1, 2} {
-		if got := toolOf(captured.commands[i]); got != "fallow" {
-			t.Errorf("command %d = %q, want fallow", i, got)
+	// Both fallow stages follow: audit answers the staged-change question —
+	// its base and its diff both come from the index — and dupes the
+	// whole-repository one. react-doctor stays first because --staged scopes
+	// it to the diff, so its cost tracks the change.
+	//
+	// Each is named after the subcommand it runs rather than after the binary.
+	// Two stages called "fallow" made the gate print "fallow failed, so fallow
+	// did not run", a sentence about an event that did not happen.
+	for i, want := range map[int]string{1: fallowAuditStage, 2: fallowDupesStage} {
+		if got := toolOf(captured.commands[i]); got != want {
+			t.Errorf("command %d = %q, want %q", i, got, want)
 		}
 	}
 }
@@ -152,8 +188,8 @@ func TestCheckRunsRemoteLatestEvenWhenWrappedToolsAreInstalled(t *testing.T) {
 
 	want := []runner.Command{
 		{Label: "react-doctor", Name: "npx", Args: append([]string{"--yes", "react-doctor@latest"}, tool.ReactDoctorStaged()...), Dir: root},
-		{Label: "fallow", Name: "npx", Args: []string{"--yes", "fallow@latest", "audit"}, Dir: root},
-		{Label: "fallow", Name: "npx", Args: []string{"--yes", "fallow@latest", "dupes"}, Dir: root},
+		{Label: fallowAuditStage, Name: "npx", Args: append([]string{"--yes", "fallow@latest"}, tool.FallowAudit()...), Dir: root},
+		{Label: fallowDupesStage, Name: "npx", Args: []string{"--yes", "fallow@latest", "dupes"}, Dir: root},
 	}
 	if len(captured.commands) != len(want) {
 		t.Fatalf("ran %d commands, want %d: %+v", len(captured.commands), len(want), captured.commands)
@@ -583,11 +619,38 @@ func TestCheckAttributesOutputAndSaysWhatItSkipped(t *testing.T) {
 	if !strings.Contains(text, "── react-doctor ──") {
 		t.Errorf("output does not say which tool ran:\n%s", text)
 	}
-	if !strings.Contains(text, "fallow did not run") {
-		t.Errorf("output does not say the gate stopped early:\n%s", text)
+	// Both skipped stages are named individually. "fallow did not run" was
+	// ambiguous while two stages shared that name, and whoever reads the gate
+	// to decide what to run next cannot act on an ambiguous name.
+	if !strings.Contains(text, fallowAuditStage+" and "+fallowDupesStage+" did not run") {
+		t.Errorf("output does not name both skipped stages:\n%s", text)
 	}
-	if strings.Contains(text, "── fallow ──") {
+	if strings.Contains(text, "── fallow") {
 		t.Errorf("output announces a tool that never ran:\n%s", text)
+	}
+}
+
+// A failing stage names its successor, never itself.
+//
+// Both fallow stages were called "fallow", so an audit failure printed "fallow
+// failed, so fallow did not run" — a sentence about an event that did not
+// occur, aimed at exactly the reader who has to decide what to do next.
+func TestAFailingStageNamesItsSuccessorNotItself(t *testing.T) {
+	captured, _ := stub(t, "src/a.ts\n")
+	captured.fail[fallowAuditStage] = &runner.ExitError{Command: fallowAuditStage, Code: 1}
+
+	var out bytes.Buffer
+	if err := RunCheck(nil, &out); err == nil {
+		t.Fatal("RunCheck() = nil, want the audit failure")
+	}
+
+	text := out.String()
+	want := fallowAuditStage + " failed, so " + fallowDupesStage + " did not run"
+	if !strings.Contains(text, want) {
+		t.Errorf("output does not contain %q:\n%s", want, text)
+	}
+	if strings.Contains(text, "fallow failed, so fallow did not run") {
+		t.Errorf("a stage reported that it blocked itself:\n%s", text)
 	}
 }
 
@@ -826,8 +889,8 @@ func TestCheckEnforcesTheDuplicationCeiling(t *testing.T) {
 	}
 
 	last := captured.commands[2]
-	if got := toolOf(last); got != "fallow" {
-		t.Errorf("third command = %q, want fallow", got)
+	if got := toolOf(last); got != fallowDupesStage {
+		t.Errorf("third command = %q, want %q", got, fallowDupesStage)
 	}
 	if !slices.Contains(last.Args, "dupes") {
 		t.Errorf("the third stage is not dupes: %+v", last)
@@ -839,6 +902,82 @@ func TestCheckEnforcesTheDuplicationCeiling(t *testing.T) {
 	for _, arg := range last.Args {
 		if strings.HasPrefix(arg, "--threshold") {
 			t.Errorf("dupes carries a --threshold flag; the ceiling belongs in the config, not the invocation: %+v", last)
+		}
+	}
+}
+
+// The audit stage carries the staged diff on stdin, and it has to be the diff
+// git produced rather than anything reconstructed here.
+//
+// Measured against fallow 3.16.0, this is the flag that keeps the gate on the
+// index: with --changed-since HEAD alone, an audit reported a finding in a
+// file that was only in the working tree and had never been staged.
+func TestCheckFeedsFallowTheStagedDiffOnStdin(t *testing.T) {
+	captured, _ := stub(t, "src/a.ts\n")
+
+	if err := RunCheck(nil, io.Discard); err != nil {
+		t.Fatalf("RunCheck() = %v, want nil", err)
+	}
+
+	audit := captured.commands[1]
+	if !slices.Contains(audit.Args, "audit") {
+		t.Fatalf("second command is not the audit stage: %+v", audit)
+	}
+	if audit.Stdin == nil {
+		t.Fatal("the audit stage carries no stdin; --diff-stdin would read end-of-file and admit nothing, which exits 0 over an unaudited change")
+	}
+
+	fed, err := io.ReadAll(audit.Stdin)
+	if err != nil {
+		t.Fatalf("reading the audit's stdin = %v", err)
+	}
+	if !bytes.Equal(fed, stagedDiff("src/a.ts\n")) {
+		t.Errorf("the audit was fed %q, want the staged diff %q", fed, stagedDiff("src/a.ts\n"))
+	}
+}
+
+// dupes is the whole-repository question and must not be handed the staged
+// diff, or the ceiling would only ever measure the change.
+func TestCheckLeavesDupesUnscoped(t *testing.T) {
+	captured, _ := stub(t, "src/a.ts\n")
+
+	if err := RunCheck(nil, io.Discard); err != nil {
+		t.Fatalf("RunCheck() = %v, want nil", err)
+	}
+
+	dupes := captured.commands[2]
+	if !slices.Contains(dupes.Args, "dupes") {
+		t.Fatalf("third command is not the dupes stage: %+v", dupes)
+	}
+	if dupes.Stdin != nil {
+		t.Error("the dupes stage carries stdin; the duplication ceiling is a whole-repository wall, not a scoped question")
+	}
+}
+
+// An empty diff is the one input that turns audit green without auditing
+// anything: measured against fallow 3.16.0, an empty --diff-file over a
+// genuinely bad staged file exited 0, while the same file with the real diff
+// exited 1. The gate refuses rather than reports a pass it did not earn.
+func TestCheckRefusesAnEmptyStagedDiff(t *testing.T) {
+	captured, root := stub(t, "src/a.ts\n")
+	t.Cleanup(project.SetGitOutputForTest(func(dir string, args ...string) ([]byte, error) {
+		if isStagedDiff(args) {
+			return nil, nil
+		}
+		return gitStub(root, "src/a.ts\n")(dir, args...)
+	}))
+
+	err := RunCheck(nil, io.Discard)
+
+	if err == nil {
+		t.Fatal("RunCheck() = nil for an empty staged diff, want a refusal: an empty scope passes without auditing anything")
+	}
+	if !strings.Contains(err.Error(), "empty diff") {
+		t.Errorf("RunCheck() = %v, want an error naming the empty diff", err)
+	}
+	for _, command := range captured.commands {
+		if slices.Contains(command.Args, "audit") {
+			t.Error("the audit stage ran with an empty scope; it would exit 0 over an unaudited change")
 		}
 	}
 }

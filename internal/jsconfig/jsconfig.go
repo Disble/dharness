@@ -11,6 +11,25 @@ import (
 	"github.com/odvcencio/gotreesitter/grammars"
 )
 
+// Module is the module system a config file is written in. It is read off
+// the file rather than chosen: ESLint accepts flat config in either, and the
+// two frameworks dharness has presets for disagree — Next.js documents an
+// eslint.config.mjs using `import`/`export default`, and `npx expo lint`
+// generates an eslint.config.js using `require`/`module.exports`.
+//
+// A caller needs it because the declaration it splices in has to match:
+// an `import` statement in a CommonJS file is a SyntaxError, and so is
+// `require` reaching for a binding in a file Node has decided is ESM.
+type Module int
+
+const (
+	// ESM is `import x from "y"` and `export default [...]`.
+	ESM Module = iota
+
+	// CommonJS is `const x = require("y")` and `module.exports = [...]`.
+	CommonJS
+)
+
 // Anchor is a place in src, in byte offsets into the exact bytes Analyze
 // was given. Every field is an offset or a literal read out of the source,
 // so a caller splices with slice arithmetic and nothing else.
@@ -55,7 +74,7 @@ func Analyze(src []byte) (a Anchor, why string, ok bool) {
 	}
 
 	root := tree.RootNode()
-	value, why, ok := defaultExportValue(root)
+	value, _, why, ok := exportedValue(root, src)
 	if !ok {
 		return Anchor{}, why, false
 	}
@@ -85,6 +104,45 @@ func Analyze(src []byte) (a Anchor, why string, ok bool) {
 	}, "", true
 }
 
+// ModuleOf reports which module system src is written in.
+//
+// It is separate from Analyze because it answers a different question with a
+// different tolerance. Analyze asks "where does the layer go, or why
+// nowhere", and refuses everything it does not recognise. This asks "which
+// dialect do I write a declaration in", and always answers — a caller
+// replacing a marked region it wrote earlier needs the dialect without
+// re-establishing that the whole file is still spliceable.
+//
+// The export form decides, because that is the definitive marker: a file
+// that says "module.exports" is CommonJS whatever else it contains. With no
+// recognised export, the import form decides. With neither — an empty file,
+// or one this package does not recognise at all — the answer is ESM, which
+// is both ESLint's own documented default and what dharness writes when it
+// creates the file itself.
+func ModuleOf(src []byte) Module {
+	parser := gotreesitter.NewParser(jsLanguage)
+	tree, err := parser.Parse(src)
+	if err != nil {
+		return ESM
+	}
+
+	root := tree.RootNode()
+	if _, module, _, ok := exportedValue(root, src); ok {
+		return module
+	}
+
+	for i := 0; i < root.NamedChildCount(); i++ {
+		child := root.NamedChild(i)
+		if child.Type(jsLanguage) == "import_statement" {
+			return ESM
+		}
+		if isRequireDeclaration(child, src) {
+			return CommonJS
+		}
+	}
+	return ESM
+}
+
 // Splice returns src with region inserted at at. It is separate from
 // Analyze because it is the whole destructive operation and it is worth
 // being able to state, in one line, that it is an insert: the result is
@@ -97,23 +155,64 @@ func Splice(src []byte, at int, region string) []byte {
 	return out
 }
 
-// defaultExportValue finds the module's "export default" statement among
-// root's top-level children and returns the value it exports — the array
-// literal, the call expression, or whatever else follows "export default".
-// Only an export_statement with a populated "value" field is a default
-// export; "export const"/"export function" etc. set a "declaration" field
-// instead and are not this shape.
-func defaultExportValue(root *gotreesitter.Node) (*gotreesitter.Node, string, bool) {
+// exportedValue finds the value this config exports and the module system it
+// exported it with — the array literal, the call expression, or whatever else
+// the export names.
+//
+// Two shapes are recognised, because ESLint accepts both and the frameworks
+// generate both. "export default <value>" is ESM: only an export_statement
+// with a populated "value" field is a default export, since
+// "export const"/"export function" set a "declaration" field instead.
+// "module.exports = <value>" is CommonJS, which is what `npx expo lint`
+// writes.
+//
+// The scan is single-pass and takes the first of either, so a file holding
+// both is read as whatever it states first rather than being refused —
+// ESLint would load one of them and this reports on the same one.
+func exportedValue(root *gotreesitter.Node, src []byte) (*gotreesitter.Node, Module, string, bool) {
 	for i := 0; i < root.NamedChildCount(); i++ {
 		child := root.NamedChild(i)
-		if child.Type(jsLanguage) != "export_statement" {
-			continue
-		}
-		if value := child.ChildByFieldName("value", jsLanguage); value != nil {
-			return value, "", true
+		switch child.Type(jsLanguage) {
+		case "export_statement":
+			if value := child.ChildByFieldName("value", jsLanguage); value != nil {
+				return value, ESM, "", true
+			}
+		case "expression_statement":
+			if value, ok := moduleExportsValue(child, src); ok {
+				return value, CommonJS, "", true
+			}
 		}
 	}
-	return nil, "no default export found", false
+	return nil, ESM, "no default export or module.exports assignment found", false
+}
+
+// moduleExportsValue reports the right-hand side of a top-level
+// "module.exports = <value>" statement.
+//
+// The left-hand side is matched on its source text rather than by walking
+// object and property identifiers separately: "module.exports" is the whole
+// name, and a member expression that merely ends in ".exports" — a project's
+// own "config.exports" — is not it. "exports = [...]" alone is deliberately
+// not recognised: it does not replace the module's exports in Node, so
+// treating it as the config would splice into a value ESLint never reads.
+func moduleExportsValue(stmt *gotreesitter.Node, src []byte) (*gotreesitter.Node, bool) {
+	if stmt.NamedChildCount() == 0 {
+		return nil, false
+	}
+	assignment := stmt.NamedChild(0)
+	if assignment.Type(jsLanguage) != "assignment_expression" {
+		return nil, false
+	}
+
+	left := assignment.ChildByFieldName("left", jsLanguage)
+	right := assignment.ChildByFieldName("right", jsLanguage)
+	if left == nil || right == nil {
+		return nil, false
+	}
+	if left.Type(jsLanguage) != "member_expression" || left.Text(src) != "module.exports" {
+		return nil, false
+	}
+	return right, true
 }
 
 // exportedArray dispatches on the default export's shape: a plain array
@@ -149,8 +248,8 @@ func defineConfigArray(call, root *gotreesitter.Node, src []byte) (*gotreesitter
 		return nil, "default export's callee is not a plain imported identifier", false
 	}
 
-	specifier, imported := importTable(root, src)[callee.Text(src)]
-	if !imported || specifier != "eslint/config" {
+	specifier, bound := bindingTable(root, src)[callee.Text(src)]
+	if !bound || specifier != "eslint/config" {
 		return nil, "default export's callee is not imported from \"eslint/config\"", false
 	}
 
@@ -165,18 +264,28 @@ func defineConfigArray(call, root *gotreesitter.Node, src []byte) (*gotreesitter
 	return first, "", true
 }
 
-// importTable walks the top-level import declarations once and builds
+// bindingTable walks the top-level declarations once and builds
 // binding -> module specifier, for exactly one question: whether a callee
-// identifier is bound by an import from "eslint/config". Both default and
-// named imports are covered, aliased or not; a namespace import
-// (import * as ns) is never a bare-identifier callee, so it is not
-// represented here. A side-effect-only import (import "polyfill";) carries
-// no clause at all and contributes no binding, but scanning continues past
-// it to whatever import follows.
-func importTable(root *gotreesitter.Node, src []byte) map[string]string {
+// identifier is bound to "eslint/config".
+//
+// Both module systems are walked, because the callee it has to recognise is
+// written either way: `import { defineConfig } from "eslint/config"` and
+// `const { defineConfig } = require("eslint/config")` are the same statement
+// in the two dialects, and Expo's generated config uses the second.
+//
+// For imports, both default and named forms are covered, aliased or not; a
+// namespace import (import * as ns) is never a bare-identifier callee, so it
+// is not represented here. A side-effect-only import (import "polyfill";)
+// carries no clause at all and contributes no binding, but scanning
+// continues past it to whatever import follows.
+func bindingTable(root *gotreesitter.Node, src []byte) map[string]string {
 	table := map[string]string{}
 	for i := 0; i < root.NamedChildCount(); i++ {
 		stmt := root.NamedChild(i)
+		if isRequireDeclaration(stmt, src) {
+			addRequireBindings(table, stmt, src)
+			continue
+		}
 		if stmt.Type(jsLanguage) != "import_statement" {
 			continue
 		}
@@ -221,6 +330,105 @@ func importTable(root *gotreesitter.Node, src []byte) map[string]string {
 		}
 	}
 	return table
+}
+
+// isRequireDeclaration reports whether stmt is a top-level declaration that
+// binds at least one name to a require() call — the CommonJS equivalent of
+// an import statement, and the shape importAt anchors after.
+func isRequireDeclaration(stmt *gotreesitter.Node, src []byte) bool {
+	for _, declarator := range requireDeclarators(stmt, src) {
+		if declarator != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// requireDeclarators returns stmt's variable declarators whose value is a
+// require() call, or nil when stmt is not a declaration at all. A single
+// declaration can bind several (`const a = require("x"), b = require("y")`),
+// and one that mixes a require with an ordinary initialiser contributes only
+// the require.
+func requireDeclarators(stmt *gotreesitter.Node, src []byte) []*gotreesitter.Node {
+	switch stmt.Type(jsLanguage) {
+	case "lexical_declaration", "variable_declaration":
+	default:
+		return nil
+	}
+
+	var declarators []*gotreesitter.Node
+	for i := 0; i < stmt.NamedChildCount(); i++ {
+		declarator := stmt.NamedChild(i)
+		if declarator.Type(jsLanguage) != "variable_declarator" {
+			continue
+		}
+		value := declarator.ChildByFieldName("value", jsLanguage)
+		if value == nil {
+			continue
+		}
+		if _, ok := requireSpecifier(value, src); ok {
+			declarators = append(declarators, declarator)
+		}
+	}
+	return declarators
+}
+
+// requireSpecifier reads the module specifier out of a `require("x")` call.
+// The callee must be the bare identifier "require" and the call must carry
+// exactly one string argument; a member expression like `createRequire(...)`
+// or a computed specifier is not this shape and is not recognised, for the
+// same reason defineConfigArray refuses a lookalike.
+func requireSpecifier(call *gotreesitter.Node, src []byte) (string, bool) {
+	if call.Type(jsLanguage) != "call_expression" {
+		return "", false
+	}
+	callee := call.ChildByFieldName("function", jsLanguage)
+	if callee == nil || callee.Type(jsLanguage) != "identifier" || callee.Text(src) != "require" {
+		return "", false
+	}
+	args := call.ChildByFieldName("arguments", jsLanguage)
+	if args == nil || args.NamedChildCount() != 1 {
+		return "", false
+	}
+	first := args.NamedChild(0)
+	if first.Type(jsLanguage) != "string" {
+		return "", false
+	}
+	return stringValue(first, src), true
+}
+
+// addRequireBindings records every name stmt binds to a require() specifier:
+// a plain `const x = require(...)`, and each name of a destructuring
+// `const { a, b: c } = require(...)`. A destructured name is what makes
+// Expo's `const { defineConfig } = require("eslint/config")` recognisable as
+// the same statement as its ESM spelling.
+func addRequireBindings(table map[string]string, stmt *gotreesitter.Node, src []byte) {
+	for _, declarator := range requireDeclarators(stmt, src) {
+		specifier, ok := requireSpecifier(declarator.ChildByFieldName("value", jsLanguage), src)
+		if !ok {
+			continue
+		}
+		name := declarator.ChildByFieldName("name", jsLanguage)
+		if name == nil {
+			continue
+		}
+		switch name.Type(jsLanguage) {
+		case "identifier":
+			table[name.Text(src)] = specifier
+		case "object_pattern":
+			for i := 0; i < name.NamedChildCount(); i++ {
+				part := name.NamedChild(i)
+				switch part.Type(jsLanguage) {
+				case "shorthand_property_identifier_pattern":
+					table[part.Text(src)] = specifier
+				case "pair_pattern":
+					if alias := part.ChildByFieldName("value", jsLanguage); alias != nil && alias.Type(jsLanguage) == "identifier" {
+						table[alias.Text(src)] = specifier
+					}
+				}
+			}
+		}
+	}
 }
 
 // stringValue reads a string node's content, unquoted, via its
@@ -269,20 +477,25 @@ func positionRule(array *gotreesitter.Node, src []byte) (layerAt int, indent, li
 	return at, indentOfLine(src, at), lineEndingAt(src, at)
 }
 
-// importAt locates where a new top-level import statement may be inserted:
-// the start of the line after the last existing import, or — when there is
-// none — the start of the file, after any BOM (root.StartByte() already
-// excludes it) and after any directive-prologue statements such as
-// "use strict";.
+// importAt locates where a new top-level import may be inserted: the start
+// of the line after the last existing one, or — when there is none — the
+// start of the file, after any BOM (root.StartByte() already excludes it)
+// and after any directive-prologue statements such as "use strict";.
+//
+// "Existing one" spans both dialects: an import_statement, or a declaration
+// binding a require() call. A CommonJS config has no import statements at
+// all, and anchoring at the top of the file would put the spliced require
+// above the "use strict" prologue rather than below it.
 func importAt(root *gotreesitter.Node, src []byte) int {
-	var lastImport *gotreesitter.Node
+	var last *gotreesitter.Node
 	for i := 0; i < root.NamedChildCount(); i++ {
-		if c := root.NamedChild(i); c.Type(jsLanguage) == "import_statement" {
-			lastImport = c
+		c := root.NamedChild(i)
+		if c.Type(jsLanguage) == "import_statement" || isRequireDeclaration(c, src) {
+			last = c
 		}
 	}
-	if lastImport != nil {
-		return startOfNextLine(src, int(lastImport.EndByte()))
+	if last != nil {
+		return startOfNextLine(src, int(last.EndByte()))
 	}
 
 	pos := int(root.StartByte())

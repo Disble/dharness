@@ -489,3 +489,127 @@ func TestStringValueReadsTheFragmentOrEmptyWhenThereIsNone(t *testing.T) {
 		})
 	}
 }
+
+// TestAnalyzeRecognisesExpoGeneratedConfig is the shape `npx expo lint`
+// writes, verbatim from Expo's own guide: CommonJS, defineConfig required
+// rather than imported, module.exports rather than export default. Before
+// CommonJS support this returned "no default export found" and dharness
+// delegated — so an Expo project, one of the two frameworks it has a preset
+// for, never got its layer wired.
+func TestAnalyzeRecognisesExpoGeneratedConfig(t *testing.T) {
+	src := []byte(`const { defineConfig } = require('eslint/config');
+const expoConfig = require('eslint-config-expo/flat');
+
+module.exports = defineConfig([
+  expoConfig,
+  {
+    ignores: ['dist/*'],
+  },
+]);
+`)
+
+	anchor, why, ok := Analyze(src)
+	if !ok {
+		t.Fatalf("Analyze() refused Expo's own generated config: %s", why)
+	}
+	if got := string(src[anchor.LayerAt : anchor.LayerAt+len(anchor.Indent)+len("expoConfig")]); got != anchor.Indent+"expoConfig" {
+		t.Errorf("LayerAt does not anchor on the array's first element, got %q", got)
+	}
+	if ModuleOf(src) != CommonJS {
+		t.Error("ModuleOf() = ESM for a require/module.exports config")
+	}
+}
+
+// TestAnalyzeRecognisesAPlainCommonJSArray triangulates the case above
+// without defineConfig: module.exports assigned an array literal directly.
+func TestAnalyzeRecognisesAPlainCommonJSArray(t *testing.T) {
+	src := []byte("const expoConfig = require('eslint-config-expo/flat');\n\nmodule.exports = [\n  expoConfig,\n];\n")
+
+	if _, why, ok := Analyze(src); !ok {
+		t.Fatalf("Analyze() refused a plain CommonJS array export: %s", why)
+	}
+	if ModuleOf(src) != CommonJS {
+		t.Error("ModuleOf() = ESM for a module.exports array")
+	}
+}
+
+// TestImportAtFollowsTheLastRequire pins where a spliced declaration lands
+// in a CommonJS config. Anchoring at the top of the file instead would put
+// the new require above the existing ones and, in a file that opens with a
+// directive prologue, above "use strict" as well.
+func TestImportAtFollowsTheLastRequire(t *testing.T) {
+	src := []byte("'use strict';\nconst a = require('one');\nconst b = require('two');\n\nmodule.exports = [a, b];\n")
+
+	anchor, why, ok := Analyze(src)
+	if !ok {
+		t.Fatalf("Analyze() = %s", why)
+	}
+	if got := string(src[:anchor.ImportAt]); got != "'use strict';\nconst a = require('one');\nconst b = require('two');\n" {
+		t.Errorf("ImportAt does not follow the last require, everything before it is %q", got)
+	}
+}
+
+// TestExportsAloneIsNotModuleExports pins the boundary moduleExportsValue
+// draws. `exports = [...]` does not replace the module's exports in Node, so
+// ESLint never reads it; recognising it would splice into a value that has
+// no effect and report success.
+func TestExportsAloneIsNotModuleExports(t *testing.T) {
+	src := []byte("exports = [\n  {},\n];\n")
+
+	if _, _, ok := Analyze(src); ok {
+		t.Error("Analyze() accepted a bare `exports =` assignment, which Node ignores")
+	}
+}
+
+// TestAMemberExpressionEndingInExportsIsNotModuleExports triangulates the
+// same guard from the other side: a project's own `config.exports = [...]`
+// is not the module's export.
+func TestAMemberExpressionEndingInExportsIsNotModuleExports(t *testing.T) {
+	src := []byte("const config = {};\nconfig.exports = [\n  {},\n];\n")
+
+	if _, _, ok := Analyze(src); ok {
+		t.Error("Analyze() accepted config.exports as the module's export")
+	}
+}
+
+// TestDefineConfigIsRecognisedThroughAnAliasedRequire pins that recognition
+// is by module specifier and not by spelling, in the CommonJS dialect too:
+// a destructuring rename still resolves to "eslint/config".
+func TestDefineConfigIsRecognisedThroughAnAliasedRequire(t *testing.T) {
+	src := []byte("const { defineConfig: dc } = require('eslint/config');\n\nmodule.exports = dc([\n  {},\n]);\n")
+
+	if _, why, ok := Analyze(src); !ok {
+		t.Fatalf("Analyze() refused an aliased defineConfig require: %s", why)
+	}
+}
+
+// TestARequireFromElsewhereIsNotDefineConfig is the refusal that keeps the
+// rule "recognition is by specifier": a locally-defined helper of the same
+// name is not eslint/config's defineConfig.
+func TestARequireFromElsewhereIsNotDefineConfig(t *testing.T) {
+	src := []byte("const { defineConfig } = require('./my-helpers');\n\nmodule.exports = defineConfig([\n  {},\n]);\n")
+
+	if _, _, ok := Analyze(src); ok {
+		t.Error("Analyze() accepted a defineConfig imported from somewhere other than eslint/config")
+	}
+}
+
+// TestModuleOfDefaultsToESM pins the answer for a file this package does not
+// recognise at all — the dialect dharness writes when it creates the config
+// itself, so the created file and the owned file it loads agree.
+func TestModuleOfDefaultsToESM(t *testing.T) {
+	if ModuleOf([]byte("")) != ESM {
+		t.Error("ModuleOf() of an empty file is not ESM")
+	}
+}
+
+// TestModuleOfReadsTheExportNotTheImport pins which signal decides when a
+// file carries both. A config that requires something but says `export
+// default` is ESM: the export form is what Node's loader has already
+// settled by the time either statement runs.
+func TestModuleOfReadsTheExportNotTheImport(t *testing.T) {
+	src := []byte("const a = require('one');\n\nexport default [a];\n")
+	if ModuleOf(src) != ESM {
+		t.Error("ModuleOf() let a require outvote an ESM export")
+	}
+}

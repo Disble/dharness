@@ -106,6 +106,50 @@ func (p Project) StagedSourceFiles() ([]string, error) {
 	return scoped, nil
 }
 
+// StagedDiff renders the index as a unified diff, in the paths the tool that
+// reads it will see.
+//
+// It exists because `fallow audit` on its own audits the wrong thing. Measured
+// against fallow 3.16.0 on a branch of 24 files with one file staged: bare
+// audit reported "Audit scope: 25 changed files vs main (local main)" and
+// exited 1 on 24 complexity findings and 8 clone groups, none of them in the
+// staged file. fallow's own --help says why — with no base flag the base is
+// "the git merge-base against the branch's upstream or the remote default" —
+// and --gate new-only does not save it, because "new" is measured against that
+// same base, so everything the branch did since main counts as introduced.
+// See FallowAudit for the flags this diff feeds.
+//
+// Four of the five flags are the same determinism the staged Go mutation tool
+// already asks for (tools/mutationstaged): core.quotePath=false so a non-ASCII
+// path arrives as bytes rather than as an escaped literal, --no-ext-diff and
+// --no-renames so a configured external differ or rename detection cannot
+// reshape the hunks, and --diff-filter=ACMR so the diff and StagedSourceFiles
+// describe the same set rather than two sets that drift.
+//
+// -U0 is measured rather than assumed: a staged edit that pushed an existing
+// function over the complexity threshold was reported identically at -U0 and
+// at the default -U3, because fallow anchors a finding to the function holding
+// a changed line rather than to the line. -U0 is the narrower of two answers
+// that agree.
+//
+// --relative, and running from Source rather than Root, is the one that is not
+// housekeeping. git reports paths from the repository root while fallow reads
+// them from the directory it runs in, so in a split layout the diff would
+// offer frontend/src/a.ts to a tool that knows the file as src/a.ts. Measured:
+// a diff whose paths match nothing is not an error and is not empty — fallow
+// ignores the filter and falls back to file-level scope, silently widening
+// what the gate looked at.
+func (p Project) StagedDiff() ([]byte, error) {
+	out, err := gitOutput(p.Source,
+		"-c", "core.quotePath=false",
+		"diff", "--cached", "--relative", "-U0",
+		"--no-ext-diff", "--no-renames", "--diff-filter=ACMR")
+	if err != nil {
+		return nil, &NotAGitRepositoryError{Dir: p.Source, Cause: err}
+	}
+	return out, nil
+}
+
 // StagedSourceFilesFromSource is StagedSourceFiles with the source prefix
 // removed, for a tool that runs in p.Source and takes explicit paths.
 // StagedSourceFiles already filtered to that prefix, so this only strips it.

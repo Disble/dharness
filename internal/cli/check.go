@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"strings"
@@ -8,6 +9,13 @@ import (
 	"github.com/Disble/dharness/internal/project"
 	"github.com/Disble/dharness/internal/runner"
 	"github.com/Disble/dharness/internal/tool"
+)
+
+// The two fallow stages are named after the subcommand each one runs, because
+// the binary alone cannot tell them apart and the gate's own output has to.
+const (
+	fallowAuditStage = tool.Fallow + " audit"
+	fallowDupesStage = tool.Fallow + " dupes"
 )
 
 // RunCheck is the commit gate.
@@ -93,14 +101,33 @@ func RunCheck(args []string, stdout io.Writer) error {
 	// fix: this is the first commit, which is exactly when adoption ends. The
 	// cheapest way to run something is not to run it when it cannot answer.
 	if project.HasCommits(p.Root) {
-		// audit first, dupes second. audit is scoped to the changeset, so it
+		diff, err := p.StagedDiff()
+		if err != nil {
+			return err
+		}
+		// An empty diff is refused rather than passed on. fallow reads it as a
+		// scope that admits nothing and exits 0, so handing one over would buy
+		// a green verdict over an unexamined change — the failure this whole
+		// gate exists to prevent. The staged list above already returned early
+		// when nothing was staged, which makes this unreachable; it is here
+		// because the consequence of reaching it is silence, and silence is
+		// what nobody notices.
+		if len(diff) == 0 {
+			return fmt.Errorf(
+				"%s cannot run: %d staged file(s) produced an empty diff, and an empty scope would pass without auditing anything",
+				tool.Fallow, len(staged))
+		}
+
+		// audit first, dupes second. audit is scoped to the staged change — the
+		// base and the diff both come from here, see tool.FallowAudit — so it
 		// answers the cheaper question and, failing, spares the second graph
 		// build entirely. dupes measures the whole repository against the
 		// ceiling dharness writes — a ceiling audit does not enforce, which is
 		// the only reason this is a separate invocation rather than a flag.
-		stages = append(stages,
-			remoteStage(p, tool.Fallow, tool.FallowAudit()...),
-			remoteStage(p, tool.Fallow, tool.FallowDupes()...))
+		audit := remoteStage(p, tool.Fallow, tool.FallowAudit()...).named(fallowAuditStage)
+		audit.command.Stdin = bytes.NewReader(diff)
+		stages = append(stages, audit,
+			remoteStage(p, tool.Fallow, tool.FallowDupes()...).named(fallowDupesStage))
 	} else {
 		notices = append(notices, fmt.Sprintf(
 			"\n%s did not run: this repository has no commits yet, so there is\nno base to compare against. It runs from the next commit on.\n",
@@ -119,12 +146,12 @@ func RunCheck(args []string, stdout io.Writer) error {
 		// Two tools writing into one stream with nothing between them leaves
 		// whoever reads the gate — a person, or the model that ran it — to work
 		// out where one report ends and the next begins.
-		fmt.Fprintf(stdout, "\n── %s ──\n", stage.tool)
+		fmt.Fprintf(stdout, "\n── %s ──\n", stage.label)
 
 		if err := runner.Run(stage.command, stdout, stdout); err != nil {
 			if skipped := stages[index+1:]; len(skipped) > 0 {
 				fmt.Fprintf(stdout, "\n%s failed, so %s did not run. There may be more to fix behind it.\n",
-					stage.tool, names(skipped))
+					stage.label, names(skipped))
 			}
 			fmt.Fprint(stdout, pointer(stage.help))
 			return err
@@ -141,9 +168,27 @@ func RunCheck(args []string, stdout io.Writer) error {
 // recorded exception — a flat config imports the project's own plugins and
 // framework configs, which a transient environment cannot resolve).
 type stage struct {
-	tool    string
+	// label is what this stage is called in dharness's own output: the section
+	// header, the line naming what a failure skipped, and — through
+	// command.Label — the failure message runner reports.
+	//
+	// It is deliberately not the binary. Two stages run `fallow`, and naming
+	// both of them after it made the gate print "fallow failed, so fallow did
+	// not run", which describes something that did not happen. The binary is
+	// still in command.Name, where it belongs, and stage.help keeps the bare
+	// tool name because the sentence it appears in is about the tool rather
+	// than about one invocation of it.
+	label   string
 	command runner.Command
 	help    runner.Command
+}
+
+// named renames a stage for dharness's own output without changing a byte of
+// what runs.
+func (s stage) named(label string) stage {
+	s.label = label
+	s.command.Label = label
+	return s
 }
 
 // remoteStage builds a stage that resolves through the detected package
@@ -151,7 +196,7 @@ type stage struct {
 // resolution, unchanged by stage now carrying a command instead of args.
 func remoteStage(p project.Project, name string, args ...string) stage {
 	return stage{
-		tool:    name,
+		label:   name,
 		command: tool.RemoteLatest(p.PackageManager, name, p.Source, args...),
 		help:    tool.RemoteLatest(p.PackageManager, name, p.Source, "--help"),
 	}
@@ -162,7 +207,7 @@ func remoteStage(p project.Project, name string, args ...string) stage {
 // exception this file's own comment names.
 func localStage(p project.Project, name, path string, args ...string) stage {
 	return stage{
-		tool:    name,
+		label:   name,
 		command: tool.Installed(name, path, p.Source, args...),
 		help:    tool.Installed(name, path, p.Source, "--help"),
 	}
@@ -171,7 +216,7 @@ func localStage(p project.Project, name, path string, args ...string) stage {
 func names(stages []stage) string {
 	list := make([]string, 0, len(stages))
 	for _, stage := range stages {
-		list = append(list, stage.tool)
+		list = append(list, stage.label)
 	}
 	return strings.Join(list, " and ")
 }

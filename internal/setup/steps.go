@@ -165,7 +165,7 @@ func installedWithVersions(p project.Project, packages []string) []string {
 func integrationPackages(p project.Project) []string {
 	packages := []string{RulesPackage}
 	for _, layer := range preset.Layers(preset.Resolve(p)) {
-		packages = append(packages, layer.Package)
+		packages = append(packages, layer.InstallName())
 	}
 	return dedupe(packages)
 }
@@ -207,7 +207,7 @@ func (ownedFilesStep) Satisfied(p project.Project) bool {
 	// separately: ownedEslintConfig never renders "", so a missing file
 	// (read back as empty bytes) can never equal it either way.
 	eslint, _ := os.ReadFile(filepath.Join(p.Root, project.Dir, ownedEslint))
-	if string(eslint) != ownedEslintConfig(p, preset.Layers(matches)) {
+	if string(eslint) != ownedEslintConfig(p, preset.Layers(matches), projectEslintModule(p)) {
 		return false
 	}
 
@@ -260,7 +260,7 @@ func (ownedFilesStep) Apply(p project.Project, w *Writer, _ io.Writer) (Facts, e
 	}
 
 	eslintPath := filepath.Join(p.Root, project.Dir, ownedEslint)
-	if err := w.Write(eslintPath, []byte(ownedEslintConfig(p, preset.Layers(matches)))); err != nil {
+	if err := w.Write(eslintPath, []byte(ownedEslintConfig(p, preset.Layers(matches), projectEslintModule(p)))); err != nil {
 		return Facts{}, err
 	}
 	if err := ensureShared(p, w, ownedEslint); err != nil {
@@ -415,7 +415,11 @@ func (eslintExtendsStep) Satisfied(p project.Project) bool {
 }
 
 func (eslintExtendsStep) Describe(p project.Project) string {
-	target := ownedFrom(p, p.Source, ownedEslint)
+	// moduleSpecifier, not ownedFrom's raw path: what this describes is the
+	// line dharness is about to write into JavaScript, and the two differ —
+	// a reader who copies the path form gets a bare specifier Node cannot
+	// resolve.
+	target := moduleSpecifier(ownedFrom(p, p.Source, ownedEslint))
 	return fmt.Sprintf(
 		"ESLint's flat config has no `extends` of its own, so the layer arrives by\nimport and spread instead. A new %s is written:\n\n    import dharnessLayer from %q;\n\n    export default [...dharnessLayer({ plugin: dharnessPlugin })];",
 		eslintConfig, target)

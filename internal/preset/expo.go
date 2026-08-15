@@ -21,7 +21,15 @@ const expoESLintDocs = "https://docs.expo.dev/guides/using-eslint/"
 // eslintConfigExpoPackage is what expoESLintDocs names — published and
 // versioned by Expo itself (expo/expo, packages/eslint-config-expo), not a
 // version dharness invents.
-const eslintConfigExpoPackage = "eslint-config-expo"
+//
+// It is the /flat subpath, not the bare package. The first version of this
+// preset contributed "eslint-config-expo" and spread it; Expo's own guide
+// generates `require('eslint-config-expo/flat')` and includes the result
+// directly, because it is a single config object rather than an array. Both
+// halves of that were wrong here, and neither is visible from Go — the
+// import resolves, the spread of a non-iterable is what fails, at ESLint
+// startup in the adopting project.
+const eslintConfigExpoPackage = "eslint-config-expo/flat"
 
 // expo is the Expo preset: Source scope, "expo" declared in package.json.
 //
@@ -76,9 +84,21 @@ func (expo) Detect(p project.Project) (Match, bool) {
 				{
 					Package: eslintConfigExpoPackage,
 					Binding: "dharnessExpo",
-					Because: expoESLintDocs + `: "npx expo lint" generates an eslint.config.js that extends ` +
-						"`eslint-config-expo`" + ` — published and versioned by Expo itself, not a version ` +
-						`dharness invents`,
+					Because: expoESLintDocs + `: "npx expo lint" generates an eslint.config.js whose own ` +
+						"example is `const expoConfig = require('eslint-config-expo/flat')` included " +
+						`directly in the exported array — published and versioned by Expo itself, not a ` +
+						`version dharness invents`,
+				},
+				reactDoctorRecommended,
+				{
+					Package:  reactDoctorPluginPackage,
+					Binding:  reactDoctorBinding,
+					Accessor: []string{"configs", "react-native"},
+					Because: reactDoctorPluginDocs + `: react-doctor publishes a "react-native" preset in ` +
+						`its own ESLint plugin, which is the one an Expo project matches. dharness runs ` +
+						`react-doctor in the gate, and react-doctor's CLI adopts an existing lint config ` +
+						`only when that config is JSON — so a flat config's rules reach it through this ` +
+						`plugin or not at all`,
 				},
 			},
 		},

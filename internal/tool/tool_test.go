@@ -18,3 +18,52 @@ func TestFallowConfigPathAndJSONArgs(t *testing.T) {
 		t.Errorf("FallowConfigJSON() = %v, want [config --format json]", got)
 	}
 }
+
+// TestFallowAuditPinsTheBaseAndTheScope pins the two flags that make audit
+// answer about the staged change rather than about the branch, and the
+// measurement behind each — see FallowAudit for the full record.
+//
+// Measured against fallow 3.16.0 on a branch of 24 changed files with one
+// clean file staged: bare `audit` reported "Audit scope: 25 changed files vs
+// main (local main)" and exited 1 on 24 complexity findings and 8 clone
+// groups, none of them in the staged file. Adding both flags took the same
+// repository to exit 0, while a deliberately bad staged file still exited 1
+// with exactly one finding and one clone group.
+//
+// A mutant dropping either flag dies here, and they are separate assertions
+// because they fail differently: without --changed-since the base returns to
+// the merge-base and the branch's inherited debt blocks the commit; without
+// --diff-stdin the scope reaches files that were never staged.
+func TestFallowAuditPinsTheBaseAndTheScope(t *testing.T) {
+	got := FallowAudit()
+
+	if len(got) == 0 || got[0] != "audit" {
+		t.Fatalf("FallowAudit() = %v, want the audit subcommand first", got)
+	}
+	base := slices.Index(got, "--changed-since")
+	if base < 0 || base+1 >= len(got) || got[base+1] != "HEAD" {
+		t.Errorf("FallowAudit() = %v, want --changed-since HEAD; without it the base is the merge-base and the whole branch is audited", got)
+	}
+	if !slices.Contains(got, "--diff-stdin") {
+		t.Errorf("FallowAudit() = %v, want --diff-stdin; without it the scope reaches files that were never staged", got)
+	}
+	// No --gate. new-only is already the default, and restating a tool's own
+	// default is the noise every adopting repository then has to maintain.
+	for _, arg := range got {
+		if arg == "--gate" {
+			t.Errorf("FallowAudit() carries --gate: new-only is already fallow's default, so this restates it: %v", got)
+		}
+	}
+}
+
+// dupes stays a whole-repository question. It exposes the same --changed-since
+// and --diff-stdin flags audit does, and it deliberately takes neither: the
+// duplication ceiling is a wall rather than a ratchet, which is the only
+// reason it is a separate invocation instead of a flag on audit.
+func TestFallowDupesStaysWholeRepository(t *testing.T) {
+	got := FallowDupes()
+
+	if !slices.Equal(got, []string{"dupes"}) {
+		t.Errorf("FallowDupes() = %v, want [dupes]", got)
+	}
+}

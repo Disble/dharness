@@ -920,7 +920,7 @@ func TestEslintExtendsStepApplyWritesAConfigWhenNoneExists(t *testing.T) {
 	for _, want := range []string{
 		eslintImportBegin,
 		"import dharnessPlugin from \"dharness-eslint-plugin\";",
-		"import dharnessLayer from \".dharness/eslint.config.js\";",
+		"import dharnessLayer from \"./.dharness/eslint.config.js\";",
 		eslintImportEnd,
 		"export default [",
 		eslintLayerBegin,
@@ -1033,7 +1033,7 @@ func TestPresentMarkersWithStaleBytesAreReplacedNotDuplicated(t *testing.T) {
 	root := t.TempDir()
 	stale := eslintImportBegin + "\n" +
 		"import dharnessPlugin from \"dharness-eslint-plugin\";\n" +
-		"import dharnessLayer from \".dharness/eslint.config.js\";\n" +
+		"import dharnessLayer from \"./.dharness/eslint.config.js\";\n" +
 		eslintImportEnd + "\n" +
 		"\n" +
 		"export default [\n" +

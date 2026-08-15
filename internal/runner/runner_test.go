@@ -26,6 +26,59 @@ func TestStartErrorUnwrapsToItsCause(t *testing.T) {
 	}
 }
 
+// stdinHelperEnv turns this test binary into a process that copies its own
+// stdin to stdout.
+//
+// The alternative was naming an external program that reads stdin, which makes
+// the test assert something about the machine rather than about Command. The
+// re-exec trick is os/exec's own, and it proves the wiring against a real
+// process: the child inherits the parent's environment, so setting the
+// variable in the test is what selects the helper.
+const stdinHelperEnv = "DHARNESS_RUNNER_STDIN_HELPER"
+
+func TestMain(m *testing.M) {
+	if _, isHelper := os.LookupEnv(stdinHelperEnv); isHelper {
+		_, _ = io.Copy(os.Stdout, os.Stdin)
+		os.Exit(0)
+	}
+	os.Exit(m.Run())
+}
+
+// A Command's Stdin has to reach the process, because fallow audit's scope
+// arrives that way and nothing downstream would notice its absence: fed no
+// diff at all, audit widens to the whole branch and still exits 0 or 1 like a
+// gate that worked.
+func TestCommandStdinReachesTheProcess(t *testing.T) {
+	t.Setenv(stdinHelperEnv, "1")
+	diff := "diff --git a/src/a.ts b/src/a.ts\n@@ -1 +1 @@\n+export const a = 1;\n"
+
+	var out strings.Builder
+	err := Run(Command{Name: os.Args[0], Stdin: strings.NewReader(diff)}, &out, io.Discard)
+
+	if err != nil {
+		t.Fatalf("Run() = %v, want nil", err)
+	}
+	if out.String() != diff {
+		t.Errorf("the process read %q on stdin, want %q", out.String(), diff)
+	}
+}
+
+// A Command with no Stdin must not inherit the terminal: a tool that reads
+// stdin would block forever inside a git hook, which is where this gate runs.
+func TestCommandWithoutStdinReadsEndOfFile(t *testing.T) {
+	t.Setenv(stdinHelperEnv, "1")
+
+	var out strings.Builder
+	err := Run(Command{Name: os.Args[0]}, &out, io.Discard)
+
+	if err != nil {
+		t.Fatalf("Run() = %v, want nil", err)
+	}
+	if out.String() != "" {
+		t.Errorf("the process read %q on stdin, want nothing", out.String())
+	}
+}
+
 func TestSetForTestRestoresTheRealRunner(t *testing.T) {
 	restore := SetForTest(func(Command, io.Writer, io.Writer) error { return nil })
 	restore()

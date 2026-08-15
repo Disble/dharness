@@ -6,7 +6,7 @@
    describe |
      This package provides dharness's project lint rules.
      
-         npm install --save-dev dharness-eslint-plugin
+         npm install --save-dev dharness-eslint-plugin eslint-config-expo eslint-plugin-react-doctor
 2  write the files dharness owns
    satisfied=false delegated=false
    why |
@@ -193,8 +193,15 @@
 // array because the packages it names are installed beside the project's
 // package.json, and a bare specifier resolves from the file that writes it
 // — which, in a split layout, is not this directory.
-export default function dharnessLayer({ plugin }) {
+module.exports = function dharnessLayer({ plugin, dharnessExpo, dharnessReactDoctor }) {
+  // require() of an ES module yields the namespace, whose default export
+  // sits under .default; a real CommonJS module is already the value.
+  const dharnessDefault = (m) =>
+    m && m[Symbol.toStringTag] === "Module" && "default" in m ? m.default : m;
   return [
+    dharnessDefault(dharnessExpo),
+    dharnessDefault(dharnessReactDoctor).configs.recommended,
+    dharnessDefault(dharnessReactDoctor).configs["react-native"],
     {
       plugins: { dharness: plugin },
       rules: {
@@ -267,16 +274,24 @@ pre-commit:
 ---
 eslint.config.js
 ---
+const { defineConfig } = require('eslint/config');
+const expoConfig = require('eslint-config-expo/flat');
 // dharness:eslint-import begin — rewritten by `dharness sync`; edits here are lost.
-import dharnessPlugin from "dharness-eslint-plugin";
-import dharnessLayer from "./.dharness/eslint.config.js";
+const dharnessPlugin = require("dharness-eslint-plugin");
+const dharnessExpo = require("eslint-config-expo/flat");
+const dharnessReactDoctor = require("eslint-plugin-react-doctor");
+const dharnessLayer = require("./.dharness/eslint.config.js");
 // dharness:eslint-import end
 
-export default [
+module.exports = defineConfig([
   // dharness:eslint-layer begin — rewritten by `dharness sync`; edits here are lost.
-  ...dharnessLayer({ plugin: dharnessPlugin }),
+  ...dharnessLayer({ plugin: dharnessPlugin, dharnessExpo, dharnessReactDoctor }),
   // dharness:eslint-layer end
-];
+  expoConfig,
+  {
+    ignores: ['dist/*'],
+  },
+]);
 ---
 package-lock.json
 ---
@@ -287,6 +302,9 @@ package-lock.json
 package.json
 ---
 {
-  "name": "conventional"
+  "name": "expo-app",
+  "dependencies": {
+    "expo": "~51.0.0"
+  }
 }
 ---

@@ -26,6 +26,19 @@ type Command struct {
 	Args  []string
 	Dir   string
 
+	// Stdin is what the process reads on its standard input, or nil for
+	// nothing.
+	//
+	// It exists for one caller — fallow audit's --diff-stdin, which takes the
+	// staged diff that scopes the audit. A reader rather than a temporary
+	// file because the alternative was measured against this repository's own
+	// history: --tempDirName carries the comment that Stryker's sandbox
+	// "cleanTempDir only runs on a successful exit by default, so a failed run
+	// leaves a copy of the project inside the repository". A gate fails often
+	// by design, so the path that forgets to clean up is the common one. A
+	// pipe leaves nothing because there is nothing to leave.
+	Stdin io.Reader
+
 	// LowPriority asks the operating system to schedule this process behind
 	// whatever the machine is already doing.
 	//
@@ -80,6 +93,10 @@ func execute(cmd Command, stdout, stderr io.Writer) error {
 	process.Dir = cmd.Dir
 	process.Stdout = stdout
 	process.Stderr = stderr
+	// Left nil when the caller supplied nothing: os/exec then connects the
+	// process to the null device, so a tool that reads stdin sees EOF rather
+	// than blocking on a terminal the gate does not own.
+	process.Stdin = cmd.Stdin
 
 	// Priority is applied on both sides of Start because the two platforms
 	// offer it at different moments: Windows sets a creation flag, POSIX
