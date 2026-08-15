@@ -13,9 +13,13 @@ const lowNiceness = 10
 
 // platformize is a no-op everywhere except Windows, where npm's .cmd shims
 // cannot be executed directly.
-func platformize(name string, args []string) (string, []string) {
-	return name, args
+func platformize(name string, args []string) invocation {
+	return invocation{Name: name, Args: args}
 }
+
+// applyCmdLine is unreachable here: platformize never sets a command line off
+// Windows, because no other platform re-parses one.
+func applyCmdLine(*exec.Cmd, string) {}
 
 // beforeStart is a no-op here: POSIX renices a process that already exists.
 func beforeStart(*exec.Cmd) {}
