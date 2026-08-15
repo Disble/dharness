@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.1](https://github.com/Disble/dharness/compare/v1.5.0...v1.5.1) (2026-08-15)
+
+
+### Bug Fixes
+
+* deliver paths holding cmd.exe metacharacters to Windows shims ([#31](https://github.com/Disble/dharness/issues/31)) ([026052e](https://github.com/Disble/dharness/commit/026052e53abdb7dee5e34be62bcabef36f8b24c6))
+
 ## [1.5.0](https://github.com/Disble/dharness/compare/v1.4.1...v1.5.0) (2026-08-15)
 
 
