@@ -2,6 +2,7 @@ package runner
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -36,9 +37,24 @@ func TestStartErrorUnwrapsToItsCause(t *testing.T) {
 // variable in the test is what selects the helper.
 const stdinHelperEnv = "DHARNESS_RUNNER_STDIN_HELPER"
 
+// argvHelperEnv turns this test binary into a process that reports the
+// arguments it was handed, one per line.
+//
+// It exists because the only question worth asking about a shim is what the
+// wrapped program finally receives. Asserting on the command dharness builds
+// would pass while cmd.exe rewrote it in transit, which is the exact defect
+// these tests were added for.
+const argvHelperEnv = "DHARNESS_RUNNER_ARGV_HELPER"
+
 func TestMain(m *testing.M) {
 	if _, isHelper := os.LookupEnv(stdinHelperEnv); isHelper {
 		_, _ = io.Copy(os.Stdout, os.Stdin)
+		os.Exit(0)
+	}
+	if _, isHelper := os.LookupEnv(argvHelperEnv); isHelper {
+		for _, arg := range os.Args[1:] {
+			fmt.Printf("<%s>\n", arg)
+		}
 		os.Exit(0)
 	}
 	os.Exit(m.Run())

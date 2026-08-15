@@ -83,13 +83,46 @@ func (e *StartError) Error() string {
 	return fmt.Sprintf("could not run %s: %v", e.Command, e.Cause)
 }
 
+// invocation is what os/exec is finally asked to run, after the platform has
+// had its say about how a command has to be reached.
+//
+// CmdLine exists because os/exec's own quoting is not always right: a Windows
+// shim is re-parsed by cmd.exe, which needs a line built to different rules.
+// It is empty for every ordinary command, and when it is set it wins — the
+// Args are not consulted, so platformize leaves them unset rather than
+// recording a list that never runs.
+type invocation struct {
+	Name    string
+	Args    []string
+	CmdLine string
+
+	// Err reports a command that must not be started at all, because the
+	// platform cannot hand it its arguments unaltered.
+	Err error
+}
+
+// ErrUndeliverableArgument reports an argument that cannot reach a tool
+// unchanged, so the run is refused instead of made.
+//
+// It is a refusal rather than a best effort on purpose. Every other failure
+// here ends in a verdict somebody acts on, and a tool asked about the wrong
+// path answers confidently about the wrong path — a green gate over an
+// unexamined file, or a red one naming a file that was never there.
+var ErrUndeliverableArgument = errors.New("argument cannot be delivered unaltered")
+
 // Run executes cmd, streaming its output to the given writers.
 var Run = execute
 
 func execute(cmd Command, stdout, stderr io.Writer) error {
-	name, args := platformize(cmd.Name, cmd.Args)
+	target := platformize(cmd.Name, cmd.Args)
+	if target.Err != nil {
+		return &StartError{Command: cmd.String(), Cause: target.Err}
+	}
 
-	process := exec.Command(name, args...)
+	process := exec.Command(target.Name, target.Args...)
+	if target.CmdLine != "" {
+		applyCmdLine(process, target.CmdLine)
+	}
 	process.Dir = cmd.Dir
 	process.Stdout = stdout
 	process.Stderr = stderr
