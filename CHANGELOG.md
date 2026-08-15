@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.5.0](https://github.com/Disble/dharness/compare/v1.4.1...v1.5.0) (2026-08-15)
+
+
+### Features
+
+* **jsconfig:** recognise a CommonJS flat config ([eeb6f58](https://github.com/Disble/dharness/commit/eeb6f585b4b6f279fd27aa7025d99925f7642093))
+* **preset:** ship the ESLint presets the frameworks recommend ([bbac419](https://github.com/Disble/dharness/commit/bbac4193c553d54228005f8999bdaae6910c736d))
+
+
+### Bug Fixes
+
+* **eslint:** write an owned-config specifier Node can resolve ([bbac419](https://github.com/Disble/dharness/commit/bbac4193c553d54228005f8999bdaae6910c736d))
+* **check:** name each stage after the subcommand it runs ([d9b53fb](https://github.com/Disble/dharness/commit/d9b53fbafa3142306edb79401ae3822020525648))
+* **check:** scope fallow audit to the staged change ([84dad03](https://github.com/Disble/dharness/commit/84dad03054cd76e549b2e2fb0eac67f0f198a5e2))
+
+### Upgrade note
+
+`.dharness/eslint.config.js` was referenced without a leading `./`, which Node
+reads as a package name rather than a relative path, so ESLint failed to start
+with `ERR_INVALID_MODULE_SPECIFIER` on every conventional (non-split) layout.
+Run `dharness sync` once after upgrading to rewrite the reference. The fix rides
+in the `preset` commit above because it could not be separated from it at file
+granularity.
+
 ## [1.4.1](https://github.com/Disble/dharness/compare/v1.4.0...v1.4.1) (2026-08-13)
 
 
