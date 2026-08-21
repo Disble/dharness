@@ -208,7 +208,7 @@ func (ownedFilesStep) Satisfied(p project.Project) bool {
 	// (read back as empty bytes) can never equal it either way.
 	module := projectEslintModule(p)
 	eslint, _ := os.ReadFile(filepath.Join(p.Root, project.Dir, ownedEslintName(module)))
-	if string(eslint) != ownedEslintConfig(p, preset.Layers(matches), module) {
+	if string(eslint) != ownedEslintConfig(p, projectContributedLayers(p, preset.Layers(matches)), module) {
 		return false
 	}
 
@@ -262,7 +262,7 @@ func (ownedFilesStep) Apply(p project.Project, w *Writer, _ io.Writer) (Facts, e
 
 	module := projectEslintModule(p)
 	eslintPath := filepath.Join(p.Root, project.Dir, ownedEslintName(module))
-	if err := w.Write(eslintPath, []byte(ownedEslintConfig(p, preset.Layers(matches), module))); err != nil {
+	if err := w.Write(eslintPath, []byte(ownedEslintConfig(p, projectContributedLayers(p, preset.Layers(matches)), module))); err != nil {
 		return Facts{}, err
 	}
 	if err := ensureShared(p, w, ownedEslintName(module)); err != nil {

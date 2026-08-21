@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -689,5 +690,56 @@ func TestAnalyzeDoesNotFollowAChainOfAliases(t *testing.T) {
 
 	if _, _, ok := Analyze(src); ok {
 		t.Error("Analyze() followed a chain of aliases")
+	}
+}
+
+// TestImportsNamesEveryTopLevelSpecifierOnce answers "what does this file
+// already pull in", which is a different question from Analyze's "where does
+// an element go" and needs a different tolerance: it never refuses, because
+// a caller deciding what *not* to contribute is safer knowing too much than
+// too little.
+func TestImportsNamesEveryTopLevelSpecifierOnce(t *testing.T) {
+	src := []byte(`import { defineConfig } from "eslint/config";
+import nextVitals from "eslint-config-next/core-web-vitals";
+import nextTs from "eslint-config-next/typescript";
+import "./side-effect.js";
+import again from "eslint-config-next/typescript";
+
+export default defineConfig([]);
+`)
+
+	got := Imports(src)
+
+	want := []string{"eslint/config", "eslint-config-next/core-web-vitals", "eslint-config-next/typescript", "./side-effect.js"}
+	if !slices.Equal(got, want) {
+		t.Errorf("Imports() = %v, want %v in source order with no repeats", got, want)
+	}
+}
+
+// TestImportsReadsCommonJSRequires covers the dialect Expo generates, for
+// the same reason bindingTable walks both.
+func TestImportsReadsCommonJSRequires(t *testing.T) {
+	src := []byte("const expo = require(\"eslint-config-expo/flat\");\nconst { defineConfig } = require(\"eslint/config\");\nmodule.exports = [];\n")
+
+	got := Imports(src)
+
+	want := []string{"eslint-config-expo/flat", "eslint/config"}
+	if !slices.Equal(got, want) {
+		t.Errorf("Imports() = %v, want %v", got, want)
+	}
+}
+
+// TestImportsAnswersForASourceItCannotAnalyze keeps the two questions
+// independent: a config whose default export Analyze refuses still has
+// imports, and a caller asking what is already pulled in must not be told
+// "nothing" because of an unrelated refusal.
+func TestImportsAnswersForASourceItCannotAnalyze(t *testing.T) {
+	src := []byte("import next from \"eslint-config-next\";\nexport default someHelper(next);\n")
+
+	if _, _, ok := Analyze(src); ok {
+		t.Fatal("the fixture no longer exercises a source Analyze refuses")
+	}
+	if got := Imports(src); !slices.Equal(got, []string{"eslint-config-next"}) {
+		t.Errorf("Imports() = %v, want the specifier it plainly imports", got)
 	}
 }

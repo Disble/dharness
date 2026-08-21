@@ -585,3 +585,67 @@ func TestOwnedFilesStepRestoresTheLegacyFileOnRollback(t *testing.T) {
 		t.Errorf("Undo() restored %q, want the bytes it found", raw)
 	}
 }
+
+// TestContributedLayersDropsWhatTheProjectAlreadySpreads is the duplication
+// the splice created once jsconfig learned create-next-app's shape.
+//
+// The scaffolder's config spreads eslint-config-next/core-web-vitals and
+// eslint-config-next/typescript itself. The nextjs preset contributes the
+// same two packages, so the wired result imported each one twice under two
+// names and spread both — the framework's whole config applied twice, in a
+// file dharness had just edited.
+//
+// dharness contributes what is missing, not what is already there. That
+// keeps the fix inside what dharness owns: nothing of the project's is
+// rewritten, and the marked regions stay the only bytes this tool touches.
+func TestContributedLayersDropsWhatTheProjectAlreadySpreads(t *testing.T) {
+	config := []byte(`import { defineConfig } from "eslint/config";
+import nextVitals from "eslint-config-next/core-web-vitals";
+
+const eslintConfig = defineConfig([...nextVitals]);
+export default eslintConfig;
+`)
+	layers := []preset.Layer{
+		{Package: "eslint-config-next/core-web-vitals", Binding: "dharnessNext", Spread: true},
+		{Package: "eslint-plugin-react-doctor", Binding: "dharnessReactDoctor"},
+	}
+
+	got := contributedLayers(layers, config)
+
+	if len(got) != 1 || got[0].Package != "eslint-plugin-react-doctor" {
+		t.Errorf("contributedLayers() = %v, want only the layer the project does not already have", got)
+	}
+}
+
+// TestContributedLayersIgnoresDharnessOwnImportRegion is what keeps the
+// filter from oscillating. dharness's own marked region imports every layer
+// it contributes, so reading the file back without excluding that region
+// would drop every layer on the second run and re-add them on the third.
+func TestContributedLayersIgnoresDharnessOwnImportRegion(t *testing.T) {
+	config := []byte(eslintImportBegin + `
+import dharnessPlugin from "dharness-eslint-plugin";
+import dharnessNext from "eslint-config-next/core-web-vitals";
+` + eslintImportEnd + `
+
+export default [];
+`)
+	layers := []preset.Layer{{Package: "eslint-config-next/core-web-vitals", Binding: "dharnessNext", Spread: true}}
+
+	if got := contributedLayers(layers, config); len(got) != 1 {
+		t.Errorf("contributedLayers() = %v, want the layer kept: dharness's own import is not the project's", got)
+	}
+}
+
+// TestContributedLayersKeepsADifferentSubpath pins the comparison at the
+// specifier rather than the package. eslint-config-next and
+// eslint-config-next/core-web-vitals are different configs — the bare one is
+// the weaker base — so a project spreading one has not already got the
+// other.
+func TestContributedLayersKeepsADifferentSubpath(t *testing.T) {
+	config := []byte("import next from \"eslint-config-next\";\nexport default [...next];\n")
+	layers := []preset.Layer{{Package: "eslint-config-next/core-web-vitals", Binding: "dharnessNext", Spread: true}}
+
+	if got := contributedLayers(layers, config); len(got) != 1 {
+		t.Errorf("contributedLayers() = %v, want the subpath kept", got)
+	}
+}

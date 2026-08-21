@@ -104,6 +104,53 @@ func Analyze(src []byte) (a Anchor, why string, ok bool) {
 	}, "", true
 }
 
+// Imports names every module specifier src pulls in at the top level, in
+// source order, each one once.
+//
+// It is separate from Analyze for the same reason ModuleOf is: a different
+// question with a different tolerance. Analyze asks "where does an element
+// go, or why nowhere" and refuses everything it does not recognise. This
+// asks "what does this file already bring in", and always answers — a
+// caller deciding what *not* to contribute is safer knowing too much than
+// too little, and a file whose default export is unrecognisable still has
+// perfectly readable imports.
+//
+// Both dialects are walked, like bindingTable, because the same statement is
+// written either way. Unlike bindingTable, a side-effect-only import counts:
+// the question here is what the file pulls in, not what it binds.
+func Imports(src []byte) []string {
+	parser := gotreesitter.NewParser(jsLanguage)
+	tree, err := parser.Parse(src)
+	if err != nil {
+		return nil
+	}
+
+	root := tree.RootNode()
+	seen := map[string]bool{}
+	var specifiers []string
+
+	keep := func(specifier string) {
+		if specifier == "" || seen[specifier] {
+			return
+		}
+		seen[specifier] = true
+		specifiers = append(specifiers, specifier)
+	}
+
+	for i := 0; i < root.NamedChildCount(); i++ {
+		stmt := root.NamedChild(i)
+		if stmt.Type(jsLanguage) == "import_statement" {
+			keep(stringValue(stmt.ChildByFieldName("source", jsLanguage), src))
+			continue
+		}
+		for _, declarator := range requireDeclarators(stmt, src) {
+			specifier, _ := requireSpecifier(declarator.ChildByFieldName("value", jsLanguage), src)
+			keep(specifier)
+		}
+	}
+	return specifiers
+}
+
 // ModuleOf reports which module system src is written in.
 //
 // It is separate from Analyze because it answers a different question with a
