@@ -349,10 +349,10 @@ func TestApplyWritesTheOwnedEslintConfigAndDeclaresItShared(t *testing.T) {
 		t.Fatalf("Apply() = %v", err)
 	}
 
-	eslintPath := filepath.Join(root, project.Dir, ownedEslint)
+	eslintPath := filepath.Join(root, project.Dir, ownedEslintName(projectEslintModule(p)))
 	raw, err := os.ReadFile(eslintPath)
 	if err != nil {
-		t.Fatalf("Apply() did not write %s: %v", ownedEslint, err)
+		t.Fatalf("Apply() did not write %s: %v", ownedEslintName(projectEslintModule(p)), err)
 	}
 	if want := ownedEslintConfig(p, preset.Layers(preset.Resolve(p)), projectEslintModule(p)); string(raw) != want {
 		t.Errorf("Apply() wrote %q, want %q", raw, want)
@@ -362,8 +362,9 @@ func TestApplyWritesTheOwnedEslintConfigAndDeclaresItShared(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(ignore), "!eslint.config.js") {
-		t.Errorf("Apply() left the allow list without eslint.config.js:\n%s", ignore)
+	entry := "!" + ownedEslintName(projectEslintModule(p))
+	if !strings.Contains(string(ignore), entry) {
+		t.Errorf("Apply() left the allow list without %s:\n%s", entry, ignore)
 	}
 }
 
@@ -388,7 +389,7 @@ func TestOwnedFilesSatisfiedRequiresTheEslintAllowListEntry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repaired := strings.ReplaceAll(string(raw), "!eslint.config.js\n", "")
+	repaired := strings.ReplaceAll(string(raw), "!eslint.config.mjs\n", "")
 	if err := os.WriteFile(ignorePath, []byte(repaired), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -413,7 +414,7 @@ func TestOwnedFilesSatisfiedComparesTheEslintConfigBytes(t *testing.T) {
 		t.Fatalf("Apply() = %v", err)
 	}
 
-	eslintPath := filepath.Join(root, project.Dir, ownedEslint)
+	eslintPath := filepath.Join(root, project.Dir, ownedEslintName(projectEslintModule(p)))
 	if err := os.WriteFile(eslintPath, []byte("stale bytes from an earlier run\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -436,7 +437,7 @@ func TestOwnedFilesSatisfiedFalseWhenTheEslintConfigFileIsMissing(t *testing.T) 
 	if _, err := (ownedFilesStep{}).Apply(p, &Writer{}, io.Discard); err != nil {
 		t.Fatalf("Apply() = %v", err)
 	}
-	if err := os.Remove(filepath.Join(root, project.Dir, ownedEslint)); err != nil {
+	if err := os.Remove(filepath.Join(root, project.Dir, ownedEslintName(projectEslintModule(p)))); err != nil {
 		t.Fatal(err)
 	}
 

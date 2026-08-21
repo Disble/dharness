@@ -52,7 +52,7 @@
      ESLint's flat config has no `extends` of its own, so the layer arrives by
      import and spread instead. A new eslint.config.js is written:
      
-         import dharnessLayer from "../.dharness/eslint.config.js";
+         import dharnessLayer from "../.dharness/eslint.config.mjs";
      
          export default [...dharnessLayer({ plugin: dharnessPlugin })];
 7  fix the lint config react-doctor silently drops
@@ -196,9 +196,10 @@
 !fallow.jsonc
 !rules.json
 !evidence.json
-!eslint.config.js
+!eslint.config.mjs
+!eslint.config.cjs
 ---
-.dharness/eslint.config.js
+.dharness/eslint.config.mjs
 ---
 // dharness writes this file. It exports a factory rather than a config
 // array because the packages it names are installed beside the project's
@@ -288,7 +289,7 @@ frontend/eslint.config.js
 import dharnessPlugin from "dharness-eslint-plugin";
 import dharnessNext from "eslint-config-next/core-web-vitals";
 import dharnessReactDoctor from "eslint-plugin-react-doctor";
-import dharnessLayer from "../.dharness/eslint.config.js";
+import dharnessLayer from "../.dharness/eslint.config.mjs";
 // dharness:eslint-import end
 
 export default [

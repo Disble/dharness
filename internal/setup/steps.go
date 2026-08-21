@@ -206,8 +206,9 @@ func (ownedFilesStep) Satisfied(p project.Project) bool {
 	// being written once (design decision 8). The read error is not checked
 	// separately: ownedEslintConfig never renders "", so a missing file
 	// (read back as empty bytes) can never equal it either way.
-	eslint, _ := os.ReadFile(filepath.Join(p.Root, project.Dir, ownedEslint))
-	if string(eslint) != ownedEslintConfig(p, preset.Layers(matches), projectEslintModule(p)) {
+	module := projectEslintModule(p)
+	eslint, _ := os.ReadFile(filepath.Join(p.Root, project.Dir, ownedEslintName(module)))
+	if string(eslint) != ownedEslintConfig(p, preset.Layers(matches), module) {
 		return false
 	}
 
@@ -218,7 +219,7 @@ func (ownedFilesStep) Satisfied(p project.Project) bool {
 	// .gitignore reads back as empty bytes, which never contains the
 	// non-empty entry string either.
 	ignore, _ := os.ReadFile(filepath.Join(p.Root, project.Dir, ".gitignore"))
-	return strings.Contains(string(ignore), "!"+ownedEslint)
+	return strings.Contains(string(ignore), "!"+ownedEslintName(module))
 }
 
 func (ownedFilesStep) Describe(project.Project) string {
@@ -259,12 +260,29 @@ func (ownedFilesStep) Apply(p project.Project, w *Writer, _ io.Writer) (Facts, e
 		return Facts{}, err
 	}
 
-	eslintPath := filepath.Join(p.Root, project.Dir, ownedEslint)
-	if err := w.Write(eslintPath, []byte(ownedEslintConfig(p, preset.Layers(matches), projectEslintModule(p)))); err != nil {
+	module := projectEslintModule(p)
+	eslintPath := filepath.Join(p.Root, project.Dir, ownedEslintName(module))
+	if err := w.Write(eslintPath, []byte(ownedEslintConfig(p, preset.Layers(matches), module))); err != nil {
 		return Facts{}, err
 	}
-	if err := ensureShared(p, w, ownedEslint); err != nil {
+	if err := ensureShared(p, w, ownedEslintName(module)); err != nil {
 		return Facts{}, err
+	}
+
+	// A project adopted before the name carried its dialect has an
+	// eslint.config.js here that nothing imports any more: the reference in
+	// its own config lives in a marked region, which this same run rewrites
+	// to the new name. Remembering it first is what puts the removal inside
+	// the run's transaction — Writer.Undo restores a file it snapshotted,
+	// whether the step deleted it or overwrote it.
+	legacy := filepath.Join(p.Root, project.Dir, ownedEslintLegacyName)
+	if _, err := os.Stat(legacy); err == nil {
+		if err := w.remember(legacy); err != nil {
+			return Facts{}, err
+		}
+		if err := os.Remove(legacy); err != nil {
+			return Facts{}, fmt.Errorf("remove the eslint config an earlier dharness owned: %w", err)
+		}
 	}
 
 	return Facts{}, w.WriteJSON(filepath.Join(p.Root, project.Dir, ownedRules), DefaultThresholds())
@@ -470,7 +488,7 @@ func (eslintExtendsStep) Describe(p project.Project) string {
 	// line dharness is about to write into JavaScript, and the two differ —
 	// a reader who copies the path form gets a bare specifier Node cannot
 	// resolve.
-	target := moduleSpecifier(ownedFrom(p, p.Source, ownedEslint))
+	target := moduleSpecifier(ownedFrom(p, p.Source, ownedEslintName(projectEslintModule(p))))
 	return fmt.Sprintf(
 		"ESLint's flat config has no `extends` of its own, so the layer arrives by\nimport and spread instead. A new %s is written:\n\n    import dharnessLayer from %q;\n\n    export default [...dharnessLayer({ plugin: dharnessPlugin })];",
 		eslintConfig, target)

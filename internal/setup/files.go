@@ -17,8 +17,32 @@ const (
 	ownedLefthook = "lefthook.yml"
 	ownedFallow   = "fallow.jsonc"
 	ownedRules    = "rules.json"
-	ownedEslint   = "eslint.config.js"
+
+	// ownedEslintLegacyName is the single name every dharness before this
+	// one wrote, whatever dialect it put inside. It is kept so a project
+	// adopted then can have the orphan cleaned up; nothing writes it.
+	ownedEslintLegacyName = "eslint.config.js"
 )
+
+// ownedEslintName spells the file dharness owns the way Node reads it.
+//
+// The extension is not decoration here. A .js file is whatever the nearest
+// package.json says it is, and a Next.js package.json says nothing — so ESM
+// inside one earns MODULE_TYPELESS_PACKAGE_JSON from Node on every ESLint
+// run, which for an adopted project is every gated commit, and Node's own
+// suggested remedy (add "type": "module") is a far bigger change to the
+// project than the warning warrants. The reverse case is worse than noisy:
+// module.exports in a .js file under a package.json that does declare
+// "type": "module" is a SyntaxError.
+//
+// .mjs and .cjs answer for themselves, so neither case can arise. The
+// project's own config imports the file by path either way.
+func ownedEslintName(module jsconfig.Module) string {
+	if module == jsconfig.CommonJS {
+		return "eslint.config.cjs"
+	}
+	return "eslint.config.mjs"
+}
 
 // The files that belong to the project and gain at most one line.
 const (
