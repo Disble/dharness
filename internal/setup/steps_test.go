@@ -1244,3 +1244,81 @@ func TestEslintExtendsStepApplyPreservesCRLFAndBOMThroughTheSplice(t *testing.T)
 		t.Errorf("Apply() did not adopt CRLF for the inserted layer region:\n%q", got)
 	}
 }
+
+// lefthookScaffold is what `lefthook install` writes into a repository that
+// has no config of its own: an example file with every key commented out.
+// Trimmed from lefthook 2.1.10's own output.
+const lefthookScaffold = `# EXAMPLE USAGE:
+#
+#   Refer for explanation to following link:
+#   https://lefthook.dev/configuration/
+#
+# pre-push:
+#   jobs:
+#     - name: packages audit
+#       tags:
+#         - frontend
+#         - security
+#       run: yarn audit
+#
+# pre-commit:
+#   parallel: true
+#   jobs:
+#     - run: yarn eslint {staged_files}
+`
+
+// TestLefthookExtendsStepWritesIntoLefthooksOwnScaffold is F3: the file this
+// step refused to touch as "belonging to the project" was written by
+// `lefthook install`, and contains no project content at all — every line is
+// commented. Refusing it left the step delegated forever, on a file nobody
+// decided anything in.
+//
+// The scaffold's own comments survive the write. They are lefthook
+// documenting its own format, and there is no reason for dharness to delete
+// them just because it now owns the first two lines.
+func TestLefthookExtendsStepWritesIntoLefthooksOwnScaffold(t *testing.T) {
+	root := t.TempDir()
+	writeStepFixtureFile(t, root, lefthookConfig, lefthookScaffold)
+	p := project.Project{Root: root, Source: root}
+
+	if why, delegated := (lefthookExtendsStep{}).Delegated(p); delegated {
+		t.Fatalf("Delegated() = %q, true for a config that is entirely commented out", why)
+	}
+
+	if _, err := (lefthookExtendsStep{}).Apply(p, &Writer{}, io.Discard); err != nil {
+		t.Fatalf("Apply() = %v", err)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(root, lefthookConfig))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(raw)
+	if !strings.Contains(got, "extends:") || !strings.Contains(got, ownedFrom(p, root, ownedLefthook)) {
+		t.Errorf("Apply() did not point the config at the file dharness owns:\n%s", got)
+	}
+	if !strings.Contains(got, "# EXAMPLE USAGE:") {
+		t.Errorf("Apply() discarded lefthook's own commented example:\n%s", got)
+	}
+	if !(lefthookExtendsStep{}).Satisfied(p) {
+		t.Error("Satisfied() = false right after Apply wrote the reference")
+	}
+}
+
+// TestLefthookExtendsStepStillRefusesAConfigWithContent is the other side:
+// one uncommented key is a decision the project made, and adding to it is a
+// merge dharness does not get to perform. The scaffold case must not widen
+// into this one.
+func TestLefthookExtendsStepStillRefusesAConfigWithContent(t *testing.T) {
+	root := t.TempDir()
+	writeStepFixtureFile(t, root, lefthookConfig, lefthookScaffold+"\npre-push:\n  commands:\n    audit:\n      run: bun audit\n")
+	p := project.Project{Root: root, Source: root}
+
+	why, delegated := (lefthookExtendsStep{}).Delegated(p)
+	if !delegated {
+		t.Fatal("Delegated() = false for a config carrying a job the project wrote")
+	}
+	if !strings.Contains(why, "merge") {
+		t.Errorf("Delegated() = %q, want it to say why it will not write", why)
+	}
+}

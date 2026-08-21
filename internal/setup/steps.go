@@ -332,17 +332,60 @@ func (lefthookExtendsStep) Describe(p project.Project) string {
 }
 
 // Delegated follows the same rule as fallowExtendsStep, for the project's own
-// lefthook.yml instead of .fallowrc.json.
+// lefthook.yml instead of .fallowrc.json — with one exception fallow has no
+// equivalent of.
+//
+// `lefthook install` writes a config when it finds none: an example file with
+// every key commented out. A repository that took step 9's advice and set a
+// hook manager up by hand arrives at the next sync carrying one. Refusing it
+// as "belonging to the project" was refusing a file dharness's own delegation
+// caused to exist, and left this step delegated on every run from then on,
+// with nothing a user could do to clear it short of deleting the file.
+//
+// A config with no uncommented key is not a decision. There is nothing to
+// merge with and nothing to lose, so dharness writes.
 func (lefthookExtendsStep) Delegated(p project.Project) (string, bool) {
 	if hookManager(p) != managerLefthook {
 		return "", false
 	}
-	if _, err := os.Stat(filepath.Join(p.Root, lefthookConfig)); errors.Is(err, os.ErrNotExist) {
+	raw, err := os.ReadFile(filepath.Join(p.Root, lefthookConfig))
+	if errors.Is(err, os.ErrNotExist) {
+		return "", false
+	}
+	if err == nil && declaresNothing(raw) {
+		return "", false
+	}
+	// A config already carrying the reference has nothing left to delegate.
+	// Satisfied answers true for it too, and run() asks Satisfied first, so
+	// this branch used to be unreachable — until hookInstallStep started
+	// asking this question directly to decide whether it is waiting on the
+	// same merge. Both answering true is the pair run()'s own contract
+	// forbids.
+	if extendsWired(p.Root, lefthookConfig, ownedFrom(p, p.Root, ownedLefthook)) {
 		return "", false
 	}
 	return fmt.Sprintf(
 		"%s already exists and belongs to the project; adding a key to it is a merge,\nnot a write.",
 		lefthookConfig), true
+}
+
+// declaresNothing reports whether raw is comments and blank lines all the way
+// down — lefthook's untouched scaffold, or an empty file.
+//
+// The test is textual because that is the whole of the question: one line
+// that is not a comment is a key somebody wrote, whatever it says. A YAML
+// parser would answer the same thing at the cost of a grammar dharness does
+// not otherwise need, and "#" cannot start a YAML key, so there is no shape
+// this reads backwards.
+func declaresNothing(raw []byte) bool {
+	for _, line := range strings.Split(string(raw), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func (lefthookExtendsStep) Apply(p project.Project, w *Writer, _ io.Writer) (Facts, error) {
