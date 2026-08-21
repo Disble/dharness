@@ -67,3 +67,28 @@ func TestFallowDupesStaysWholeRepository(t *testing.T) {
 		t.Errorf("FallowDupes() = %v, want [dupes]", got)
 	}
 }
+
+// TestESLintStagedSuppressesTheIgnoredFileWarning covers a warning dharness
+// causes and only dharness can answer for.
+//
+// The gate names every staged file explicitly, and ESLint warns when a file
+// it was handed is one its config ignores: "File ignored because of a
+// matching ignore pattern." Since the layer dharness writes ignores the
+// .dharness/ directory — so its own generated config stops failing its own
+// require-jsdoc rule — committing a change to that directory prints the
+// warning on the gate, about a list dharness built rather than about
+// anything the user did.
+//
+// --no-warn-ignored is ESLint's own answer, in its own --help: "Suppress
+// warnings when the file list includes ignored files". It suppresses nothing
+// actionable, because the file list is not the user's to change.
+func TestESLintStagedSuppressesTheIgnoredFileWarning(t *testing.T) {
+	args := ESLintStaged([]string{"src/a.ts"})
+
+	if !contains(args, "--no-warn-ignored") {
+		t.Errorf("ESLintStaged() = %v, want --no-warn-ignored", args)
+	}
+	if !contains(args, "src/a.ts") {
+		t.Errorf("ESLintStaged() = %v, want it to still name the staged file", args)
+	}
+}

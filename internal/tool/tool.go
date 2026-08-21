@@ -324,8 +324,17 @@ func StrykerDryRun(paths []string, testRunner string, concurrency int) []string 
 // from the repository root — internal/project's
 // StagedSourceFilesFromSource does the stripping, so this function stays a
 // pure pass-through rather than duplicating that path math.
+//
+// --no-warn-ignored answers a warning dharness itself causes. Naming files
+// explicitly makes ESLint report each one its config ignores — "File ignored
+// because of a matching ignore pattern" — and the layer dharness writes
+// ignores the .dharness/ directory, so committing a change there prints the
+// warning about a file list dharness built rather than about anything the
+// user did. It is ESLint's own flag for exactly this, in its own --help
+// ("Suppress warnings when the file list includes ignored files"), and it
+// suppresses nothing actionable: the file list is not the user's to change.
 func ESLintStaged(files []string) []string {
-	return files
+	return append([]string{"--no-warn-ignored"}, files...)
 }
 
 func mutate(paths []string) []string {
