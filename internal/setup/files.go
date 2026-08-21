@@ -240,11 +240,22 @@ func wireFallowExtends(p project.Project, w *Writer) error {
 // wireLefthookExtends does the same for the gate, which belongs to the
 // repository because that is where git looks for it. Same precondition as
 // wireFallowExtends: reached only when lefthookExtendsStep.Delegated(p)
-// returned ok == false.
+// returned ok == false, which here means either no config at all or one
+// lefthook scaffolded and nobody has written a key into yet.
+//
+// The scaffold's own text is kept below the reference. Delegated already
+// established there is no key to merge with, so this is a write and not a
+// merge — but what it writes over is lefthook documenting its own format to
+// whoever opens the file, and deleting that buys nothing.
 func wireLefthookExtends(p project.Project, w *Writer) error {
 	target := ownedFrom(p, p.Root, ownedLefthook)
 	path := filepath.Join(p.Root, lefthookConfig)
-	return w.Write(path, fmt.Appendf(nil, "extends:\n  - %s\n", target))
+
+	body := fmt.Sprintf("extends:\n  - %s\n", target)
+	if existing, err := os.ReadFile(path); err == nil && strings.TrimSpace(string(existing)) != "" {
+		body += "\n" + string(existing)
+	}
+	return w.Write(path, []byte(body))
 }
 
 // eslintFlatConfigNames are ESLint 9's flat config file names, tried in the
