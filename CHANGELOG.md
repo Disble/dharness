@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.7.0](https://github.com/Disble/dharness/compare/v1.6.0...v1.7.0) (2026-08-21)
+
+
+### Features
+
+* **mutate:** show what each surviving mutant became ([5ba5e05](https://github.com/Disble/dharness/commit/5ba5e052f57653dce32b827388ee346ad0dc6e2c))
+
+
+### Bug Fixes
+
+* **gate:** check the commit being made, not the working tree ([#36](https://github.com/Disble/dharness/issues/36)) ([fd5a994](https://github.com/Disble/dharness/commit/fd5a994061e0489864307a87caba7934f84ef9ec))
+* **mutate:** say what the cumulative table is, and add --fresh to skip it ([46dfe3c](https://github.com/Disble/dharness/commit/46dfe3cbe8913f65057d8324d4b2054e5aff2f3d))
+
 ## [1.6.0](https://github.com/Disble/dharness/compare/v1.5.1...v1.6.0) (2026-08-21)
 
 
