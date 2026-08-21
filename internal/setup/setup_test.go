@@ -485,6 +485,7 @@ func TestSatisfiedStepsCarryTheirOwnDetectionFactNotDescribesFixInstructions(t *
 		}
 		writeStepFixtureFile(t, root, "lefthook.yml", "pre-commit:\n")
 		writeStepFixtureFile(t, filepath.Join(root, ".git", "hooks"), "pre-commit", "lefthook run pre-commit\n")
+		stubHooksDir(t, filepath.Join(root, ".git", "hooks"))
 		if !(hookInstallStep{}).Satisfied(p) {
 			t.Fatal("fixture is not satisfied; fix the test before trusting its assertion")
 		}
@@ -1484,6 +1485,7 @@ func TestHookDetectionReadsTheFileAndSaysNoWhenItIsAbsent(t *testing.T) {
 		t.Run(hook.name, func(t *testing.T) {
 			root := t.TempDir()
 			p := project.Project{Root: root, Source: root}
+			stubHooksDir(t, filepath.Join(root, ".git", "hooks"))
 
 			if hook.answer(p) {
 				t.Error("answered true with no hook file at all")
@@ -1727,5 +1729,87 @@ func writeProjectSource(t *testing.T, root, rel, contents string) {
 	}
 	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// stubVerifiedStep is a step whose Apply succeeds and whose postcondition is
+// whatever the test says it is — the shape of every step that hands its
+// outcome to a subprocess and gets an exit code back instead of a result.
+type stubVerifiedStep struct {
+	id      string
+	applied *bool
+	verify  error
+}
+
+func (s stubVerifiedStep) ID() string                             { return s.id }
+
+func (stubVerifiedStep) Describe(project.Project) string          { return "" }
+
+func (stubVerifiedStep) Satisfied(project.Project) bool           { return false }
+
+func (stubVerifiedStep) Delegated(project.Project) (string, bool) { return "", false }
+
+func (s stubVerifiedStep) Apply(project.Project, *Writer, io.Writer) (Facts, error) {
+	*s.applied = true
+	return Facts{}, nil
+}
+
+func (s stubVerifiedStep) Verify(project.Project) error { return s.verify }
+
+// TestAppliedIsWithheldWhenAStepsOwnPostconditionDoesNotHold pins the rule
+// F1 was measured against: a step whose Apply returns nil has proved that a
+// subprocess exited 0, which is not the same claim as "the thing this step
+// exists to produce is there".
+//
+// Measured on dharness 1.5.1: step 9 shelled out to `lefthook install`,
+// which on a repository whose lefthook.yml carries no pre-commit job
+// scaffolds a placeholder, installs only its own prepare-commit-msg hook and
+// exits 0. dharness relayed lefthook's `sync hooks: ✔️` as proof the gate was
+// armed and reported the step applied, three runs in a row, with no
+// pre-commit hook on disk. The gate never ran.
+//
+// So a step that can verify its own postcondition is asked to, and a
+// postcondition that does not hold is a failure — the same failure path any
+// other step gets, retraction included. Reporting it applied is the one
+// answer that is not available.
+func TestAppliedIsWithheldWhenAStepsOwnPostconditionDoesNotHold(t *testing.T) {
+	var applied bool
+	step := stubVerifiedStep{
+		id:      "wire something a subprocess owns",
+		applied: &applied,
+		verify:  errors.New("no pre-commit hook carries the gate"),
+	}
+
+	steps, _, err := run([]Step{step}, project.Project{Root: t.TempDir()})
+	if err == nil {
+		t.Fatal("run() = nil error for a step whose postcondition does not hold")
+	}
+	if !applied {
+		t.Fatal("Apply never ran; the fixture no longer exercises the post-apply check")
+	}
+	if len(steps) != 1 {
+		t.Fatalf("run() reported %d steps, want 1", len(steps))
+	}
+	if steps[0].Status != report.Failed {
+		t.Errorf("Status = %q, want %q", steps[0].Status, report.Failed)
+	}
+	if !strings.Contains(steps[0].Error, "no pre-commit hook carries the gate") {
+		t.Errorf("Error = %q, want it to carry the postcondition's own words", steps[0].Error)
+	}
+}
+
+// TestAppliedStandsWhenThePostconditionHolds is the other side: a verifier
+// that answers nil changes nothing about the applied path, so the check
+// cannot be a mutant that fails everything.
+func TestAppliedStandsWhenThePostconditionHolds(t *testing.T) {
+	var applied bool
+	step := stubVerifiedStep{id: "wire something", applied: &applied, verify: nil}
+
+	steps, _, err := run([]Step{step}, project.Project{Root: t.TempDir()})
+	if err != nil {
+		t.Fatalf("run() = %v", err)
+	}
+	if steps[0].Status != report.Applied {
+		t.Errorf("Status = %q, want %q", steps[0].Status, report.Applied)
 	}
 }

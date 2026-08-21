@@ -17,7 +17,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Disble/dharness/internal/jsconfig"
 	"github.com/Disble/dharness/internal/project"
 	"github.com/Disble/dharness/internal/report"
 )
@@ -58,6 +57,43 @@ type Step interface {
 	// produces goes to out, never to the process's own stdout, so applySteps
 	// can frame it under this step. A non-nil error means Facts is not read.
 	Apply(p project.Project, w *Writer, out io.Writer) (Facts, error)
+}
+
+// Verifier is the extra obligation a step takes on when its Apply hands the
+// outcome to something dharness does not control.
+//
+// Apply returning nil says one thing: the work it started did not error. For
+// a step that writes a file itself, that is the whole answer — the bytes are
+// there or Write failed. For a step that shells out, it is a proxy for the
+// answer, and §09 is exactly about not accepting a proxy when the direct
+// signal is available: `lefthook install` exits 0 whether or not it installed
+// the hook dharness needs, and the direct signal — a pre-commit hook that
+// carries the gate — is one os.ReadFile away.
+//
+// A step implements this when its postcondition is checkable and its Apply
+// cannot check it. run asks after a successful Apply, and a postcondition
+// that does not hold is a failure, not an applied step with a caveat.
+//
+// It is deliberately not part of Step. Most steps have nothing to add: their
+// Apply already proves what they claim, and a Verify returning nil on every
+// one of them would be eleven implementations of "trust me".
+type Verifier interface {
+	// Verify reports why this step's postcondition does not hold, or nil
+	// when it does. It runs after Apply and reads the repository, exactly
+	// like Satisfied — never the transcript, and never the exit code it is
+	// there to double-check.
+	Verify(p project.Project) error
+}
+
+// verified answers a step's postcondition, or nil for a step that has none
+// to answer. Split out so run's own body stays one status decision per
+// branch rather than an interface assertion inline.
+func verified(step Step, p project.Project) error {
+	verifier, ok := step.(Verifier)
+	if !ok {
+		return nil
+	}
+	return verifier.Verify(p)
 }
 
 // Plan is everything dharness knows how to check, in the order it must happen.
@@ -163,6 +199,14 @@ func run(plan []Step, p project.Project) (steps []report.StepResult, notes []rep
 		before := len(writer.touched)
 		facts, applyErr := step.Apply(p, writer, &sink)
 		after := len(writer.touched)
+
+		// The postcondition is asked here rather than inside Apply because
+		// it has to hold for the step, not for the command the step ran:
+		// asking Apply to check itself is asking the same proxy twice. The
+		// clock covers it — verifying is part of what the step cost.
+		if applyErr == nil {
+			applyErr = verified(step, p)
+		}
 		ms := time.Since(start).Milliseconds()
 
 		if applyErr != nil {
@@ -251,7 +295,7 @@ func satisfiedEvidence(p project.Project, step Step) string {
 		case managerHusky:
 			return huskyHook
 		default:
-			return filepath.ToSlash(filepath.Join(".git", "hooks", "pre-commit"))
+			return gateHookPath(p)
 		}
 
 	case agentSkillStep:
@@ -276,40 +320,42 @@ func satisfiedEvidence(p project.Project, step Step) string {
 	}
 }
 
-// eslintExtendsSatisfiedEvidence mirrors eslintExtendsStep.Satisfied's own
-// branches (steps.go), each reported as its own fact rather than the one
-// generic Describe fallback every branch used to share — found live during
-// verification against a real project, where the common "already spliced
-// and converged" case rendered the same truncated Describe fragment the
-// team lead's legacyLintConfigStep example already named (gap 4).
+// eslintExtendsSatisfiedEvidence names what a satisfied eslintExtendsStep
+// actually converged on.
+//
+// It used to mirror every one of Satisfied's branches, because Satisfied
+// answered true for the delegating shapes too. It no longer does — a shape
+// that delegates is not satisfied — so the only states that reach here are
+// a repository with no JS project, which has no config to describe, and a
+// spliced config whose regions already match byte for byte. The removed
+// branches ("TypeScript config present", "config shape not recognised" and
+// the rest) were not extra detail: they were this function reporting, under
+// an "Already in place" heading, the reasons a step had been refused.
 func eslintExtendsSatisfiedEvidence(p project.Project, step Step) string {
 	if !p.HasSource() {
 		return firstLine(step.Describe(p))
 	}
-
-	path := eslintFlatConfig(p.Source)
-	if path == "" {
-		switch {
-		case eslintTypeScriptConfig(p.Source) != "":
-			return "TypeScript config present"
-		case eslintLegacyConfig(p.Source) != "":
-			return "legacy-only config present"
-		default:
-			return firstLine(step.Describe(p))
-		}
-	}
-
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return "config could not be read"
-	}
-	if _, malformed := malformedEslintMarkerPair(string(raw)); malformed {
-		return "marker pair malformed"
-	}
-	if _, _, ok := jsconfig.Analyze(raw); !ok {
-		return "config shape not recognised"
-	}
 	return "spliced regions match"
+}
+
+// gateHookPath names the pre-commit hook this repository actually uses,
+// relative to its root so a report names a place rather than a machine.
+//
+// It answers ".git/hooks/pre-commit" for a repository that has not moved its
+// hooks, which is what this evidence line always said — and the real
+// directory for one that has, which it used to get wrong. The join is the
+// fallback for a repository git will not answer for; a satisfied step that
+// got here read the hook from somewhere, so naming the default is better
+// than naming nothing.
+func gateHookPath(p project.Project) string {
+	hooks, err := project.HooksDir(p.Root)
+	if err != nil {
+		return filepath.ToSlash(filepath.Join(".git", "hooks", "pre-commit"))
+	}
+	if rel, err := filepath.Rel(p.Root, hooks); err == nil {
+		hooks = rel
+	}
+	return filepath.ToSlash(filepath.Join(hooks, "pre-commit"))
 }
 
 // firstLine takes a satisfied step's evidence from its own Describe(p): the

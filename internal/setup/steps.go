@@ -1124,13 +1124,49 @@ func (hookInstallStep) Describe(p project.Project) string {
 // Delegated per manager: lefthook and husky both answer, so dharness installs
 // the gate itself. No manager answering is Decision 5's open decision — it is
 // not dharness's default to pick.
+//
+// The lefthook branch carries one more condition, and it is a dependency on
+// step 5 rather than a second rule: `lefthook install` reads the project's
+// lefthook.yml, so a config that does not carry the reference to the file
+// dharness owns installs nothing whatever this step does. When step 5 handed
+// that merge to the project, this step is waiting on the same decision and
+// says so, instead of running a command that cannot work and failing the run
+// over an answer nobody has given yet.
 func (hookInstallStep) Delegated(p project.Project) (string, bool) {
 	switch hookManager(p) {
-	case managerLefthook, managerHusky:
+	case managerHusky:
+		return "", false
+	case managerLefthook:
+		if _, delegated := (lefthookExtendsStep{}).Delegated(p); delegated {
+			return fmt.Sprintf(
+				"%s has to gain the reference first — see the step above. lefthook installs\nthe hooks its own config declares, so until that merge happens there is no\npre-commit job for it to install.",
+				lefthookConfig), true
+		}
 		return "", false
 	default:
-		return "nothing answers: there is no lefthook config, no .husky/ and no lefthook\nbinary. Choosing a hook manager is a decision this project has not made, and\nnot a default dharness gets to pick.", true
+		return "nothing answers: there is no lefthook config, no .husky/ and no lefthook\nbinary. Choosing a hook manager is a decision this project has not made, and\nnot a default dharness gets to pick." + blockedPostinstallNote(p), true
 	}
+}
+
+// blockedPostinstallNote warns a bun project about the step between
+// installing lefthook and having a lefthook that runs.
+//
+// `bun add -d lefthook` succeeds and prints "Blocked 1 postinstall", because
+// bun does not run lifecycle scripts by default — and lefthook's postinstall
+// is what downloads the platform binary. So the command this delegation asks
+// for leaves an unusable binary behind, with the reason two lines up in
+// output that has already scrolled past.
+//
+// Not dharness's defect, and saying so is not dharness doing bun's job
+// either: the note sits directly in the path of a step dharness chose to
+// delegate, and dharness has already detected the package manager. Only bun
+// gets it — the other three run the postinstall, and a sentence about a
+// problem they do not have is noise in a block meant to be read.
+func blockedPostinstallNote(p project.Project) string {
+	if p.PackageManager != "bun" {
+		return ""
+	}
+	return "\n\nOn bun, lifecycle scripts are blocked by default, so `bun add -d lefthook`\ninstalls the package without downloading its binary. `bun pm trust lefthook`\nruns the postinstall that does."
 }
 
 func (hookInstallStep) Apply(p project.Project, w *Writer, out io.Writer) (Facts, error) {
@@ -1144,6 +1180,40 @@ func (hookInstallStep) Apply(p project.Project, w *Writer, out io.Writer) (Facts
 		command = tool.Installed("lefthook", path, p.Root, "install")
 	}
 	return Facts{}, runner.Run(command, out, out)
+}
+
+// Verify is the whole of F1: this step's Satisfied already answers the exact
+// question Apply cannot — will git run the gate — so the postcondition is
+// Satisfied itself, asked once more after the subprocess claims success.
+//
+// That equivalence is not general. installStep's Satisfied deliberately
+// answers a different question ("is there a JS project here at all") and is
+// false right after a successful install, which is why run asks this through
+// an interface a step opts into rather than re-checking Satisfied for
+// everyone.
+//
+// The error names the file that would have proved it, because the fix is
+// almost never in dharness: a lefthook.yml whose pre-commit job is commented
+// out, or one carrying the project's own jobs and not the gate, produces
+// exactly this — `lefthook install` exits 0 and writes no pre-commit hook.
+func (s hookInstallStep) Verify(p project.Project) error {
+	if s.Satisfied(p) {
+		return nil
+	}
+
+	if hookManager(p) == managerHusky {
+		return fmt.Errorf(
+			"the hook manager reported success, but %s does not carry %q; nothing runs the gate on commit",
+			huskyHook, gateCommand)
+	}
+
+	hooks, err := project.HooksDir(p.Root)
+	if err != nil {
+		return fmt.Errorf("the hook manager reported success, but git cannot name this repository's hooks directory: %w", err)
+	}
+	return fmt.Errorf(
+		"the hook manager reported success, but no pre-commit hook was installed in %s; check that %s declares a pre-commit job — lefthook exits 0 and installs nothing when it has none",
+		filepath.ToSlash(hooks), lefthookConfig)
 }
 
 // --------------------------------------------------------- agent skill

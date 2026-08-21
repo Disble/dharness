@@ -56,6 +56,11 @@ func gitProject(t *testing.T, root string, lockfiles ...string) {
 			return []byte(filepath.ToSlash(root) + "\n"), nil
 		case len(args) >= 1 && args[0] == "ls-files":
 			return []byte(strings.Join(lockfiles, "\x00")), nil
+		// What git answers for a repository that has not set
+		// core.hooksPath — the case every fixture here is in, and the one
+		// gateInstalled now resolves rather than assumes.
+		case len(args) >= 2 && args[0] == "rev-parse" && slices.Contains(args, "--git-path"):
+			return []byte(filepath.ToSlash(filepath.Join(root, ".git", "hooks")) + "\n"), nil
 		}
 		return nil, errors.New("unexpected git call")
 	}))

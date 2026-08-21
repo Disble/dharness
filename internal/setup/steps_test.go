@@ -1322,3 +1322,108 @@ func TestLefthookExtendsStepStillRefusesAConfigWithContent(t *testing.T) {
 		t.Errorf("Delegated() = %q, want it to say why it will not write", why)
 	}
 }
+
+// stubHooksDir points project.HooksDir at dir, the way a repository that
+// sets core.hooksPath makes git answer.
+func stubHooksDir(t *testing.T, dir string) {
+	t.Helper()
+	t.Cleanup(project.SetGitOutputForTest(func(string, ...string) ([]byte, error) {
+		return []byte(dir + "\n"), nil
+	}))
+}
+
+// TestHookInstallStepVerifiesTheHookRatherThanTheExitCode is F1 at the step
+// that owns it: `lefthook install` exiting 0 proves lefthook ran, not that
+// git will run the gate. Verify reads the hook.
+func TestHookInstallStepVerifiesTheHookRatherThanTheExitCode(t *testing.T) {
+	root := t.TempDir()
+	hooks := filepath.Join(root, ".githooks")
+	if err := os.MkdirAll(hooks, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stubHooksDir(t, hooks)
+	writeStepFixtureFile(t, root, lefthookConfig, "extends:\n  - .dharness/lefthook.yml\n")
+	p := project.Project{Root: root, Source: root}
+
+	err := (hookInstallStep{}).Verify(p)
+	if err == nil {
+		t.Fatal("Verify() = nil with no pre-commit hook on disk: the gate never runs and the step reports applied")
+	}
+	if !strings.Contains(err.Error(), "pre-commit") {
+		t.Errorf("Verify() = %q, want it to name the hook that is missing", err)
+	}
+
+	writeStepFixtureFile(t, hooks, "pre-commit", "#!/bin/sh\nlefthook run pre-commit\n")
+	if err := (hookInstallStep{}).Verify(p); err != nil {
+		t.Errorf("Verify() = %v with a pre-commit hook that carries lefthook", err)
+	}
+}
+
+// TestGateInstalledFollowsCoreHooksPath pins the direct signal against the
+// assumption it replaced: the hook lives where git says it lives. Under the
+// old `.git/hooks` join this fixture answered false with the hook plainly
+// installed, which made step 9 re-run `lefthook install` on every sync and
+// would now fail the run outright.
+func TestGateInstalledFollowsCoreHooksPath(t *testing.T) {
+	root := t.TempDir()
+	hooks := filepath.Join(root, ".githooks")
+	if err := os.MkdirAll(hooks, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeStepFixtureFile(t, hooks, "pre-commit", "#!/bin/sh\nlefthook run pre-commit\n")
+	if err := os.MkdirAll(filepath.Join(root, ".git", "hooks"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeStepFixtureFile(t, filepath.Join(root, ".git", "hooks"), "pre-commit", "#!/bin/sh\nsomething else\n")
+	stubHooksDir(t, hooks)
+
+	if !gateInstalled(project.Project{Root: root, Source: root}) {
+		t.Error("gateInstalled() = false for a hook installed where core.hooksPath points")
+	}
+}
+
+// TestHookInstallStepDelegatesWhenTheConfigItNeedsIsDelegated pins the
+// dependency between steps 5 and 9, found by running the binary rather than
+// the suite.
+//
+// A project that owns its lefthook.yml gets step 5 delegated: adding the
+// reference is a merge, and dharness does not merge. Step 9 then ran
+// `lefthook install` anyway, which succeeds and installs nothing, and the
+// postcondition check turned that into a failed run — rolling back the
+// install, the owned files and the ESLint layer over a decision the project
+// simply had not made yet, and taking step 5's own instructions down with
+// it.
+//
+// The two steps have the same answer here, so they give it the same way. The
+// postcondition stays for what it was written for: a config that does carry
+// the reference and a hook manager that still installs nothing.
+func TestHookInstallStepDelegatesWhenTheConfigItNeedsIsDelegated(t *testing.T) {
+	root := t.TempDir()
+	writeStepFixtureFile(t, root, lefthookConfig, "pre-push:\n  commands:\n    audit:\n      run: bun audit\n")
+	p := project.Project{Root: root, Source: root}
+
+	if _, delegated := (lefthookExtendsStep{}).Delegated(p); !delegated {
+		t.Fatal("the fixture no longer delegates step 5; fix it before trusting this assertion")
+	}
+
+	why, delegated := (hookInstallStep{}).Delegated(p)
+	if !delegated {
+		t.Fatal("Delegated() = false while the config it installs from is still the project's to merge")
+	}
+	if !strings.Contains(why, lefthookConfig) {
+		t.Errorf("Delegated() = %q, want it to name the config that has to gain the reference", why)
+	}
+}
+
+// TestHookInstallStepAppliesOnceTheConfigCarriesTheReference is the other
+// side: a config already pointing at the file dharness owns is not a
+// decision anyone is waiting on, so step 9 runs.
+func TestHookInstallStepAppliesOnceTheConfigCarriesTheReference(t *testing.T) {
+	root := t.TempDir()
+	writeStepFixtureFile(t, root, lefthookConfig, "extends:\n  - .dharness/lefthook.yml\n")
+	p := project.Project{Root: root, Source: root}
+
+	if why, delegated := (hookInstallStep{}).Delegated(p); delegated {
+		t.Errorf("Delegated() = %q, true for a config that already carries the reference", why)
+	}
+}

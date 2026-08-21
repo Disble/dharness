@@ -211,3 +211,20 @@ func splitNUL(out []byte) []string {
 	}
 	return paths
 }
+
+// HooksDir names the directory git actually runs this repository's hooks
+// from, as an absolute path.
+//
+// Asking git is the difference between a check that works and one that is
+// always wrong: `.git/hooks` is only the default, and a repository that sets
+// core.hooksPath — dharness's own does, and so does every repository that
+// keeps its hooks under version control — runs them from somewhere else.
+// `rev-parse --git-path hooks` resolves that setting; joining ".git/hooks"
+// by hand ignores it and reports a wired gate as missing forever.
+func HooksDir(root string) (string, error) {
+	out, err := gitOutput(root, "rev-parse", "--path-format=absolute", "--git-path", "hooks")
+	if err != nil {
+		return "", &NotAGitRepositoryError{Dir: root, Cause: err}
+	}
+	return strings.TrimSpace(string(out)), nil
+}

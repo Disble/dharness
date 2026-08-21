@@ -146,8 +146,18 @@ func declaredAt(path, key string) int {
 
 // gateInstalled reports whether git will actually run the gate, which is a
 // different question from whether the configuration mentions it.
+//
+// The directory comes from git rather than from a join with ".git/hooks":
+// a repository that sets core.hooksPath runs its hooks from elsewhere, and
+// against the hardcoded path this answered false with the gate plainly
+// installed. A repository git cannot answer for has no hooks directory to
+// read, so it has no gate.
 func gateInstalled(p project.Project) bool {
-	raw, err := os.ReadFile(filepath.Join(p.Root, ".git", "hooks", "pre-commit"))
+	hooks, err := project.HooksDir(p.Root)
+	if err != nil {
+		return false
+	}
+	raw, err := os.ReadFile(filepath.Join(hooks, "pre-commit"))
 	return err == nil && strings.Contains(string(raw), "lefthook")
 }
 

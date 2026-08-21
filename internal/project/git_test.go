@@ -231,3 +231,45 @@ func TestStagedDiffPropagatesTheGitFailure(t *testing.T) {
 		t.Fatalf("StagedDiff() = %v, want NotAGitRepositoryError", err)
 	}
 }
+
+// TestHooksDirAsksGitRatherThanAssumingDotGitHooks pins the one reason this
+// function exists: `.git/hooks` is where git looks only when the repository
+// has not said otherwise, and a repository that sets core.hooksPath — this
+// one does — runs its hooks from somewhere else entirely. A check hardcoded
+// to `.git/hooks` there is not merely imprecise; it is always false, which
+// makes a wired gate look unwired on every run.
+func TestHooksDirAsksGitRatherThanAssumingDotGitHooks(t *testing.T) {
+	var asked []string
+	t.Cleanup(SetGitOutputForTest(func(_ string, args ...string) ([]byte, error) {
+		asked = args
+		return []byte("D:/repo/.githooks\n"), nil
+	}))
+
+	dir, err := HooksDir("D:/repo")
+	if err != nil {
+		t.Fatalf("HooksDir() = %v", err)
+	}
+	if dir != "D:/repo/.githooks" {
+		t.Errorf("HooksDir() = %q, want the path git named", dir)
+	}
+	if !slices.Contains(asked, "--git-path") || !slices.Contains(asked, "hooks") {
+		t.Errorf("HooksDir() asked git %q; only --git-path hooks resolves core.hooksPath", asked)
+	}
+}
+
+// TestHooksDirFailsOutsideARepository keeps the error typed: a caller that
+// cannot locate the hooks directory has not found an empty one.
+func TestHooksDirFailsOutsideARepository(t *testing.T) {
+	t.Cleanup(SetGitOutputForTest(func(string, ...string) ([]byte, error) {
+		return nil, errors.New("not a git repository")
+	}))
+
+	dir, err := HooksDir(t.TempDir())
+	if err == nil {
+		t.Fatalf("HooksDir() = %q, nil; want an error outside a repository", dir)
+	}
+	var notARepo *NotAGitRepositoryError
+	if !errors.As(err, &notARepo) {
+		t.Errorf("HooksDir() = %v, want a *NotAGitRepositoryError", err)
+	}
+}
