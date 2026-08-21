@@ -981,3 +981,54 @@ func TestCheckRefusesAnEmptyStagedDiff(t *testing.T) {
 		}
 	}
 }
+
+// TestCheckSaysWhyTheWaitIsNotAnalysis states, in the gate's own output, the
+// cost of a decision the gate makes on the user's behalf.
+//
+// Measured on a five-file create-next-app: a commit touching one file takes
+// ~23s, of which the tools' own self-reported analysis is ~4.6s. The rest is
+// the package manager resolving react-doctor@latest and fallow@latest against
+// the registry, three separate times, on every commit. That resolution is
+// deliberate (§03) — the gate runs the current release and pins nothing — but
+// a person watching a 23-second `git commit` with no explanation reads it as
+// the analysis being slow, and reaches for --no-verify.
+//
+// It prints before the first stage, because the whole point is to be readable
+// while the wait is happening rather than after it.
+func TestCheckSaysWhyTheWaitIsNotAnalysis(t *testing.T) {
+	var out bytes.Buffer
+	stub(t, "src/a.ts\n")
+
+	if err := RunCheck(nil, &out); err != nil {
+		t.Fatalf("RunCheck() = %v", err)
+	}
+
+	got := out.String()
+	flat := normalizeSpace(got)
+	if !strings.Contains(flat, "@latest") {
+		t.Errorf("the gate does not name the resolution it pays for:\n%s", got)
+	}
+	if !strings.Contains(flat, "registry") {
+		t.Errorf("the gate does not say where the wait goes:\n%s", got)
+	}
+	if latest, first := strings.Index(got, "@latest"), strings.Index(got, "──"); latest > first {
+		t.Errorf("the note prints after the first stage began, too late to read while waiting:\n%s", got)
+	}
+}
+
+// TestCheckSaysNothingWhenThereIsNothingToCheck keeps the note off the fast
+// path: a docs-only commit exits in 0.17s and is not taxed, and a line
+// explaining a wait that did not happen is the noise this gate already has
+// too much of.
+func TestCheckSaysNothingWhenThereIsNothingToCheck(t *testing.T) {
+	var out bytes.Buffer
+	stub(t, "")
+
+	if err := RunCheck(nil, &out); err != nil {
+		t.Fatalf("RunCheck() = %v", err)
+	}
+
+	if strings.Contains(out.String(), "@latest") {
+		t.Errorf("the gate explained a wait it never had:\n%s", out.String())
+	}
+}
