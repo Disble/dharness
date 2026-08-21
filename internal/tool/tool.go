@@ -125,6 +125,16 @@ func contains(values []string, target string) bool {
 // --no-score also covers telemetry, which is documented as its alias. It and
 // --no-supply-chain are both on by default and both reach the network, which a
 // gate that runs on every commit must not do.
+//
+// There is no flag for the "Agent guidance" block — thirteen lines of
+// instructions addressed to a model — or for the marketing footer that
+// follows it, which together are most of what a clean run prints. Measured
+// against 0.9.12's own --help: the only switch that removes them is --json,
+// documented as "suppresses other output", and taking it would make dharness
+// the renderer of react-doctor's findings rather than the thing that runs it.
+// That is the boundary §03 draws and the same one FallowAudit's notice is
+// left alone for. Filtering the block out of the relayed stream is the same
+// trade wearing a different hat. So it stays, and the ask belongs upstream.
 func ReactDoctorStaged() []string {
 	return []string{
 		"--staged",
