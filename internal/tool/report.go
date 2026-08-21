@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
+	"strings"
 )
 
 // MutationReportPath is where Stryker's json reporter writes, relative to the
@@ -24,10 +25,34 @@ type Survivor struct {
 	File        string
 	Line        int
 	Description string
+
+	// Replacement is what the mutant put in the code's place, as the report
+	// records it, or "" when the report carries none.
+	//
+	// A mutator name and a line number do not say what changed: the field
+	// report's example was `MethodExpression` on a line holding a five-line
+	// chained expression, which narrows it to "a method call somewhere in
+	// here was removed". Working the rest out meant parsing by hand the same
+	// JSON dharness had just read to reach its verdict.
+	Replacement string
 }
 
+// String is one survivor on one line, which is what makes the list scannable.
+//
+// The replacement is collapsed rather than wrapped: a mutated multi-line
+// expression carries its newlines into the report, and a list that reflows is
+// a list nobody can read down. The schema marks the field optional, so an
+// absent one prints no arrow rather than an arrow pointing at nothing.
 func (s Survivor) String() string {
-	return fmt.Sprintf("%s:%d %s", s.File, s.Line, s.Description)
+	if s.Replacement == "" {
+		return fmt.Sprintf("%s:%d %s", s.File, s.Line, s.Description)
+	}
+	return fmt.Sprintf("%s:%d %s → %s", s.File, s.Line, s.Description, collapse(s.Replacement))
+}
+
+// collapse folds any run of whitespace into one space and trims the ends.
+func collapse(text string) string {
+	return strings.Join(strings.Fields(text), " ")
 }
 
 // mutationReport is the subset of the mutation-testing report schema that
@@ -37,6 +62,7 @@ type mutationReport struct {
 		Mutants []struct {
 			Status      string `json:"status"`
 			MutatorName string `json:"mutatorName"`
+			Replacement string `json:"replacement"`
 			Location    struct {
 				Start struct {
 					Line int `json:"line"`
@@ -73,6 +99,7 @@ func Survivors(r io.Reader) ([]Survivor, error) {
 				File:        path,
 				Line:        mutant.Location.Start.Line,
 				Description: mutant.MutatorName,
+				Replacement: mutant.Replacement,
 			})
 		}
 	}
