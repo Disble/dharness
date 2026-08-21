@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.6.0](https://github.com/Disble/dharness/compare/v1.5.1...v1.6.0) (2026-08-21)
+
+
+### Features
+
+* **check:** say why most of the gate's wait is dependency resolution ([f1c2838](https://github.com/Disble/dharness/commit/f1c28380f59c2ec62a8bcfa69c8a374c686a3557))
+* **cli:** point init, setup and bootstrap at sync ([51fa3ad](https://github.com/Disble/dharness/commit/51fa3ad5acf14c3c06714d9bebbf1be4b0ff5fdb))
+* **jsconfig:** resolve a default export bound to a const ([a036042](https://github.com/Disble/dharness/commit/a036042f89c680bfb166d56000ac5ed3328df064))
+* **sync:** contribute only the ESLint layers the project lacks ([5784aba](https://github.com/Disble/dharness/commit/5784aba1d78eb6b1c53bee66d08964c00ea32f0d))
+
+
+### Bug Fixes
+
+* **check:** suppress the ignored-file warning dharness's own layer causes ([5f7b7cc](https://github.com/Disble/dharness/commit/5f7b7cc4af076a1b9b951f0b13c812016b005038))
+* **sync:** report an unwired ESLint layer as delegated, not satisfied ([a01f206](https://github.com/Disble/dharness/commit/a01f206071b55306fc6f585ca947b49da9bfbb20))
+* **sync:** stop reporting a snapshotted path that was never created ([e6dc525](https://github.com/Disble/dharness/commit/e6dc5255533abe64a3c3ea6a89de860d8e665c2f))
+* **sync:** stop the file dharness owns from failing dharness's own rules ([4b638b9](https://github.com/Disble/dharness/commit/4b638b9e9935e08d9b1e624fed678334fdde21f2))
+* **sync:** verify a commit hook carries the gate instead of trusting exit 0 ([eddd1a8](https://github.com/Disble/dharness/commit/eddd1a89a4c0a2633baaab2a00b116bf6cf8e80b))
+* **sync:** write into lefthook's own scaffold instead of refusing it ([cdef364](https://github.com/Disble/dharness/commit/cdef3641d5453d27e5fe52f961d5435b2ac6e772))
+
 ## [1.5.1](https://github.com/Disble/dharness/compare/v1.5.0...v1.5.1) (2026-08-15)
 
 
