@@ -1742,11 +1742,8 @@ type stubVerifiedStep struct {
 }
 
 func (s stubVerifiedStep) ID() string                             { return s.id }
-
 func (stubVerifiedStep) Describe(project.Project) string          { return "" }
-
 func (stubVerifiedStep) Satisfied(project.Project) bool           { return false }
-
 func (stubVerifiedStep) Delegated(project.Project) (string, bool) { return "", false }
 
 func (s stubVerifiedStep) Apply(project.Project, *Writer, io.Writer) (Facts, error) {
