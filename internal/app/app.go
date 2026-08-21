@@ -53,7 +53,26 @@ type UnknownCommandError struct {
 	Command string
 }
 
+// setupVerbs are the words people reach for on a project that has never seen
+// dharness. None of them is a command — init was merged into sync (Decision
+// 1) and the others never existed — and each of them means sync.
+//
+// The list is deliberately short and exact. A fuzzy match would start
+// answering for typos of real commands too, and "did you mean sync" is
+// unhelpful when what someone typed was `chekc`.
+var setupVerbs = map[string]bool{
+	"init":      true,
+	"setup":     true,
+	"bootstrap": true,
+	"install":   true,
+}
+
 func (e *UnknownCommandError) Error() string {
+	if setupVerbs[e.Command] {
+		return fmt.Sprintf(
+			"unknown command %q; to set this project up run `dharness sync`, which is safe to re-run. Expected sync, check, mutate or version",
+			e.Command)
+	}
 	return fmt.Sprintf("unknown command %q; expected sync, check, mutate or version", e.Command)
 }
 
