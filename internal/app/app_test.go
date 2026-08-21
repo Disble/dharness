@@ -182,3 +182,30 @@ func TestRunArgsSuggestsNothingForAnUnrelatedTypo(t *testing.T) {
 		t.Errorf("an unrelated typo was given the setup suggestion: %s", err)
 	}
 }
+
+// TestHelpNamesWhatMutateNeedsAndHowToSilenceAMutant covers the two things
+// the field report had to discover elsewhere.
+//
+// The runner requirement was found at the moment of wanting the tool: the
+// first invocation failed with "Stryker found no supported test runner",
+// after the project had been set up on `bun test`.
+//
+// The equivalent-mutant question was answered by asking for a dharness
+// marker to be invented. Stryker already ships one, and it was measured
+// rather than read: `// Stryker disable next-line all: <reason>` moved four
+// mutants to `Ignored`, took survivors from 2 to 0, and exited 0. A tool that
+// fails on mutants nobody can kill is a tool people stop running, and the
+// answer was in the wrapped tool the whole time (CLAUDE.md's first rule).
+func TestHelpNamesWhatMutateNeedsAndHowToSilenceAMutant(t *testing.T) {
+	var out bytes.Buffer
+	if err := RunArgs([]string{"help"}, &out); err != nil {
+		t.Fatalf("RunArgs() = %v", err)
+	}
+
+	got := out.String()
+	for _, want := range []string{"vitest", "jest", "Stryker disable", "--fresh"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("help does not mention %q:\n%s", want, got)
+		}
+	}
+}
