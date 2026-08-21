@@ -56,7 +56,12 @@ func TestAnalyzeRefusesEveryRefusalMatrixCell(t *testing.T) {
 		"unimported identifier callee":           "export default withNuxt([\n  { rules: {} },\n]);\n",
 		"error isolated inside an array element": "export default [\n  { a: 1 + },\n  { rules: {} },\n];\n",
 		"object literal export":                  "export default { rules: {} };\n",
-		"identifier reference export":            "const config = [];\nexport default config;\n",
+		// An identifier the file itself binds is resolved now rather than
+		// refused — see TestAnalyzeResolvesAConstBoundDefaultExport. What
+		// still refuses is an identifier nothing declares, and one that
+		// only names another binding.
+		"unresolvable identifier export":         "export default fromSomewhereElse;\n",
+		"identifier bound to another identifier": "const base = [];\nconst config = base;\nexport default config;\n",
 		"no export default statement":            "export const config = [];\n",
 	}
 
@@ -611,5 +616,78 @@ func TestModuleOfReadsTheExportNotTheImport(t *testing.T) {
 	src := []byte("const a = require('one');\n\nexport default [a];\n")
 	if ModuleOf(src) != ESM {
 		t.Error("ModuleOf() let a require outvote an ESM export")
+	}
+}
+
+// TestAnalyzeResolvesAConstBoundDefaultExport is the shape `create-next-app`
+// emits today, measured against Next.js 16.3.1:
+//
+//	const eslintConfig = defineConfig([...]);
+//	export default eslintConfig;
+//
+// The call itself was already recognised — defineConfigArray checks that the
+// callee is bound by an import of exactly "eslint/config". What refused was
+// the hop before it: the default export is an identifier, and this package
+// only ever looked at the node the export statement pointed straight at. So
+// every project scaffolded by the framework's own tool reported "default
+// export is not an array literal or a recognised defineConfig(...) call".
+//
+// One hop, and only to a top-level declaration. A chain of aliases is not a
+// shape any scaffolder emits, and following one would mean answering for
+// reassignment too.
+func TestAnalyzeResolvesAConstBoundDefaultExport(t *testing.T) {
+	src := []byte(`import { defineConfig, globalIgnores } from "eslint/config";
+import nextVitals from "eslint-config-next/core-web-vitals";
+
+const eslintConfig = defineConfig([
+  ...nextVitals,
+  globalIgnores([".next/**"]),
+]);
+
+export default eslintConfig;
+`)
+
+	anchor, why, ok := Analyze(src)
+	if !ok {
+		t.Fatalf("Analyze() refused create-next-app's own output: %s", why)
+	}
+	rest := string(src[anchor.LayerAt:])
+	if !strings.HasPrefix(strings.TrimLeft(rest, " \t"), "...nextVitals") {
+		t.Errorf("LayerAt points at %q, want the array's first element", rest[:20])
+	}
+}
+
+// TestAnalyzeResolvesAConstBoundArrayLiteral is the same hop without the
+// call, so the resolution is not tied to defineConfig.
+func TestAnalyzeResolvesAConstBoundArrayLiteral(t *testing.T) {
+	src := []byte("const config = [\n  { rules: {} },\n];\nexport default config;\n")
+
+	if _, why, ok := Analyze(src); !ok {
+		t.Errorf("Analyze() = %q for a const-bound array literal", why)
+	}
+}
+
+// TestAnalyzeRefusesAnUnresolvableIdentifier keeps the hop from becoming a
+// guess: an identifier with no top-level declaration behind it is refused
+// with the same sentence any other unrecognised export gets, not silently
+// treated as an array.
+func TestAnalyzeRefusesAnUnresolvableIdentifier(t *testing.T) {
+	src := []byte("export default fromSomewhereElse;\n")
+
+	if _, why, ok := Analyze(src); ok {
+		t.Error("Analyze() accepted an identifier it cannot resolve")
+	} else if why == "" {
+		t.Error("Analyze() refused with no reason")
+	}
+}
+
+// TestAnalyzeDoesNotFollowAChainOfAliases pins the one hop: resolving
+// further would mean answering for reassignment between the declarations,
+// which this package does not track.
+func TestAnalyzeDoesNotFollowAChainOfAliases(t *testing.T) {
+	src := []byte("const base = [];\nconst config = base;\nexport default config;\n")
+
+	if _, _, ok := Analyze(src); ok {
+		t.Error("Analyze() followed a chain of aliases")
 	}
 }

@@ -175,7 +175,7 @@ func exportedValue(root *gotreesitter.Node, src []byte) (*gotreesitter.Node, Mod
 		switch child.Type(jsLanguage) {
 		case "export_statement":
 			if value := child.ChildByFieldName("value", jsLanguage); value != nil {
-				return value, ESM, "", true
+				return boundValue(value, root, src), ESM, "", true
 			}
 		case "expression_statement":
 			if value, ok := moduleExportsValue(child, src); ok {
@@ -184,6 +184,51 @@ func exportedValue(root *gotreesitter.Node, src []byte) (*gotreesitter.Node, Mod
 		}
 	}
 	return nil, ESM, "no default export or module.exports assignment found", false
+}
+
+// boundValue follows a default export that names a variable back to the
+// value that variable was declared with, or returns value unchanged when
+// there is nothing to follow.
+//
+// It exists because `create-next-app` binds before it exports:
+//
+//	const eslintConfig = defineConfig([...]);
+//	export default eslintConfig;
+//
+// Measured against Next.js 16.3.1, that is what the framework's own
+// scaffolder emits today. Without this hop the export is an identifier, and
+// every project it creates is refused for a shape that is fully recognised
+// one line up.
+//
+// Exactly one hop, and only into a top-level declaration. Following a chain
+// would mean answering for reassignment between the declarations, which this
+// package does not track; an identifier that resolves to nothing is returned
+// as it came, so the caller refuses it with the sentence it already has.
+func boundValue(value, root *gotreesitter.Node, src []byte) *gotreesitter.Node {
+	if value.Type(jsLanguage) != "identifier" {
+		return value
+	}
+
+	name := value.Text(src)
+	for i := 0; i < root.NamedChildCount(); i++ {
+		child := root.NamedChild(i)
+		if child.Type(jsLanguage) != "lexical_declaration" && child.Type(jsLanguage) != "variable_declaration" {
+			continue
+		}
+		for j := 0; j < child.NamedChildCount(); j++ {
+			declarator := child.NamedChild(j)
+			if declarator.Type(jsLanguage) != "variable_declarator" {
+				continue
+			}
+			bound := declarator.ChildByFieldName("name", jsLanguage)
+			initial := declarator.ChildByFieldName("value", jsLanguage)
+			if bound == nil || initial == nil || bound.Text(src) != name {
+				continue
+			}
+			return initial
+		}
+	}
+	return value
 }
 
 // moduleExportsValue reports the right-hand side of a top-level
