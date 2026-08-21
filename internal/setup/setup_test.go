@@ -543,68 +543,6 @@ func TestSatisfiedStepsCarryTheirOwnDetectionFactNotDescribesFixInstructions(t *
 		}
 	})
 
-	t.Run("eslintExtendsStep, TypeScript config always delegates but reports satisfied", func(t *testing.T) {
-		root := t.TempDir()
-		p := project.Project{Root: root, Source: root}
-		writeStepFixtureFile(t, root, "eslint.config.ts", "export default [];\n")
-		if !(eslintExtendsStep{}).Satisfied(p) {
-			t.Fatal("fixture is not satisfied; fix the test before trusting its assertion")
-		}
-		steps, _, err := run([]Step{eslintExtendsStep{}}, p)
-		if err != nil || len(steps) != 1 {
-			t.Fatalf("run() = %+v, %v", steps, err)
-		}
-		if !strings.Contains(steps[0].Evidence, "TypeScript") {
-			t.Errorf("Evidence = %q, want it to name the TypeScript config it found", steps[0].Evidence)
-		}
-	})
-
-	// TestSatisfiedStepsCarryTheirOwnDetectionFactNotDescribesFixInstructions/eslintExtendsStep,_legacy-only_config
-	// is the TypeScript case's sibling: a legacy-only project (no flat
-	// config, no TypeScript config, one legacy .eslintrc.json) also always
-	// delegates and reports satisfied — a mutant inverting
-	// eslintLegacyConfig(...) != "" would make this branch unreachable
-	// without breaking the TypeScript case above, since both branches
-	// share the same switch.
-	t.Run("eslintExtendsStep, legacy-only config", func(t *testing.T) {
-		root := t.TempDir()
-		p := project.Project{Root: root, Source: root}
-		writeStepFixtureFile(t, root, ".eslintrc.json", "{}")
-		if !(eslintExtendsStep{}).Satisfied(p) {
-			t.Fatal("fixture is not satisfied; fix the test before trusting its assertion")
-		}
-		steps, _, err := run([]Step{eslintExtendsStep{}}, p)
-		if err != nil || len(steps) != 1 {
-			t.Fatalf("run() = %+v, %v", steps, err)
-		}
-		if !strings.Contains(steps[0].Evidence, "legacy") {
-			t.Errorf("Evidence = %q, want it to name the legacy-only config it found", steps[0].Evidence)
-		}
-	})
-
-	// eslintExtendsStep, config could not be read is a mutation guard for
-	// the os.ReadFile error branch: a directory named eslint.config.js
-	// exists (so eslintFlatConfig finds it — os.Stat succeeds on a
-	// directory too) but cannot be read as a file, the portable way to
-	// force this branch without relying on filesystem permissions.
-	t.Run("eslintExtendsStep, config could not be read", func(t *testing.T) {
-		root := t.TempDir()
-		p := project.Project{Root: root, Source: root}
-		if err := os.MkdirAll(filepath.Join(root, eslintConfig), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if !(eslintExtendsStep{}).Satisfied(p) {
-			t.Fatal("fixture is not satisfied; fix the test before trusting its assertion")
-		}
-		steps, _, err := run([]Step{eslintExtendsStep{}}, p)
-		if err != nil || len(steps) != 1 {
-			t.Fatalf("run() = %+v, %v", steps, err)
-		}
-		if !strings.Contains(steps[0].Evidence, "could not be read") {
-			t.Errorf("Evidence = %q, want it to say the config could not be read", steps[0].Evidence)
-		}
-	})
-
 	t.Run("architectureStep", func(t *testing.T) {
 		root := t.TempDir()
 		p := project.Project{Root: root, Source: root}
@@ -623,6 +561,80 @@ func TestSatisfiedStepsCarryTheirOwnDetectionFactNotDescribesFixInstructions(t *
 			t.Errorf("Evidence = %q, want %q", steps[0].Evidence, "boundaries declared")
 		}
 	})
+}
+
+// TestDelegatingEslintShapesReportTheirReasonRatherThanSatisfaction is the
+// other half of the same rule, asserted through run() rather than against
+// Satisfied directly: the three shapes this suite used to file as satisfied
+// — a TypeScript config, a legacy-only project, a config that cannot be
+// read — now reach report.Delegated and carry the sentence Delegated wrote.
+//
+// The measured failure this replaces: a fresh create-next-app whose
+// eslint.config.mjs jsconfig does not recognise reported `= 6/11 point
+// eslint.config.js at the file dharness owns / config shape not recognised`
+// under "Already in place (6)", with the plugins step 1 had just installed
+// wired to nothing and the run summary reading `8 satisfied · 0 failed`.
+//
+// The unreadable-config case builds a *directory* named eslint.config.js:
+// os.Stat succeeds on it so eslintFlatConfig finds it, and os.ReadFile then
+// fails, which is the portable way to force that branch without relying on
+// filesystem permissions.
+func TestDelegatingEslintShapesReportTheirReasonRatherThanSatisfaction(t *testing.T) {
+	cases := []struct {
+		name    string
+		fixture func(t *testing.T, root string)
+		want    string
+	}{
+		{
+			name: "TypeScript config",
+			fixture: func(t *testing.T, root string) {
+				writeStepFixtureFile(t, root, "eslint.config.ts", "export default [];\n")
+			},
+			want: "TypeScript",
+		},
+		{
+			name: "legacy-only config",
+			fixture: func(t *testing.T, root string) {
+				writeStepFixtureFile(t, root, ".eslintrc.json", "{}")
+			},
+			want: "legacy",
+		},
+		{
+			name: "config could not be read",
+			fixture: func(t *testing.T, root string) {
+				if err := os.MkdirAll(filepath.Join(root, eslintConfig), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "could not be read",
+		},
+		{
+			name: "shape jsconfig does not recognise",
+			fixture: func(t *testing.T, root string) {
+				writeStepFixtureFile(t, root, eslintConfig, "export default tseslint.config({});\n")
+			},
+			want: "not a plain imported identifier",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			p := project.Project{Root: root, Source: root}
+			tc.fixture(t, root)
+
+			steps, _, err := run([]Step{eslintExtendsStep{}}, p)
+			if err != nil || len(steps) != 1 {
+				t.Fatalf("run() = %+v, %v", steps, err)
+			}
+			if steps[0].Status != report.Delegated {
+				t.Fatalf("Status = %q, want %q: an unwired ESLint layer must not be filed as already in place", steps[0].Status, report.Delegated)
+			}
+			if !strings.Contains(steps[0].Why, tc.want) {
+				t.Errorf("Why = %q, want it to contain %q", steps[0].Why, tc.want)
+			}
+		})
+	}
 }
 
 // TestSatisfiedBoundariesStepNeverReusesTheFallbackFixInstructions pins
