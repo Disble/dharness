@@ -378,35 +378,43 @@ func (eslintExtendsStep) ID() string {
 // Satisfied answers a byte comparison for a splice-eligible flat config
 // (design decision 6, ownedFilesStep.Satisfied's rule applied to a file
 // dharness does not own): true only when the candidate this run would
-// produce is byte-identical to what is already on disk. Every other
-// existing-config shape — TypeScript, legacy-only, unreadable, a malformed
-// marker pair, or anything jsconfig.Analyze itself refuses — always
-// delegates (Delegated answers ok == true for all of them), so there is
-// nothing for this step to ever converge there; reporting it satisfied keeps
-// it out of sync's pending list rather than double-reporting what Delegated
-// already explains.
-func (eslintExtendsStep) Satisfied(p project.Project) bool {
+// produce is byte-identical to what is already on disk.
+//
+// A shape that delegates is never satisfied. That is the opposite of what
+// this answered before, and the reason is run()'s own order: it asks
+// Satisfied first and skips a satisfied step without ever asking Delegated,
+// so a step answering true to both has its reason computed and discarded —
+// an unwired ESLint layer filed under "Already in place" while the plugins
+// step 1 just installed do nothing. The old rule ("Delegated already
+// explains it, so Satisfied should not double-report the same state as
+// pending") was written against Pending/applySteps, where Satisfied selects
+// and Delegated skips; under run() it is not a double report, it is a
+// silent one.
+//
+// Answering false costs nothing on the apply path: Pending gains the entry,
+// and applySteps skips every step whose Delegated answers ok == true before
+// it can reach Apply.
+func (s eslintExtendsStep) Satisfied(p project.Project) bool {
 	if !p.HasSource() {
 		return true
 	}
+	if _, delegates := s.Delegated(p); delegates {
+		return false
+	}
 
+	// Everything Delegated refuses is already gone. What remains is either a
+	// project with no flat config at all — Apply writes one, so nothing is
+	// satisfied yet — or a config jsconfig recognises with well-formed
+	// markers, which converges by byte comparison.
 	path := eslintFlatConfig(p.Source)
 	if path == "" {
-		return eslintTypeScriptConfig(p.Source) != "" || eslintLegacyConfig(p.Source) != ""
+		return false
 	}
 
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return true
+		return false
 	}
-	if _, malformed := malformedEslintMarkerPair(string(raw)); malformed {
-		return true
-	}
-	if _, why, ok := jsconfig.Analyze(raw); !ok {
-		_ = why
-		return true
-	}
-
 	candidate, err := spliceEslintConfig(p, path, raw)
 	if err != nil {
 		return false

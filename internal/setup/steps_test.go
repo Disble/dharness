@@ -1160,45 +1160,53 @@ func TestEslintExtendsStepSatisfiedIsFalseWhenMarkedRegionsAreStale(t *testing.T
 	}
 }
 
-// TestEslintExtendsStepSatisfiedIsTrueForShapesThatAlwaysDelegate
-// triangulates the case above: a TypeScript config, a legacy-only project
-// and an unrecognised call expression all always delegate, so Satisfied
-// must still answer true for them even though no marker region was ever
-// written — Delegated already explains why nothing will be applied, and
-// Satisfied should not double-report the same state as pending. The
-// legacy-only case is asserted on its own, with no TypeScript config
-// present, so it exercises the "||" right-hand side independently of the
-// left.
-func TestEslintExtendsStepSatisfiedIsTrueForShapesThatAlwaysDelegate(t *testing.T) {
-	t.Run("TypeScript config", func(t *testing.T) {
-		root := t.TempDir()
-		writeStepFixtureFile(t, root, "eslint.config.ts", "export default [];\n")
-		p := project.Project{Root: root, Source: root}
+// TestEslintExtendsStepIsNeverSatisfiedAndDelegatedAtOnce pins the invariant
+// run() depends on: it asks Satisfied first and never asks Delegated once
+// Satisfied answers true, so a step that answers true to both loses its
+// explanation entirely — the reason is computed and thrown away, and the step
+// lands under "Already in place" with freshly installed dependencies wired to
+// nothing.
+//
+// This inverts what the suite asserted before. The earlier rule — "Delegated
+// already explains why nothing will be applied, so Satisfied should not
+// double-report the same state as pending" — was written against
+// Pending/applySteps, where Satisfied selects and Delegated skips, so both
+// answering true was harmless there. run() decides status in the other
+// direction, and under it that pair is not a double report: it is a silent
+// one.
+//
+// Each shape is asserted on its own, so no case can be carried by another's
+// branch.
+func TestEslintExtendsStepIsNeverSatisfiedAndDelegatedAtOnce(t *testing.T) {
+	shapes := []struct {
+		name string
+		file string
+		body string
+	}{
+		{"TypeScript config", "eslint.config.ts", "export default [];\n"},
+		{"legacy-only config, no TypeScript config present", ".eslintrc.json", "{}"},
+		{"unrecognised call expression", eslintConfig, "export default tseslint.config(\n  { rules: {} },\n);\n"},
+		{"malformed marker pair", eslintConfig, eslintImportBegin + "\nexport default [];\n"},
+	}
 
-		if !(eslintExtendsStep{}).Satisfied(p) {
-			t.Error("Satisfied() = false for a TypeScript config, which always delegates")
-		}
-	})
+	for _, shape := range shapes {
+		t.Run(shape.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeStepFixtureFile(t, root, shape.file, shape.body)
+			p := project.Project{Root: root, Source: root}
 
-	t.Run("legacy-only config, no TypeScript config present", func(t *testing.T) {
-		root := t.TempDir()
-		writeStepFixtureFile(t, root, ".eslintrc.json", "{}")
-		p := project.Project{Root: root, Source: root}
-
-		if !(eslintExtendsStep{}).Satisfied(p) {
-			t.Error("Satisfied() = false for a legacy-only config, which always delegates")
-		}
-	})
-
-	t.Run("unrecognised call expression", func(t *testing.T) {
-		root := t.TempDir()
-		writeStepFixtureFile(t, root, eslintConfig, "export default tseslint.config(\n  { rules: {} },\n);\n")
-		p := project.Project{Root: root, Source: root}
-
-		if !(eslintExtendsStep{}).Satisfied(p) {
-			t.Error("Satisfied() = false for an unrecognised call expression, which always delegates")
-		}
-	})
+			why, delegated := (eslintExtendsStep{}).Delegated(p)
+			if !delegated {
+				t.Fatal("Delegated() = false; the fixture no longer exercises a delegating shape")
+			}
+			if why == "" {
+				t.Error("Delegated() answered true with no reason to report")
+			}
+			if (eslintExtendsStep{}).Satisfied(p) {
+				t.Error("Satisfied() = true for a shape that delegates: run() reports it as already in place and never prints the reason")
+			}
+		})
+	}
 }
 
 // TestEslintExtendsStepApplyPreservesCRLFAndBOMThroughTheSplice replays

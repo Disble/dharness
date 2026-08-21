@@ -127,6 +127,13 @@ func Run(p project.Project) ([]report.StepResult, []report.Note, error) {
 // keeping boundariesOwnerStep's fallback constants unreachable in the
 // product (design.md Decision 8, change #1; guarded by
 // TestBoundariesFallbackConstantsStayByteIdentical).
+//
+// That order puts one obligation on every step: a step that delegates must
+// not also answer Satisfied. Both answering true is not a harmless overlap
+// here — Delegated is never asked, so the reason is computed and discarded,
+// and a step that refused to act is filed under "Already in place". The
+// apply path tolerated it, because there Satisfied selects and Delegated
+// skips; this one does not.
 func run(plan []Step, p project.Project) (steps []report.StepResult, notes []report.Note, err error) {
 	notes = collectNotes(p)
 
