@@ -290,3 +290,72 @@ func eslintLayerRegion(layers []preset.Layer, indent, eol string) string {
 	fmt.Fprintf(&b, "%s%s%s", indent, eslintLayerEnd, eol)
 	return b.String()
 }
+
+// contributedLayers drops the layers the project's own ESLint config already
+// pulls in, leaving what dharness actually adds.
+//
+// It exists because recognising create-next-app's shape turned a delegated
+// step into an edited file, and the framework's scaffolder spreads
+// eslint-config-next/core-web-vitals and eslint-config-next/typescript
+// itself. The nextjs preset contributes the same two, so the wired result
+// imported each under a second name and spread it twice — the whole
+// framework config applied twice, in a file dharness had just written into.
+//
+// The fix stays inside what dharness owns. Deleting the project's spreads
+// would be the obvious alternative and it is the wrong one: those bytes are
+// outside the marked regions, and §03 makes the marked regions the only
+// bytes this tool touches. What dharness decides is what dharness
+// contributes, so that is what changes.
+//
+// The comparison is on the specifier, never the package. eslint-config-next
+// and eslint-config-next/core-web-vitals are different configs behind
+// different subpath exports — the bare one is the weaker base — so a project
+// spreading one has not already got the other.
+//
+// dharness's own marked import region is excluded before the question is
+// asked. It imports every layer dharness contributes, so counting it would
+// drop every layer on the second run and re-add them on the third.
+func contributedLayers(layers []preset.Layer, projectConfig []byte) []preset.Layer {
+	present := map[string]bool{}
+	for _, specifier := range jsconfig.Imports(withoutDharnessImports(projectConfig)) {
+		present[specifier] = true
+	}
+
+	kept := make([]preset.Layer, 0, len(layers))
+	for _, layer := range layers {
+		if present[layer.Package] {
+			continue
+		}
+		kept = append(kept, layer)
+	}
+	return kept
+}
+
+// withoutDharnessImports returns src with dharness's own import region cut
+// out, or src unchanged when the region is absent or malformed — the two
+// cases where there is nothing to exclude and nothing safe to guess at.
+func withoutDharnessImports(src []byte) []byte {
+	from, to, state := markerRegion(string(src), eslintImportBegin, eslintImportEnd)
+	if state != markersPresent {
+		return src
+	}
+	out := make([]byte, 0, len(src)-(to-from))
+	out = append(out, src[:from]...)
+	return append(out, src[to:]...)
+}
+
+// projectContributedLayers is contributedLayers over the project's own
+// config read from disk, for the callers that render the owned factory
+// rather than splice — they answer the same question from the same file and
+// must not disagree about it.
+func projectContributedLayers(p project.Project, layers []preset.Layer) []preset.Layer {
+	path := eslintFlatConfig(p.Source)
+	if path == "" {
+		return layers
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return layers
+	}
+	return contributedLayers(layers, raw)
+}
