@@ -3,6 +3,7 @@ package setup
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -67,6 +68,12 @@ func ownedEslintConfig(p project.Project, layers []preset.Layer, module jsconfig
 		body.WriteString(commonJSInterop)
 	}
 	body.WriteString("  return [\n")
+	// The ignore leads, and carries nothing but `ignores`, which is what
+	// makes ESLint read it as a global ignore rather than as configuration
+	// for the files it matches.
+	if pattern := ownedIgnorePattern(p); pattern != "" {
+		fmt.Fprintf(&body, "    { ignores: [%q] },\n", pattern)
+	}
 	included := map[string]bool{}
 	for _, layer := range layers {
 		expression := layerExpression(layer, module)
@@ -87,6 +94,31 @@ func ownedEslintConfig(p project.Project, layers []preset.Layer, module jsconfig
 	body.WriteString("  ];\n")
 	body.WriteString("}\n")
 	return body.String()
+}
+
+// ownedIgnorePattern is the glob that keeps ESLint out of the directory
+// dharness owns, or "" when the question does not arise.
+//
+// It exists because dharness's own rules fired on dharness's own generated
+// file: `dharness/require-jsdoc` on the `export default function
+// dharnessLayer(...)` ownedEslintConfig writes, in a file whose header says
+// every edit to it is lost on the next sync. The rule was unsatisfiable by
+// the only person it fired at.
+//
+// The pattern is relative to the project's ESLint config, which is what
+// ESLint resolves `ignores` against. In a split layout the owned directory
+// sits above that config — outside ESLint's base path, so nothing there is
+// linted and a pattern climbing out with "../" would be rejected rather than
+// helpful. Nothing is emitted there.
+func ownedIgnorePattern(p project.Project) string {
+	if !p.HasSource() {
+		return project.Dir + "/**"
+	}
+	rel, err := filepath.Rel(p.Source, filepath.Join(p.Root, project.Dir))
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return ""
+	}
+	return filepath.ToSlash(rel) + "/**"
 }
 
 // commonJSInteropName is the helper every CommonJS-rendered layer is read
@@ -221,7 +253,7 @@ func eslintImportRegion(p project.Project, dir string, layers []preset.Layer, mo
 	for _, layer := range layerModules(layers) {
 		fmt.Fprintf(&b, "%s%s%s", indent, declare(layer.Binding, layer.Package), eol)
 	}
-	fmt.Fprintf(&b, "%s%s%s", indent, declare("dharnessLayer", moduleSpecifier(ownedFrom(p, dir, ownedEslint))), eol)
+	fmt.Fprintf(&b, "%s%s%s", indent, declare("dharnessLayer", moduleSpecifier(ownedFrom(p, dir, ownedEslintName(module)))), eol)
 	fmt.Fprintf(&b, "%s%s%s", indent, eslintImportEnd, eol)
 	return b.String()
 }

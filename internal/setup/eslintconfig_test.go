@@ -2,6 +2,8 @@ package setup
 
 import (
 	"fmt"
+	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -95,7 +97,7 @@ func TestEslintImportRegionRendersThePluginAndTheOwnedFactoryImport(t *testing.T
 
 	want := eslintImportBegin + "\n" +
 		"import dharnessPlugin from \"dharness-eslint-plugin\";\n" +
-		"import dharnessLayer from \"./.dharness/eslint.config.js\";\n" +
+		"import dharnessLayer from \"./.dharness/eslint.config.mjs\";\n" +
 		eslintImportEnd + "\n"
 	if got != want {
 		t.Errorf("eslintImportRegion() = %q, want %q", got, want)
@@ -128,7 +130,7 @@ func TestEslintImportRegionResolvesFromASplitLayout(t *testing.T) {
 
 	got := eslintImportRegion(p, p.Source, nil, jsconfig.ESM, "", "\n")
 
-	if !strings.Contains(got, "import dharnessLayer from \"../.dharness/eslint.config.js\";\n") {
+	if !strings.Contains(got, "import dharnessLayer from \"../.dharness/eslint.config.mjs\";\n") {
 		t.Errorf("eslintImportRegion() does not resolve from the split layout:\n%s", got)
 	}
 }
@@ -279,7 +281,7 @@ func TestLayerRegionPassesEachBindingOnce(t *testing.T) {
 // TestOwnedImportSpecifierIsRelative pins what Node's resolver requires and
 // a path does not carry on its own. ownedFrom returns filepath.Rel's answer,
 // and for a project whose config sits beside .dharness/ that is
-// ".dharness/eslint.config.js" — which Node reads as a *bare* specifier,
+// ".dharness/eslint.config.mjs" — which Node reads as a *bare* specifier,
 // because an ES module's relative specifier has to begin with "./" or
 // "../". It resolves as a package named ".dharness", is not found, and
 // ESLint fails to load the config at startup.
@@ -293,7 +295,7 @@ func TestOwnedImportSpecifierIsRelative(t *testing.T) {
 
 	got := eslintImportRegion(p, p.Source, nil, jsconfig.ESM, "", "\n")
 
-	if !strings.Contains(got, `from "./.dharness/eslint.config.js";`) {
+	if !strings.Contains(got, `from "./.dharness/eslint.config.mjs";`) {
 		t.Errorf("eslintImportRegion() does not emit a relative specifier Node can resolve:\n%s", got)
 	}
 }
@@ -307,7 +309,7 @@ func TestOwnedImportSpecifierKeepsAnAscendingPath(t *testing.T) {
 
 	got := eslintImportRegion(p, p.Source, nil, jsconfig.ESM, "", "\n")
 
-	if !strings.Contains(got, `from "../.dharness/eslint.config.js";`) {
+	if !strings.Contains(got, `from "../.dharness/eslint.config.mjs";`) {
 		t.Errorf("eslintImportRegion() rewrote an already-relative ascending path:\n%s", got)
 	}
 }
@@ -325,7 +327,7 @@ func TestImportRegionRendersCommonJSDeclarations(t *testing.T) {
 	for _, want := range []string{
 		`const dharnessPlugin = require("dharness-eslint-plugin");`,
 		`const dharnessExpo = require("eslint-config-expo/flat");`,
-		`const dharnessLayer = require("./.dharness/eslint.config.js");`,
+		`const dharnessLayer = require("./.dharness/eslint.config.cjs");`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("eslintImportRegion() is missing %s:\n%s", want, got)
@@ -339,7 +341,7 @@ func TestImportRegionRendersCommonJSDeclarations(t *testing.T) {
 }
 
 // TestOwnedConfigIsWrittenInTheProjectsOwnDialect pins the other side of the
-// same requirement. The project's config loads .dharness/eslint.config.js by
+// same requirement. The project's config loads .dharness/eslint.config.cjs by
 // the mechanism its own dialect gives it, so the owned file has to export
 // the way that mechanism reads: a CommonJS config calling require() on a
 // file that says `export default` gets a function it cannot call.
@@ -455,5 +457,131 @@ func TestESMDoesNotCarryTheInteropHelper(t *testing.T) {
 	}
 	if !strings.Contains(got, "dharnessReactDoctor.configs.next,") {
 		t.Errorf("ownedEslintConfig() ESM form does not read the config directly:\n%s", got)
+	}
+}
+
+// TestOwnedEslintConfigIgnoresTheDirectoryDharnessOwns is F4: the first
+// error ESLint reported once the layer was finally wired came from
+// dharness's own generated file — `dharness/require-jsdoc` firing on the
+// `export default function dharnessLayer(...)` this very function writes.
+//
+// The file's own header says dharness rewrites it, so any JSDoc a user adds
+// is gone on the next sync. A rule nobody can satisfy is worse than no rule:
+// the layer ignores the directory it owns instead. That also covers whatever
+// else lands in .dharness/ later, which emitting one JSDoc comment would
+// not.
+//
+// It is the array's first element and carries nothing but `ignores`, which
+// is what makes ESLint read it as a global ignore rather than as
+// configuration for matched files.
+func TestOwnedEslintConfigIgnoresTheDirectoryDharnessOwns(t *testing.T) {
+	root := t.TempDir()
+	p := project.Project{Root: root, Source: root}
+
+	got := ownedEslintConfig(p, nil, jsconfig.ESM)
+
+	want := fmt.Sprintf("    { ignores: [%q] },\n", project.Dir+"/**")
+	if !strings.Contains(got, want) {
+		t.Errorf("ownedEslintConfig() does not ignore the directory it owns, want %s:\n%s", want, got)
+	}
+	if !strings.Contains(got, "return [\n"+want) {
+		t.Errorf("the ignore is not the array's first element:\n%s", got)
+	}
+}
+
+// TestOwnedEslintConfigOmitsTheIgnoreOutsideTheEslintBasePath is the split
+// layout: the project's ESLint config lives with package.json and the owned
+// directory sits at the repository root, so the pattern would have to climb
+// out of ESLint's base path — which ESLint does not accept, and does not
+// need, because nothing above that path is linted in the first place.
+func TestOwnedEslintConfigOmitsTheIgnoreOutsideTheEslintBasePath(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "frontend")
+	if err := os.MkdirAll(source, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p := project.Project{Root: root, Source: source}
+
+	got := ownedEslintConfig(p, nil, jsconfig.ESM)
+
+	if strings.Contains(got, "ignores:") {
+		t.Errorf("ownedEslintConfig() emitted an ignore pattern that climbs out of the base path:\n%s", got)
+	}
+}
+
+// TestOwnedEslintFileNameCarriesItsDialect is F5/C4: the generated file was
+// always called eslint.config.js, whatever was written inside it.
+//
+// In a Next.js project — package.json with no "type", which is the norm —
+// that means ESM syntax in a .js file, and Node prints
+// MODULE_TYPELESS_PACKAGE_JSON on every ESLint run, which for an adopted
+// project is every gated commit. Node's own remedy, adding "type": "module"
+// to package.json, is a far larger change than the warning warrants and is
+// wrong for Next.js.
+//
+// The extension answers instead, and it also closes a case that was broken
+// rather than noisy: module.exports in a .js file inside a package.json that
+// *does* declare "type": "module" is a SyntaxError, not a warning.
+func TestOwnedEslintFileNameCarriesItsDialect(t *testing.T) {
+	if got := ownedEslintName(jsconfig.ESM); got != "eslint.config.mjs" {
+		t.Errorf("ownedEslintName(ESM) = %q, want eslint.config.mjs", got)
+	}
+	if got := ownedEslintName(jsconfig.CommonJS); got != "eslint.config.cjs" {
+		t.Errorf("ownedEslintName(CommonJS) = %q, want eslint.config.cjs", got)
+	}
+}
+
+// TestOwnedFilesStepRemovesTheLegacyOwnedEslintConfig covers the upgrade: a
+// project adopted before F5 carries .dharness/eslint.config.js, and the
+// reference in its own config is rewritten to the new name by the marked
+// region. Leaving the old file behind would commit a config nothing imports.
+func TestOwnedFilesStepRemovesTheLegacyOwnedEslintConfig(t *testing.T) {
+	root := t.TempDir()
+	p := project.Project{Root: root, Source: root}
+	legacy := filepath.Join(root, project.Dir, ownedEslintLegacyName)
+	if err := os.MkdirAll(filepath.Join(root, project.Dir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeStepFixtureFile(t, filepath.Join(root, project.Dir), ownedEslintLegacyName, "// written by an older dharness\n")
+
+	if _, err := (ownedFilesStep{}).Apply(p, &Writer{}, io.Discard); err != nil {
+		t.Fatalf("Apply() = %v", err)
+	}
+
+	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
+		t.Errorf("Apply() left %s behind; nothing imports it any more", ownedEslintLegacyName)
+	}
+	if _, err := os.Stat(filepath.Join(root, project.Dir, ownedEslintName(jsconfig.ESM))); err != nil {
+		t.Errorf("Apply() did not write the dialect-named file: %v", err)
+	}
+}
+
+// TestOwnedFilesStepRestoresTheLegacyFileOnRollback keeps the removal inside
+// the same transaction as every other write: a run that fails later put the
+// repository back as it found it, and a deleted file is not an exception to
+// that.
+func TestOwnedFilesStepRestoresTheLegacyFileOnRollback(t *testing.T) {
+	root := t.TempDir()
+	p := project.Project{Root: root, Source: root}
+	legacy := filepath.Join(root, project.Dir, ownedEslintLegacyName)
+	if err := os.MkdirAll(filepath.Join(root, project.Dir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeStepFixtureFile(t, filepath.Join(root, project.Dir), ownedEslintLegacyName, "// written by an older dharness\n")
+
+	w := &Writer{}
+	if _, err := (ownedFilesStep{}).Apply(p, w, io.Discard); err != nil {
+		t.Fatalf("Apply() = %v", err)
+	}
+	if err := w.Undo(); err != nil {
+		t.Fatalf("Undo() = %v", err)
+	}
+
+	raw, err := os.ReadFile(legacy)
+	if err != nil {
+		t.Fatalf("Undo() did not restore the legacy file: %v", err)
+	}
+	if string(raw) != "// written by an older dharness\n" {
+		t.Errorf("Undo() restored %q, want the bytes it found", raw)
 	}
 }

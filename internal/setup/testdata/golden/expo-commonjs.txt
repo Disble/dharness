@@ -52,7 +52,7 @@
      ESLint's flat config has no `extends` of its own, so the layer arrives by
      import and spread instead. A new eslint.config.js is written:
      
-         import dharnessLayer from "./.dharness/eslint.config.js";
+         import dharnessLayer from "./.dharness/eslint.config.cjs";
      
          export default [...dharnessLayer({ plugin: dharnessPlugin })];
 7  fix the lint config react-doctor silently drops
@@ -185,9 +185,10 @@
 !fallow.jsonc
 !rules.json
 !evidence.json
-!eslint.config.js
+!eslint.config.mjs
+!eslint.config.cjs
 ---
-.dharness/eslint.config.js
+.dharness/eslint.config.cjs
 ---
 // dharness writes this file. It exports a factory rather than a config
 // array because the packages it names are installed beside the project's
@@ -199,6 +200,7 @@ module.exports = function dharnessLayer({ plugin, dharnessExpo, dharnessReactDoc
   const dharnessDefault = (m) =>
     m && m[Symbol.toStringTag] === "Module" && "default" in m ? m.default : m;
   return [
+    { ignores: [".dharness/**"] },
     dharnessDefault(dharnessExpo),
     dharnessDefault(dharnessReactDoctor).configs.recommended,
     dharnessDefault(dharnessReactDoctor).configs["react-native"],
@@ -280,7 +282,7 @@ const expoConfig = require('eslint-config-expo/flat');
 const dharnessPlugin = require("dharness-eslint-plugin");
 const dharnessExpo = require("eslint-config-expo/flat");
 const dharnessReactDoctor = require("eslint-plugin-react-doctor");
-const dharnessLayer = require("./.dharness/eslint.config.js");
+const dharnessLayer = require("./.dharness/eslint.config.cjs");
 // dharness:eslint-import end
 
 module.exports = defineConfig([

@@ -920,7 +920,7 @@ func TestEslintExtendsStepApplyWritesAConfigWhenNoneExists(t *testing.T) {
 	for _, want := range []string{
 		eslintImportBegin,
 		"import dharnessPlugin from \"dharness-eslint-plugin\";",
-		"import dharnessLayer from \"./.dharness/eslint.config.js\";",
+		"import dharnessLayer from \"./.dharness/eslint.config.mjs\";",
 		eslintImportEnd,
 		"export default [",
 		eslintLayerBegin,
@@ -953,7 +953,7 @@ func TestEslintExtendsStepApplyResolvesFromASplitLayout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(raw), "import dharnessLayer from \"../.dharness/eslint.config.js\";") {
+	if !strings.Contains(string(raw), "import dharnessLayer from \"../.dharness/eslint.config.mjs\";") {
 		t.Errorf("Apply() did not resolve the owned factory from the split layout:\n%s", raw)
 	}
 }
@@ -1033,7 +1033,7 @@ func TestPresentMarkersWithStaleBytesAreReplacedNotDuplicated(t *testing.T) {
 	root := t.TempDir()
 	stale := eslintImportBegin + "\n" +
 		"import dharnessPlugin from \"dharness-eslint-plugin\";\n" +
-		"import dharnessLayer from \"./.dharness/eslint.config.js\";\n" +
+		"import dharnessLayer from \"./.dharness/eslint.config.mjs\";\n" +
 		eslintImportEnd + "\n" +
 		"\n" +
 		"export default [\n" +

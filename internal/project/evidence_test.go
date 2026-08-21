@@ -70,7 +70,7 @@ func TestOwnedDirectoryIgnoresItsOwnTransientFiles(t *testing.T) {
 	if !strings.Contains(ignore, "\n*\n") {
 		t.Errorf("the ignore file does not ignore by default:\n%s", ignore)
 	}
-	for _, shared := range []string{"!.gitignore", "!lefthook.yml", "!fallow.jsonc", "!rules.json", "!evidence.json", "!eslint.config.js"} {
+	for _, shared := range []string{"!.gitignore", "!lefthook.yml", "!fallow.jsonc", "!rules.json", "!evidence.json", "!eslint.config.mjs", "!eslint.config.cjs"} {
 		if !strings.Contains(ignore, shared) {
 			t.Errorf("the ignore file would hide %s, which describes the repository", shared)
 		}
@@ -95,8 +95,8 @@ func TestOwnedEslintConfigIsDeclaredShared(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the directory was created without its ignore rules: %v", err)
 	}
-	if !strings.Contains(string(raw), "!eslint.config.js") {
-		t.Errorf("a fresh .dharness/ does not declare eslint.config.js shared:\n%s", raw)
+	if !strings.Contains(string(raw), "!eslint.config.mjs") {
+		t.Errorf("a fresh .dharness/ does not declare eslint.config.mjs shared:\n%s", raw)
 	}
 }
 

@@ -19,6 +19,12 @@ const Dir = ".dharness"
 // files that describe this repository means a transient file added later is
 // ignored by default, and a file meant to be shared has to be declared. The
 // opposite shape leaks state into commits the first time something new appears.
+//
+// Both ESLint spellings are named because the file dharness writes carries its
+// dialect in its extension, and only one of the two ever exists at a time. The
+// alternative — naming whichever one applies — would make this template depend
+// on detection, and a repository that changed dialect would silently start
+// ignoring a committed file.
 const dirIgnore = `# dharness — this directory is written by dharness.
 # Everything here is machine-local unless it is named below, so transient files
 # (incremental reports, caches) never show up in git.
@@ -28,7 +34,8 @@ const dirIgnore = `# dharness — this directory is written by dharness.
 !fallow.jsonc
 !rules.json
 !evidence.json
-!eslint.config.js
+!eslint.config.mjs
+!eslint.config.cjs
 `
 
 // evidenceFile holds facts that cost something to obtain and cannot be derived
