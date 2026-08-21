@@ -79,6 +79,13 @@ blocking task — not as a reviewer's optional afterthought.
 below — one dated line, newest at the bottom, never rewritten — so P12 is
 covered natively and needs nothing added.
 
+**Pull requests are merged by squash or rebase; merge commits are disabled.**
+A merge commit carries the pull request's title, and when that title is a
+conventional commit release-please counts it a second time and the changelog
+ships the entry twice. Rebase when the branch carries several work units so each
+keeps its own entry; squash when the branch is one. The diagnosis and the
+releases it cost are in `docs/learning-log.md`, 15 August 2026.
+
 ---
 
 <!-- standards:v1.1.0 -->
@@ -330,36 +337,12 @@ Repo-owned. Silence is drift; a stated deviation is a decision.
 
 ### Accepted risks
 
-Same discipline as the deviations above, for limits rather than departures: a
-stated risk is a decision, an unstated one is a surprise. Each names what it
-costs, why the cost is accepted today, and what would force revisiting it.
+Stated limits rather than departures, in the same form: what it costs, and what
+would force revisiting it.
 
-- `accepts: .dharness/eslint.config.js carries no module-system extension.`
-  Node decides whether a `.js` file is ESM or CommonJS from the nearest
-  `package.json`'s `"type"`, and dharness writes that file with neither a
-  `"type"` of its own nor an unambiguous `.mjs`/`.cjs` extension. Measured on
-  Node 22.19.0 with ESLint 9.39.5, a project without `"type": "module"` loads
-  it anyway — Node detects the module syntax, reparses, and prints
-  `MODULE_TYPELESS_PACKAGE_JSON`, which is a performance warning and not a
-  failure. On a Node old enough to lack syntax detection the same file is a
-  `SyntaxError` instead. The dialect is already mirrored from the project's own
-  config, so the two agree; what is unstated is the extension. Renaming the
-  owned file to `.mjs`/`.cjs` removes the ambiguity outright and is the
-  recorded fix, held back only because it renames a file existing adopters
-  already reference and needs a migration path rather than a rewrite. Revisit
-  when a supported Node floor below syntax detection is declared, or when the
-  warning starts reaching users.
-
-- `accepts: a plain React project receives no react-doctor layer.` The
-  framework presets contribute react-doctor's ESLint plugin because Next.js and
-  Expo each imply React and each have a documented framework preset to pair
-  with it. A React project on Vite, Parcel or nothing at all matches only
-  `generic`, which is Root-scoped and matches every repository including ones
-  with no React in them — so it cannot speak for React without asserting
-  something it has not observed. The cost is real: those projects get the
-  dharness rules and nothing from react-doctor's 581 framework-independent
-  rules. The fix is a preset whose signal is a `react` dependency, which is a
-  new registry entry rather than a change to this mechanism; it is not written
-  because no measured case has asked for it yet. Until then the gap is a
-  missing preset, which is visible in the registry, rather than a silent
-  degradation inside an existing one.
+- `accepts: a plain React project receives no react-doctor layer.` The framework
+  presets carry it because Next.js and Expo each imply React. A React project on
+  Vite or Parcel matches only `generic`, which is Root-scoped and matches
+  repositories with no React in them, so it cannot speak for React. The fix is a
+  preset keyed on a `react` dependency — a new registry entry, not a change
+  here. Unwritten because no measured case has asked for it.
