@@ -756,8 +756,8 @@ func TestCheckRunsEslintFirstWhenInstalled(t *testing.T) {
 	if !strings.Contains(first.Name, "node_modules") {
 		t.Errorf("eslint resolved through %q, want the locally installed copy, never the remote executor", first.Name)
 	}
-	if !slices.Equal(first.Args, []string{"src/a.ts", "src/b.tsx"}) {
-		t.Errorf("eslint args = %v, want exactly the staged files", first.Args)
+	if !slices.Equal(first.Args, []string{"--no-warn-ignored", "src/a.ts", "src/b.tsx"}) {
+		t.Errorf("eslint args = %v, want the ignored-file flag then exactly the staged files", first.Args)
 	}
 	for _, arg := range first.Args {
 		if arg == "--cache" {
@@ -815,7 +815,7 @@ func TestCheckRebasesEslintPathsInASplitLayout(t *testing.T) {
 	if first.Label != "eslint" {
 		t.Fatalf("first command = %q, want eslint: %+v", first.Label, captured.commands)
 	}
-	if !slices.Equal(first.Args, []string{"src/a.ts"}) {
+	if !slices.Equal(first.Args, []string{"--no-warn-ignored", "src/a.ts"}) {
 		t.Errorf("eslint args = %v, want [src/a.ts] rebased from frontend/src/a.ts", first.Args)
 	}
 	if first.Dir != source {
