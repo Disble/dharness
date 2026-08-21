@@ -76,3 +76,53 @@ func TestRelatedTestsReadsTheInitialRunAndNothingElse(t *testing.T) {
 		})
 	}
 }
+
+// TestSurvivorsCarryWhatTheMutantBecame is M2: a mutator name and a line
+// number do not say what changed.
+//
+// From the field report: "MethodExpression at line 59 does not say which
+// method, or what it became. Line 59 in that file was a five-line chained
+// expression." Working out each mutant meant parsing the JSON by hand — the
+// same JSON dharness had just read to reach its verdict.
+//
+// Measured on a bun/vitest fixture: 4 of 4 survivors carried a non-empty
+// `replacement` (`score > 90`, `true`, `n >= 0`). The schema marks it
+// optional, so an absent one falls back to the bare description rather than
+// printing an arrow pointing at nothing.
+func TestSurvivorsCarryWhatTheMutantBecame(t *testing.T) {
+	report := `{"files":{"src/a.ts":{"mutants":[
+		{"status":"Survived","mutatorName":"EqualityOperator","replacement":"n >= 0","location":{"start":{"line":5}}},
+		{"status":"Survived","mutatorName":"MethodExpression","location":{"start":{"line":9}}}
+	]}}}`
+
+	survivors, err := Survivors(strings.NewReader(report))
+	if err != nil {
+		t.Fatalf("Survivors() = %v", err)
+	}
+	if len(survivors) != 2 {
+		t.Fatalf("got %d survivors, want 2", len(survivors))
+	}
+	if got := survivors[0].String(); got != "src/a.ts:5 EqualityOperator → n >= 0" {
+		t.Errorf("Survivor.String() = %q, want it to show what the mutant became", got)
+	}
+	if got := survivors[1].String(); got != "src/a.ts:9 MethodExpression" {
+		t.Errorf("Survivor.String() = %q, want no arrow when the report carries no replacement", got)
+	}
+}
+
+// TestSurvivorReplacementIsCollapsedToOneLine keeps the survivor list one
+// entry per line. A mutated multi-line expression carries its newlines into
+// `replacement`, and a list that reflows is a list nobody can scan.
+func TestSurvivorReplacementIsCollapsedToOneLine(t *testing.T) {
+	report := `{"files":{"src/a.ts":{"mutants":[
+		{"status":"Survived","mutatorName":"BlockStatement","replacement":"{\n  return 1;\n}","location":{"start":{"line":3}}}
+	]}}}`
+
+	survivors, err := Survivors(strings.NewReader(report))
+	if err != nil {
+		t.Fatalf("Survivors() = %v", err)
+	}
+	if got := survivors[0].String(); strings.Contains(got, "\n") {
+		t.Errorf("Survivor.String() = %q, want a single line", got)
+	}
+}
