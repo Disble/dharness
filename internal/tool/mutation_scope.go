@@ -1,8 +1,11 @@
 package tool
 
 import (
+	"encoding/json"
+	"fmt"
 	"io"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -128,4 +131,46 @@ func SurvivorsInScope(r io.Reader, scopes []MutationScope) ([]Survivor, error) {
 		}
 	}
 	return scoped, nil
+}
+
+// FilesOutsideScope names the files the report carries that this run never
+// asked about, in path order.
+//
+// It exists to make one sentence truthful. Stryker's clear-text table is
+// printed from the cumulative report, and no Stryker option scopes it to
+// --mutate: `clearTextReporter.skipFull` skips fully covered files, not
+// out-of-scope ones. Measured on a bun/vitest fixture, naming one file printed
+// a table of three, with `All files ... 4 survived` two lines above `Every
+// mutant was caught`. Both were true of different things, which is what made
+// it cost an afternoon.
+//
+// dharness does not rewrite that table — it is the wrapped tool's own output
+// (§03). It says what the table is, and only when there is something to say:
+// an empty answer here means the report and the run cover the same files, and
+// a note explaining a mismatch that did not happen is noise on every run.
+//
+// The question is per file, not per line. A run scoped to src/a.ts:5-7 named
+// that file, so its rows are this run's subject even where a survivor at line
+// 10 is not this run's verdict — that narrower question is SurvivorsInScope's.
+func FilesOutsideScope(r io.Reader, scopes []MutationScope) ([]string, error) {
+	var report mutationReport
+	if err := json.NewDecoder(r).Decode(&report); err != nil {
+		return nil, fmt.Errorf("read the mutation report: %w", err)
+	}
+
+	var outside []string
+	for path := range report.Files {
+		named := false
+		for _, scope := range scopes {
+			if slashed(scope.Path) == slashed(path) {
+				named = true
+				break
+			}
+		}
+		if !named {
+			outside = append(outside, path)
+		}
+	}
+	sort.Strings(outside)
+	return outside, nil
 }

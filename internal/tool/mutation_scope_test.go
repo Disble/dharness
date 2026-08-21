@@ -163,3 +163,40 @@ func TestSurvivorsInScopeMatchesPathsAcrossSeparators(t *testing.T) {
 		t.Fatalf("SurvivorsInScope() = %v, want the survivor a backslash path still names", survivors)
 	}
 }
+
+// TestFilesOutsideScopeNamesWhatTheRunDidNotAsk answers the question the
+// clear-text table raises and cannot answer for itself: how much of what was
+// just printed belongs to this run.
+//
+// Line ranges do not narrow it. A run scoped to src/a.ts:5-7 named that file,
+// so its rows are this run's subject even where a survivor at line 10 is not
+// this run's verdict; the question here is which *files* the reader did not
+// ask about.
+func TestFilesOutsideScopeNamesWhatTheRunDidNotAsk(t *testing.T) {
+	report := `{"files":{
+		"src/a.ts":{"mutants":[{"status":"Survived","mutatorName":"X","location":{"start":{"line":10}}}]},
+		"src/b.ts":{"mutants":[{"status":"Killed","mutatorName":"X","location":{"start":{"line":1}}}]},
+		"src/c.ts":{"mutants":[{"status":"Survived","mutatorName":"X","location":{"start":{"line":2}}}]}}}`
+
+	got, err := FilesOutsideScope(strings.NewReader(report), []MutationScope{ParseMutationScope("src/a.ts:5-7")})
+	if err != nil {
+		t.Fatalf("FilesOutsideScope() = %v", err)
+	}
+	if !slices.Equal(got, []string{"src/b.ts", "src/c.ts"}) {
+		t.Errorf("FilesOutsideScope() = %v, want the two files the run never named, in order", got)
+	}
+}
+
+// TestFilesOutsideScopeIsEmptyWhenTheReportMatchesTheRun keeps the note it
+// feeds from printing on a run that has nothing to explain.
+func TestFilesOutsideScopeIsEmptyWhenTheReportMatchesTheRun(t *testing.T) {
+	report := `{"files":{"src/a.ts":{"mutants":[{"status":"Killed","mutatorName":"X","location":{"start":{"line":1}}}]}}}`
+
+	got, err := FilesOutsideScope(strings.NewReader(report), []MutationScope{ParseMutationScope("src/a.ts")})
+	if err != nil {
+		t.Fatalf("FilesOutsideScope() = %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("FilesOutsideScope() = %v, want none", got)
+	}
+}

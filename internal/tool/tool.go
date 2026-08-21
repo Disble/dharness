@@ -276,9 +276,14 @@ func StrykerMutate(paths []string, testRunner, incrementalFile, sandbox string, 
 	args := []string{"run"}
 	args = append(args, mutate(paths)...)
 	args = append(args, testRunnerArgs(testRunner)...)
+	// An empty incrementalFile is `dharness mutate --fresh`: the pair is
+	// dropped rather than negated, so the run neither reads the accumulated
+	// results nor rewrites them. --force stays either way — it is what reruns
+	// the named scope, and it means the same thing with no cache to reuse.
+	if incrementalFile != "" {
+		args = append(args, "--incremental", "--incrementalFile", incrementalFile)
+	}
 	args = append(args,
-		"--incremental",
-		"--incrementalFile", incrementalFile,
 		"--force",
 		"--concurrency", strconv.Itoa(concurrency),
 		// The sandbox goes where dharness can find it again and clean it.
