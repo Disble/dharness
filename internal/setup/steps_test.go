@@ -1427,3 +1427,35 @@ func TestHookInstallStepAppliesOnceTheConfigCarriesTheReference(t *testing.T) {
 		t.Errorf("Delegated() = %q, true for a config that already carries the reference", why)
 	}
 }
+
+// TestHookInstallDelegationWarnsAboutBunsBlockedPostinstall covers the one
+// thing standing between step 9's instructions and them working.
+//
+// `bun add -d lefthook` installs the package and prints "Blocked 1
+// postinstall. Run `bun pm untrusted` for details." lefthook's postinstall is
+// what downloads the platform binary, so the command the delegation just
+// asked for leaves an unusable binary behind. Not a dharness defect, but it
+// sits directly in the path of the step dharness delegates, and dharness has
+// already detected that the package manager is bun.
+//
+// Only for bun. npm, pnpm and yarn run the postinstall, and a sentence about
+// a problem those projects do not have is the noise this output already has
+// enough of.
+func TestHookInstallDelegationWarnsAboutBunsBlockedPostinstall(t *testing.T) {
+	root := t.TempDir()
+	bun := project.Project{Root: root, Source: root, PackageManager: "bun"}
+
+	why, delegated := (hookInstallStep{}).Delegated(bun)
+	if !delegated {
+		t.Fatal("Delegated() = false with no hook manager present")
+	}
+	if !strings.Contains(why, "bun pm trust lefthook") {
+		t.Errorf("Delegated() = %q, want it to name the command that makes the binary usable", why)
+	}
+
+	npm := project.Project{Root: root, Source: root, PackageManager: "npm"}
+	npmWhy, _ := (hookInstallStep{}).Delegated(npm)
+	if strings.Contains(npmWhy, "bun pm trust") {
+		t.Errorf("Delegated() = %q for npm, want no advice about a problem npm does not have", npmWhy)
+	}
+}
