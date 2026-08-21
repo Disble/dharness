@@ -142,6 +142,8 @@ func RunCheck(args []string, stdout io.Writer) error {
 		}
 	}()
 
+	fmt.Fprint(stdout, remoteResolutionNote(stages))
+
 	for index, stage := range stages {
 		// Two tools writing into one stream with nothing between them leaves
 		// whoever reads the gate — a person, or the model that ran it — to work
@@ -181,6 +183,14 @@ type stage struct {
 	label   string
 	command runner.Command
 	help    runner.Command
+
+	// remoteTool names the package this stage resolves through the package
+	// manager's remote executor, or "" for a stage that runs a binary the
+	// project installed. It is the tool rather than the label because two
+	// stages run fallow, and it is the stage's own answer rather than a list
+	// kept beside it, so a stage that changes how it resolves cannot leave
+	// the explanation behind.
+	remoteTool string
 }
 
 // named renames a stage for dharness's own output without changing a byte of
@@ -196,9 +206,10 @@ func (s stage) named(label string) stage {
 // resolution, unchanged by stage now carrying a command instead of args.
 func remoteStage(p project.Project, name string, args ...string) stage {
 	return stage{
-		label:   name,
-		command: tool.RemoteLatest(p.PackageManager, name, p.Source, args...),
-		help:    tool.RemoteLatest(p.PackageManager, name, p.Source, "--help"),
+		label:      name,
+		command:    tool.RemoteLatest(p.PackageManager, name, p.Source, args...),
+		help:       tool.RemoteLatest(p.PackageManager, name, p.Source, "--help"),
+		remoteTool: name,
 	}
 }
 
@@ -219,4 +230,56 @@ func names(stages []stage) string {
 		list = append(list, stage.label)
 	}
 	return strings.Join(list, " and ")
+}
+
+// remoteResolutionNote says where most of the gate's wall time goes, or ""
+// when no stage pays for it.
+//
+// Measured on a five-file create-next-app with warm caches: three consecutive
+// commits touching one file took 23.1s, 23.0s and 22.6s, against ~4.6s of
+// analysis the four stages report between them. The rest is the package
+// manager resolving `react-doctor@latest` and `fallow@latest` against the
+// registry, once per invocation and so three times per commit.
+//
+// dharness keeps that resolution on purpose: §03 makes the gate run the
+// current release of each analyser and pin none of them, so two developers on
+// the same commit are never checked by different versions of the same tool
+// because one of them installed it earlier. Nothing here proposes changing
+// that.
+//
+// What was wrong was leaving it unexplained. A 23-second `git commit` with no
+// account of itself reads as the analysis being slow, and the next move is
+// --no-verify — so the gate states the trade it is making, before the wait
+// rather than after it. Two lines: this prints on every gated commit, and a
+// gate that buries its own result under its own prose is the defect one
+// directory over.
+func remoteResolutionNote(stages []stage) string {
+	var tools []string
+	resolutions := 0
+	for _, stage := range stages {
+		if stage.remoteTool == "" {
+			continue
+		}
+		resolutions++
+		if !contains(tools, stage.remoteTool) {
+			tools = append(tools, stage.remoteTool)
+		}
+	}
+	if resolutions == 0 {
+		return ""
+	}
+
+	return fmt.Sprintf(
+		"\n%s run at @latest, resolved from the registry once per stage — %d times here.\nMost of the wait is that round trip rather than analysis; the gate is never\npinned, so it always runs the release the tools published.\n",
+		strings.Join(tools, " and "), resolutions)
+}
+
+// contains reports whether values already holds target.
+func contains(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
