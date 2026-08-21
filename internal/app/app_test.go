@@ -138,3 +138,47 @@ func TestResolveVersionPrefersLdflagsThenBuildInfo(t *testing.T) {
 		})
 	}
 }
+
+// TestRunArgsPointsTheSetupVerbsAtSync is F7: `init` is what a person reaches
+// for on a project that has never seen the tool, and dharness merged that
+// verb into sync (Decision 1). The help text says so one line down a list of
+// four commands; the error a mistyped command produces is the one moment
+// they are certainly reading.
+//
+// The list of real commands stays — this adds a sentence, it does not replace
+// the answer to "what does exist".
+func TestRunArgsPointsTheSetupVerbsAtSync(t *testing.T) {
+	for _, command := range []string{"init", "setup", "bootstrap", "install"} {
+		t.Run(command, func(t *testing.T) {
+			var out bytes.Buffer
+
+			err := RunArgs([]string{command}, &out)
+
+			var unknown *UnknownCommandError
+			if !errors.As(err, &unknown) {
+				t.Fatalf("RunArgs() = %v, want UnknownCommandError", err)
+			}
+			if !strings.Contains(err.Error(), "dharness sync") {
+				t.Errorf("error does not point at sync: %s", err)
+			}
+			for _, real := range []string{"sync", "check", "mutate"} {
+				if !strings.Contains(err.Error(), real) {
+					t.Errorf("error stopped naming %q: %s", real, err)
+				}
+			}
+		})
+	}
+}
+
+// TestRunArgsSuggestsNothingForAnUnrelatedTypo keeps the suggestion from
+// becoming noise every unknown command carries: a typo of an existing
+// command gets the list and nothing else.
+func TestRunArgsSuggestsNothingForAnUnrelatedTypo(t *testing.T) {
+	var out bytes.Buffer
+
+	err := RunArgs([]string{"chekc"}, &out)
+
+	if strings.Contains(err.Error(), "dharness sync") {
+		t.Errorf("an unrelated typo was given the setup suggestion: %s", err)
+	}
+}
