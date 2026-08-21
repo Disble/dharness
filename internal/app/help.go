@@ -27,7 +27,16 @@ COMMANDS
                             exactly those lines. Runs the Stryker the project
                             installed, which is the only place it can resolve
                             the project's own TypeScript, and adds it at @latest
-                            only when the project declares none.
+                            only when the project declares none. It needs the
+                            project to run its tests on vitest or jest; Stryker
+                            supports no other runner here.
+                            A mutant that cannot be killed because it changes
+                            nothing is silenced in the code, with Stryker's own
+                            directive and a reason that stays next to it:
+                              // Stryker disable next-line all: equivalent, X is
+                              // undefined either way
+                            Those mutants report as ignored and stop failing the
+                            run, which is what keeps the verdict worth reading.
   version                   Print version
 
 FLAGS
@@ -36,6 +45,11 @@ FLAGS
   --concurrency <n>         mutate only: Stryker workers (default 2)
   --upgrade                 mutate only: bring Stryker to @latest, rewriting
                             the version the project declares
+  --fresh                   mutate only: measure just the paths you named.
+                            Without it, results from earlier runs are reused —
+                            they are kept in .git/dharness/, they make the run
+                            faster, and they are why the table Stryker prints
+                            can cover more files than you asked about.
   --help, -h                Show this message; every command also accepts help
 
 dharness owns invocation only. Each wrapped tool keeps its own configuration,
