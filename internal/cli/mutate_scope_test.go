@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Disble/dharness/internal/project"
@@ -56,5 +57,25 @@ func TestMutateRefusesPathsOutsideTheJSProject(t *testing.T) {
 	}
 	if outside.Path != "internal/app/app.go" {
 		t.Errorf("the error does not name the path: %v", outside)
+	}
+}
+
+// TestShortestPathNamesTheStateSomebodyCanFind pins the reader-facing half of
+// the cumulative note. The absolute form of a state path under the git common
+// directory runs past eighty characters before it reaches the part that
+// matters, and the whole point of printing it is that somebody can find the
+// file — the field report found it with `find . -iname '*stryker*'` after the
+// tool never mentioned it.
+func TestShortestPathNamesTheStateSomebodyCanFind(t *testing.T) {
+	dir := t.TempDir()
+
+	inside := shortestPath(dir, filepath.Join(dir, ".git", "dharness", "stryker-incremental.json"))
+	if inside != ".git/dharness/stryker-incremental.json" {
+		t.Errorf("shortestPath() = %q, want the path relative to the project, slash-separated", inside)
+	}
+
+	outside := shortestPath(dir, filepath.Join(t.TempDir(), "elsewhere.json"))
+	if !strings.HasSuffix(outside, "elsewhere.json") || strings.HasPrefix(outside, "..") {
+		t.Errorf("shortestPath() = %q, want the absolute path for a target outside the project", outside)
 	}
 }

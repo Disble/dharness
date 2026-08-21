@@ -55,6 +55,7 @@ func RunMutate(args []string, stdout io.Writer) error {
 	concurrency := flags.Int("concurrency", defaultConcurrency, "Stryker workers")
 	dryRun := flags.Bool("dry-run", false, "measure how many tests a scoped run executes, without mutating anything")
 	upgrade := flags.Bool("upgrade", false, "bring Stryker to @latest, rewriting the version the project declares")
+	fresh := flags.Bool("fresh", false, "measure only the named paths, ignoring results kept from earlier runs")
 	paths, err := parseInterspersed(flags, args)
 	if err != nil {
 		return err
@@ -119,13 +120,20 @@ func RunMutate(args []string, stdout io.Writer) error {
 		return recordMeasurement(p, transcript.String(), scopes[0].Path, stdout)
 	}
 
-	incremental, err := p.StatePath("stryker-incremental.json")
-	if err != nil {
-		return err
+	// --fresh leaves the accumulated results alone rather than deleting them:
+	// the file is never named, so this run can neither read it nor rewrite it,
+	// and the next ordinary run still has everything earlier runs measured.
+	var incremental string
+	if !*fresh {
+		incremental, err = p.StatePath("stryker-incremental.json")
+		if err != nil {
+			return err
+		}
+		// A corrupt incremental report makes Stryker fail in a way that reads
+		// like a problem with the code under test. Discarding it costs one
+		// full run.
+		project.DiscardIfUnreadable(incremental, json.Valid)
 	}
-	// A corrupt incremental report makes Stryker fail in a way that reads like
-	// a problem with the code under test. Discarding it costs one full run.
-	project.DiscardIfUnreadable(incremental, json.Valid)
 
 	sandbox, err := p.EnsureDir("stryker-tmp")
 	if err != nil {
@@ -141,7 +149,7 @@ func RunMutate(args []string, stdout io.Writer) error {
 	if err := runStryker(binary, p, selection, tool.StrykerMutate(arguments, testRunnerArg, incremental, sandbox, *concurrency), stdout); err != nil {
 		return err
 	}
-	return reportSurvivors(p.Source, scopes, stdout)
+	return reportSurvivors(p.Source, scopes, incremental, stdout)
 }
 
 // PathOutsideSourceError reports a path Stryker could never have mutated.
@@ -310,7 +318,7 @@ func recordMeasurement(p project.Project, transcript, path string, stdout io.Wri
 
 // reportSurvivors turns Stryker's report into the exit code it does not
 // produce. A missing report is not a pass: it means the run said nothing.
-func reportSurvivors(dir string, scopes []tool.MutationScope, stdout io.Writer) error {
+func reportSurvivors(dir string, scopes []tool.MutationScope, incremental string, stdout io.Writer) error {
 	path := filepath.Join(dir, tool.MutationReportPath)
 
 	file, err := os.Open(path)
@@ -323,6 +331,17 @@ func reportSurvivors(dir string, scopes []tool.MutationScope, stdout io.Writer) 
 	if err != nil {
 		return err
 	}
+
+	// Read a second time rather than threaded through SurvivorsInScope: the
+	// two answer different questions — which mutants this run is the verdict
+	// for, and which rows of the table above are not this run's subject at
+	// all — and a single function returning both would make each caller take
+	// the other one's answer to ignore it.
+	if _, err := file.Seek(0, io.SeekStart); err == nil {
+		if outside, err := tool.FilesOutsideScope(file, scopes); err == nil && len(outside) > 0 {
+			printCumulativeNote(stdout, dir, outside, incremental)
+		}
+	}
 	if len(survivors) == 0 {
 		fmt.Fprintln(stdout, "\nEvery mutant was caught: these tests notice this code breaking.")
 		return nil
@@ -333,4 +352,44 @@ func reportSurvivors(dir string, scopes []tool.MutationScope, stdout io.Writer) 
 		fmt.Fprintf(stdout, "  %s\n", survivor)
 	}
 	return &SurvivorsError{Survivors: survivors}
+}
+
+// printCumulativeNote says what the table above the verdict actually is.
+//
+// Stryker prints it from the whole report, and --incremental keeps results for
+// files this run never named, so the two disagree by design: measured on a
+// bun/vitest fixture, a clean file with a warm cache printed `All files ... 4
+// survived` two lines above `Every mutant was caught`. Neither line is wrong;
+// nothing said they were answering different questions.
+//
+// dharness relays Stryker's table rather than rewriting it (§03), so what it
+// adds is the sentence the table cannot say about itself — and the path, which
+// is dharness's own decision. Stryker's default is reports/, dharness keeps it
+// under the git common directory instead: out of the working tree, out of the
+// diff, and the last place anybody looks when a number reads wrong.
+func printCumulativeNote(stdout io.Writer, dir string, outside []string, incremental string) {
+	fmt.Fprintf(stdout, "\nThe table above also counts %d file(s) this run did not name: %s.\n",
+		len(outside), strings.Join(outside, ", "))
+	if incremental != "" {
+		fmt.Fprintf(stdout, "Those results were kept from earlier runs, in %s.\n", shortestPath(dir, incremental))
+	}
+	fmt.Fprintln(stdout, "The verdict below covers only the paths you named; `--fresh` measures only those too.")
+}
+
+// shortestPath names target the way a reader can act on it: relative to dir
+// when it sits inside, absolute when it does not.
+//
+// The absolute form of a state path under the git common directory runs past
+// eighty characters before it reaches the part that matters, and the point of
+// printing it at all is that somebody can find the file.
+func shortestPath(dir, target string) string {
+	// No separator normalisation, and that is measured rather than assumed.
+	// dir arrives from the process and target from `git rev-parse`, which
+	// answers in forward slashes even on Windows; filepath.Rel handles the
+	// mix there because Windows treats both characters as separators. On
+	// Linux neither side produces a backslash, so there is no mix either.
+	if rel, err := filepath.Rel(dir, target); err == nil && !strings.HasPrefix(rel, "..") {
+		return filepath.ToSlash(rel)
+	}
+	return filepath.ToSlash(target)
 }

@@ -344,6 +344,41 @@ func TestMutatePairsIncrementalWithForceAndBoundsConcurrency(t *testing.T) {
 	}
 }
 
+// TestMutateFreshMeasuresOnlyWhatWasNamed pins --fresh against the defect that
+// produced it.
+//
+// Measured on a bun/vitest fixture: with a warm incremental file, naming one
+// file printed a table of three and reported `All files ... 4 survived` two
+// lines above `Every mutant was caught`. The table is Stryker's own clear-text
+// reporter over a cumulative report, and no Stryker option scopes it to
+// --mutate — `clearTextReporter.skipFull` skips fully covered files, not
+// out-of-scope ones. Running without the cache is what scopes it: the same
+// invocation minus --incremental printed one row, two mutants, agreeing with
+// the verdict.
+//
+// The incremental file is not passed either, so a --fresh run cannot rewrite
+// the accumulated results it is choosing to ignore.
+func TestMutateFreshMeasuresOnlyWhatWasNamed(t *testing.T) {
+	captured, root := stub(t, "")
+	mutable(t, root)
+
+	_ = RunMutate([]string{"--fresh", "src/a.ts"}, io.Discard)
+
+	args := strykerArgs(t, captured)
+	if !strings.Contains(args, "--mutate src/a.ts") {
+		t.Fatalf("stryker did not mutate the named path: %s", args)
+	}
+	if strings.Contains(args, "--incremental") {
+		t.Errorf("--fresh still read the cache: %s", args)
+	}
+	if strings.Contains(args, "--incrementalFile") {
+		t.Errorf("--fresh still named the cache file, so the run could rewrite it: %s", args)
+	}
+	if !strings.Contains(args, "--force") {
+		t.Errorf("--fresh dropped --force, which is what reruns this scope: %s", args)
+	}
+}
+
 func TestMutateDryRunMeasuresWithoutMutating(t *testing.T) {
 	captured, root := stub(t, "")
 	mutable(t, root)
@@ -380,6 +415,62 @@ func writeReport(t *testing.T, root, contents string) {
 
 // Stryker prints surviving mutants and exits 0. If dharness reads the report
 // and stays quiet too, the command reports success on tests that would not
+
+// TestMutateNamesTheRowsItDidNotAskFor is the reader-facing half of the same
+// defect. The table above dharness's verdict is Stryker's, printed from a
+// cumulative report, and on a clean file with a warm cache it reported four
+// survivors two lines above "Every mutant was caught". Both sentences were
+// true of different things.
+//
+// dharness does not rewrite that table (§03). It states what the table is,
+// names the files that are not this run's subject, and says where the results
+// it is reading from live — a location dharness chose, under .git/, which is
+// the last place anybody looks.
+func TestMutateNamesTheRowsItDidNotAskFor(t *testing.T) {
+	_, root := stub(t, "")
+	mutable(t, root)
+	writeReport(t, root, `{"files":{
+		"src/a.ts":{"mutants":[{"status":"Killed","mutatorName":"BooleanLiteral","location":{"start":{"line":1}}}]},
+		"src/old.ts":{"mutants":[{"status":"Survived","mutatorName":"EqualityOperator","location":{"start":{"line":3}}}]}}}`)
+
+	var out bytes.Buffer
+	if err := RunMutate([]string{"src/a.ts"}, &out); err != nil {
+		t.Fatalf("RunMutate() = %v; the named file has no survivors", err)
+	}
+
+	got := out.String()
+	if !strings.Contains(got, "src/old.ts") {
+		t.Errorf("the run did not name the file it never asked about:\n%s", got)
+	}
+	if !strings.Contains(got, "--fresh") {
+		t.Errorf("the run did not name the flag that measures only what was named:\n%s", got)
+	}
+	if !strings.Contains(got, "stryker-incremental.json") {
+		t.Errorf("the run did not say where the results it reused live:\n%s", got)
+	}
+	if strings.Contains(got, `\stryker-incremental.json`) {
+		t.Errorf("the path was printed with backslashes, unlike every other path this tool prints:\n%s", got)
+	}
+}
+
+// TestMutateSaysNothingWhenTheReportMatchesTheRun keeps that note off a run
+// with nothing to explain — the common case, and the one that would turn the
+// explanation into noise.
+func TestMutateSaysNothingWhenTheReportMatchesTheRun(t *testing.T) {
+	_, root := stub(t, "")
+	mutable(t, root)
+	writeReport(t, root, `{"files":{"src/a.ts":{"mutants":[
+		{"status":"Killed","mutatorName":"BooleanLiteral","location":{"start":{"line":1}}}]}}}`)
+
+	var out bytes.Buffer
+	if err := RunMutate([]string{"src/a.ts"}, &out); err != nil {
+		t.Fatalf("RunMutate() = %v", err)
+	}
+	if strings.Contains(out.String(), "--fresh") {
+		t.Errorf("explained a mismatch that did not happen:\n%s", out.String())
+	}
+}
+
 // notice the code breaking.
 func TestMutateFailsOnSurvivors(t *testing.T) {
 	_, root := stub(t, "")
