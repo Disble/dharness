@@ -79,6 +79,25 @@ blocking task — not as a reviewer's optional afterthought.
 below — one dated line, newest at the bottom, never rewritten — so P12 is
 covered natively and needs nothing added.
 
+**The gate checks the commit, not the working tree.** `.githooks/pre-commit`
+materialises the index with `git checkout-index` and runs gofmt, vet and the
+suite there. On a whole-tree commit that is the same thing; on a partial-index
+commit — every commit in a change split into work units — it is not, and the
+previous hook reported on the tree that was not being committed. Measured on
+21 August 2026: ten consecutive commits reached main failing `gofmt -l .`,
+each committed while the working tree was already correct. They are in main
+permanently, so `git bisect` across that range fails this repository's own gate
+for a reason unrelated to whatever is being bisected. `scripts/verify-gate.sh`
+now proves both refusals — a broken file, and a broken commit behind a clean
+working tree.
+
+**A rebase invalidates whatever you verified before it.** Verifying each commit
+of a branch and then rebasing leaves main holding commits that were never
+checked in the form they now have: the rebase rewrites every SHA, and CI runs
+on the merge result rather than on each commit. The ten above were verified
+pre-rebase and reached main unverified. Whatever proves a commit good has to be
+re-run on the commits that actually land.
+
 **Pull requests are merged by squash or rebase; merge commits are disabled.**
 A merge commit carries the pull request's title, and when that title is a
 conventional commit release-please counts it a second time and the changelog

@@ -27,18 +27,50 @@ if [ -z "$staged" ]; then
 	exit 0
 fi
 
-unformatted=$(gofmt -l $staged)
+# Everything below runs against the *index*, materialised into a temporary
+# directory, never against the working tree.
+#
+# This is the whole correction. `gofmt -l $staged` named staged paths and then
+# read whatever the working tree happened to hold at those paths, and `go vet`
+# and `go test` did not consult the index at all. On a whole-tree commit the
+# two agree and nothing is visibly wrong. On a partial-index commit — which is
+# every commit in a change split into work units — they are different trees,
+# and the hook was reporting on the one that is not being committed.
+#
+# Measured on 21 August 2026, after this repository's own history was audited
+# commit by commit: ten consecutive commits reached main failing `gofmt -l .`,
+# in a range whose fix landed at the end of the branch. Every one of them was
+# committed while the working tree was already correct, so a working-tree check
+# had nothing to report. Those ten are in main permanently; `git bisect` over
+# that range now fails the repository's own gate for a reason unrelated to
+# whatever is being bisected.
+#
+# git checkout-index is what makes the check honest: it writes exactly the
+# bytes `git commit` is about to record. The build cache is content-keyed and
+# global, so a second run over the same content costs almost nothing.
+index_tree=$(mktemp -d)
+cleanup() { rm -rf "$index_tree"; }
+trap cleanup EXIT
+
+git checkout-index -a -f --prefix="$index_tree/"
+cd "$index_tree"
+
+# gofmt over the whole materialised tree rather than the staged subset, for
+# parity with CI: CI runs `gofmt -l .` and fails the job on any file. A hook
+# that only checks the files this commit touches lets an unformatted file
+# already in the index pass, and then CI refuses the push.
+unformatted=$(gofmt -l .)
 if [ -n "$unformatted" ]; then
 	echo "$unformatted" >&2
-	fail "the files above are not gofmt'd. Run: gofmt -w ."
+	fail "the files above are not gofmt'd, as they would be committed. Run: gofmt -w ."
 fi
 
-go vet ./... || fail "go vet found something"
+go vet ./... || fail "go vet found something in the tree being committed"
 
 # CI runs this with -race. It is left off here because the race detector needs a
 # C toolchain that a Windows checkout frequently does not have, and a gate that
 # cannot run is worse than one with a stated limit. Data races are caught in CI,
 # not by this hook.
-go test ./... || fail "a test failed"
+go test ./... || fail "a test failed in the tree being committed"
 
-echo "pre-commit: gofmt, vet and tests passed"
+echo "pre-commit: gofmt, vet and tests passed against the staged tree"
