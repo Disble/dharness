@@ -107,3 +107,41 @@ func TestChangedUnreadableExistingFileReportsModifiedNotUnchanged(t *testing.T) 
 		t.Fatalf("Changed() = %+v, want exactly one entry with Kind == modified", changes)
 	}
 }
+
+// TestChangedOmitsAPathThatWasSnapshottedAndNeverCreated is F6: a path
+// remembered before a subprocess runs is a rollback snapshot, not a promise
+// that anything will be written there.
+//
+// Measured on dharness 1.5.1 against bun 1.4, whose lockfile is the text
+// `bun.lock`: installStep snapshots every lockfile its manager might write,
+// which for bun is both `bun.lock` and the legacy binary `bun.lockb`. bun
+// wrote the first and has not written the second since 1.2, so every sync
+// reported `+ bun.lockb` for a file that has never existed — on runs where
+// nothing changed at all.
+//
+// Both must stay in the snapshot set: which one bun writes is bun's answer
+// to give, and dropping one would leave a real rollback unable to restore
+// it. What was wrong is reporting absence as creation.
+func TestChangedOmitsAPathThatWasSnapshottedAndNeverCreated(t *testing.T) {
+	root := t.TempDir()
+	w := &Writer{}
+
+	never := filepath.Join(root, "bun.lockb")
+	written := filepath.Join(root, "bun.lock")
+	if err := w.remember(never); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Write(written, []byte("lockfile\n")); err != nil {
+		t.Fatal(err)
+	}
+
+	changes := w.Changed(root, 0, len(w.touched))
+	for _, change := range changes {
+		if change.Path == "bun.lockb" {
+			t.Errorf("Changed() reported %q as %s for a file that does not exist", change.Path, change.Kind)
+		}
+	}
+	if len(changes) != 1 || changes[0].Path != "bun.lock" || changes[0].Kind != report.Created {
+		t.Errorf("Changed() = %+v, want just bun.lock created", changes)
+	}
+}

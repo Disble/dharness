@@ -86,12 +86,17 @@ func (w *Writer) remember(path string) error {
 // name (defect 9). It reads each path back from disk because Writer stores
 // pre-write bytes only, never post-write.
 //
-// A file that did not exist is created without a read: its prior absence is
-// recorded fact, and Apply would have returned an error if the write had
-// failed. A file that existed and cannot be read back now is reported
-// modified — of the three kinds, unchanged is the only one that claims
-// nothing happened, and claiming it from a failed read is the fabrication
-// §09 forbids.
+// A file that did not exist and still does not is omitted entirely: nothing
+// happened there. Writer.remember is called for two different reasons — by
+// Write, which is about to create the file, and by a step snapshotting what
+// a subprocess *might* rewrite so a rollback can restore it — and only the
+// first makes absence-then-presence a certainty. installStep snapshots every
+// lockfile the detected manager could write, so a bun project reported
+// `+ bun.lockb` on every run for a legacy file bun stopped writing in 1.2.
+//
+// A file that existed and cannot be read back now is reported modified — of
+// the three kinds, unchanged is the only one that claims nothing happened,
+// and claiming it from a failed read is the fabrication §09 forbids.
 func (w *Writer) Changed(root string, from, to int) []report.FileChange {
 	var changes []report.FileChange
 	for _, taken := range w.touched[from:to] {
@@ -102,6 +107,9 @@ func (w *Writer) Changed(root string, from, to int) []report.FileChange {
 		path = filepath.ToSlash(path)
 
 		if !taken.existed {
+			if _, err := os.Stat(taken.path); err != nil {
+				continue
+			}
 			changes = append(changes, report.FileChange{Path: path, Kind: report.Created})
 			continue
 		}
