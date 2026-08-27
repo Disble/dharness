@@ -12,8 +12,10 @@ go run ./tools/mutationstaged
 ```
 
 The dry run prints selected files, owning test packages, staged byte ranges,
-excluded-file count, candidate mutants, and kept/dropped node counters. The real
-run uses the same plan and defaults to a minimum score of `0.80`.
+candidate mutants, and kept/dropped node counters. It reports an excluded-file
+count only on the fail-open path, which is the only path that excludes anything
+by pattern. The real run uses the same plan and defaults to a minimum score of
+`0.80`.
 
 Set `DHARNESS_MUTATION_THRESHOLD` to a number from 0 to 1 only when a reviewed
 workflow needs a different threshold. There is currently no repository
@@ -27,7 +29,9 @@ measurement supporting a different default.
 | Staged test or tooling file | Excluded from mutation. |
 | Unstaged edits over a staged production file | Fail with a partial-staging correction. |
 | Derivable staged lines | Convert index content lines to byte ranges and filter all 14 ooze mutators. |
+| Derivable staged lines | Pass no exclusion pattern: ditto drops every file the scope does not name. |
 | Underivable staged scope | Fail open to whole-file mutation and print the reason. |
+| Underivable staged scope | Enumerate every other tracked Go file as the exclusion pattern, which is then the whole guard. |
 | Derived scope with zero mutation candidates | Fail before `ooze.Release` with a zero-execution diagnosis. |
 
 Production source means `.go` files excluding `_test.go`, `tools/`, and

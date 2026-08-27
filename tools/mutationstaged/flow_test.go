@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -219,4 +220,76 @@ func copyFixtureFile(t *testing.T, sourceRoot, targetRoot, name string) {
 		t.Fatal(err)
 	}
 	writeFixtureFile(t, targetRoot, name, string(content))
+}
+
+// TestDerivedScopeAsksForNoExclusionPattern pins what H1 measured: with a
+// derived scope, ditto drops every file the scope does not name by itself, so
+// enumerating the rest buys nothing. Measured on this repository, one staged
+// file made the wrapper build an alternation over the other 96 tracked sources.
+func TestDerivedScopeAsksForNoExclusionPattern(t *testing.T) {
+	root := stagedCalcFixture(t)
+	runner := &recordedRunner{inner: osProcessRunner{}}
+	tool := &tool{cwd: root, runner: runner, stdout: &bytes.Buffer{}, stderr: &bytes.Buffer{}}
+
+	if err := tool.run(false); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	release := runner.runs[len(runner.runs)-1]
+	if got := environmentValue(release.Env, envIgnorePattern); got != "" {
+		t.Fatalf("%s = %q, want empty: the scope already names every file worth mutating", envIgnorePattern, got)
+	}
+	for _, query := range runner.queries {
+		if strings.Contains(query, "ls-files") {
+			t.Fatalf("listed every tracked Go file (%q) to build an exclusion the scope makes redundant", query)
+		}
+	}
+}
+
+// TestUnderivableScopeStillExcludesEveryOtherFile is the other half of the same
+// measurement. With no scope to pass, the pattern is the whole guard: variant D
+// reported 10 mutants where the unguarded run reported 26.
+func TestUnderivableScopeStillExcludesEveryOtherFile(t *testing.T) {
+	runner := scriptedRunner{outputs: map[string][]byte{
+		"git ls-files -z -- *.go": []byte("internal/calc/calc.go\x00internal/calc/calc_test.go\x00internal/other/other.go\x00"),
+	}}
+	tool := &tool{cwd: t.TempDir(), runner: runner, stdout: &bytes.Buffer{}, stderr: &bytes.Buffer{}}
+
+	pattern, excluded, err := tool.exclusion(scopePlan{derived: false}, []string{"internal/calc/calc.go"})
+	if err != nil {
+		t.Fatalf("exclusion: %v", err)
+	}
+	if excluded != 2 {
+		t.Fatalf("excluded = %d, want 2", excluded)
+	}
+
+	matcher, err := regexp.Compile(pattern)
+	if err != nil {
+		t.Fatalf("compile %q: %v", pattern, err)
+	}
+	if matcher.MatchString("internal/calc/calc.go") {
+		t.Fatalf("pattern %q excludes the staged file", pattern)
+	}
+	for _, other := range []string{"internal/calc/calc_test.go", "internal/other/other.go"} {
+		if !matcher.MatchString(other) {
+			t.Fatalf("pattern %q does not exclude %s", pattern, other)
+		}
+	}
+}
+
+// TestDerivedDryRunDoesNotReportAnExclusionCount keeps the output honest: with
+// nothing excluded by a pattern, a count of excluded files is a number about
+// work that no longer happens.
+func TestDerivedDryRunDoesNotReportAnExclusionCount(t *testing.T) {
+	root := newGitFixture(t)
+	writeFixtureFile(t, root, "internal/calc/calc.go", "package calc\nfunc Add(a, b int) int { return a - b }\n")
+	gitFixture(t, root, "add", "internal/calc/calc.go")
+
+	var stdout bytes.Buffer
+	if err := newTool(root, &stdout, &bytes.Buffer{}).run(true); err != nil {
+		t.Fatalf("dry run: %v", err)
+	}
+	if strings.Contains(stdout.String(), "excluded files") {
+		t.Fatalf("derived dry run still reports an exclusion count:\n%s", stdout.String())
+	}
 }

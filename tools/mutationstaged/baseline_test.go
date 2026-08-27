@@ -10,12 +10,14 @@ import (
 // recordedRunner delegates process output to the real runner so Git still
 // materializes a sandbox, and intercepts executions so no ooze run is paid for.
 type recordedRunner struct {
-	inner processRunner
-	runs  []commandSpec
-	fail  func(commandSpec) bool
+	inner   processRunner
+	runs    []commandSpec
+	queries []string
+	fail    func(commandSpec) bool
 }
 
 func (runner *recordedRunner) Output(dir, name string, args ...string) ([]byte, error) {
+	runner.queries = append(runner.queries, strings.Join(append([]string{name}, args...), " "))
 	return runner.inner.Output(dir, name, args...)
 }
 

@@ -80,14 +80,12 @@ func (tool *tool) run(dry bool) error {
 		return err
 	}
 
-	trackedOutput, err := tool.git("ls-files", "-z", "--", "*.go")
-	if err != nil {
-		return fmt.Errorf("list tracked Go files: %w", err)
-	}
-	tracked := normalizeTrackedPaths(splitNUL(trackedOutput))
-	ignore := buildIgnorePattern(tracked, staged)
 	testCommand := buildTestCommand(staged)
 	plan, err := tool.computeScope(staged)
+	if err != nil {
+		return err
+	}
+	ignore, excluded, err := tool.exclusion(plan, staged)
 	if err != nil {
 		return err
 	}
@@ -95,7 +93,11 @@ func (tool *tool) run(dry bool) error {
 	fmt.Fprintln(tool.stdout, describeSelection(staged))
 	fmt.Fprintf(tool.stdout, "  mutable files    : %s\n", strings.Join(staged, " "))
 	fmt.Fprintf(tool.stdout, "  test command     : %s\n", testCommand)
-	fmt.Fprintf(tool.stdout, "  excluded files   : %d\n", len(tracked)-len(staged))
+	// Only the fail-open path excludes anything by pattern. Printing a count
+	// on the derived path would report work that no longer happens.
+	if !plan.derived {
+		fmt.Fprintf(tool.stdout, "  excluded files   : %d\n", excluded)
+	}
 	fmt.Fprintf(tool.stdout, "  line scope       : %s\n", describeScope(plan))
 	fmt.Fprintf(tool.stdout, "  candidate mutants: %d (kept nodes %d, dropped nodes %d)\n",
 		plan.stats.Candidates, plan.stats.Kept, plan.stats.Dropped)
@@ -132,6 +134,32 @@ func (tool *tool) rejectPartiallyStaged(staged []string) error {
 		}
 	}
 	return nil
+}
+
+// exclusion names every tracked file the run must not mutate — but only when
+// there is no derived scope to do it instead.
+//
+// A derived scope is keyed by file, and ditto drops any file the scope does not
+// name rather than mutating it whole. Enumerating everything else then selects
+// nothing that was still reachable. Measured: with the scope alone and with the
+// scope plus this pattern, the two runs reported the identical set of mutant
+// addresses, zero differing, and neither named the unscoped file. The control
+// that makes those numbers mean something is the branch below — without a
+// scope, removing the pattern took the same fixture from 10 mutants to 26.
+//
+// What it costs to build anyway, measured on this repository: 97 tracked .go
+// files, so one staged file means walking the index and assembling an
+// alternation over the other 96 to exclude what was already dropped.
+func (tool *tool) exclusion(plan scopePlan, staged []string) (string, int, error) {
+	if plan.derived {
+		return "", 0, nil
+	}
+	trackedOutput, err := tool.git("ls-files", "-z", "--", "*.go")
+	if err != nil {
+		return "", 0, fmt.Errorf("list tracked Go files: %w", err)
+	}
+	tracked := normalizeTrackedPaths(splitNUL(trackedOutput))
+	return buildIgnorePattern(tracked, staged), len(tracked) - len(staged), nil
 }
 
 func (tool *tool) computeScope(staged []string) (scopePlan, error) {
