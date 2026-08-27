@@ -1,4 +1,20 @@
-# Backlog: the staged mutation wrapper
+# Backlog: the staged mutation wrapper — **the wrapper is gone**
+
+**Closed on 2026-08-27, and kept rather than deleted.** `tools/mutationstaged`
+and `internal/testsupport/mutation` no longer exist: the staged-line scope, the
+index sandbox and the refusals moved into ditto, and this repository now runs
+`ditto staged`. See `docs/mutation-testing.md`.
+
+Every entry below is about files that are no longer here. They are kept because
+the observations were measured and several of them travelled — the index sandbox
+in particular, which turned out to decide 7 of 8 verdicts and is now the reason
+ditto materialises the index rather than reading a working tree. Reading this as
+a list of open work would be wrong; reading it as why the replacement looks the
+way it does is the point.
+
+The original preamble follows.
+
+---
 
 Observations about `tools/mutationstaged` and `internal/testsupport/mutation`
 that are worth acting on but were not worth derailing the change that found

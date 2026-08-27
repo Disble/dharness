@@ -77,10 +77,11 @@ true; it is a memory aid and never a substitute for a check that enforces it.
     go vet ./...
     go test ./...
     gofmt -l .
-    go run ./tools/mutationstaged -dry
-    go run ./tools/mutationstaged
+    ditto staged --dry --exclude-prefix tools/
     bash scripts/verify-gate.sh           # proves the gate still refuses
 
-The dharness product is stdlib-only. ooze is the sole development dependency and
-belongs only to staged Go mutation tooling; see `docs/mutation-testing.md` and
-the recorded deviation in `AGENTS.md`.
+The dharness product is stdlib-only, and now the module is too: `go.mod` requires
+one thing, and it is not a mutation tool. `ditto staged` is a command you install
+(`go install github.com/Disble/ditto/cmd/ditto@latest`), not a dependency this
+repository compiles — which is the principle at the top of this file applied to
+this repository's own tooling. See `docs/mutation-testing.md`.

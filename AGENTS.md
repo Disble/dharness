@@ -14,8 +14,7 @@ decision that produced it, and a change is accepted or rejected by citing them.
     go vet ./...
     go test ./...
     gofmt -l .
-    go run ./tools/mutationstaged -dry
-    go run ./tools/mutationstaged
+    ditto staged --dry --exclude-prefix tools/
     bash scripts/verify-gate.sh           # proves the gate still refuses
 
 The local gate is `.githooks/pre-commit` and runs what CI runs. There is no hook
@@ -25,10 +24,10 @@ and needs nothing installed, since bash ships with Git for Windows. lefthook is
 a binary to fetch plus `lefthook install`, which for three commands from the Go
 toolchain buys nothing.
 
-The product remains stdlib-only. The module has one development-only dependency:
-`github.com/gtramontina/ooze`, used exclusively by the repository's staged Go
-mutation wrapper and its test support. A proposal that adds another dependency
-has to argue against the stdlib-only product boundary first.
+The product remains stdlib-only, and so is the module: `go.mod` requires only
+what `internal/jsconfig` parses with. Staged Go mutation testing is `ditto
+staged`, a command installed rather than a dependency compiled. A proposal that
+adds another dependency has to argue against the stdlib-only boundary first.
 
 ## Repo-owned rules with no equivalent below
 
@@ -284,9 +283,10 @@ boundaries are unstated will be mistaken for a complete one.
 
 The cycle is RED → GREEN → **MUTATE** → REFACTOR. **Load the `mutation-tdd` skill
 after a test goes green** — it owns the decision table and the survivor-triage
-rules. The systematic MUTATE step is `go run ./tools/mutationstaged`; it scopes
-ooze to staged production lines and fails loudly when the computed scope would
-execute no mutants.
+rules. The systematic MUTATE step is `ditto staged`; it scopes mutation to the
+staged lines, runs the suite against a checkout of the index rather than the
+working tree, and refuses a red baseline, a partially staged file, or a scope
+that would execute no mutants. See `docs/mutation-testing.md`.
 
 **The focused manual check.** During an edit with nothing staged, delete the
 guard the test claims to cover, prove the source changed with
@@ -332,12 +332,12 @@ Repo-owned. Silence is drift; a stated deviation is a decision.
 - `deviates: P08 — no generated config.` Nothing in this repository is
   tool-owned, so there is no marker to merge behind. The files dharness
   generates in *other* repositories do follow it, under `.dharness/`.
-- `deviates: stdlib-only module — development tooling only.` ooze v0.2.0 and its
-  transitive modules compile `tools/mutationstaged` and
-  `internal/testsupport/mutation`; `cmd/dharness` and the three wrapped product
-  invocations do not import them. The trade buys systematic staged-line mutation
-  coverage and an executable silent-no-op guard that the standard library does
-  not provide.
+- `closed: stdlib-only module — development tooling only.` This deviation was
+  recorded for ooze, later ditto, compiling `tools/mutationstaged` and
+  `internal/testsupport/mutation`. Both are gone: the staged-line scope, the
+  index sandbox and the refusals moved into ditto itself, which is now installed
+  as a command rather than compiled as a dependency. Nothing here trades the
+  boundary for that coverage any more.
 - `deviates: stdlib-only product — internal/jsconfig depends on
   github.com/odvcencio/gotreesitter.` The product's first non-development
   dependency: `cmd/dharness` imports it, transitively, through

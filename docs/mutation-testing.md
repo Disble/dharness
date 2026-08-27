@@ -1,81 +1,79 @@
 # Staged Go Mutation Testing
 
-`tools/mutationstaged` runs ooze against the exact staged identity of dharness Go
-product code. It is repository development tooling. It does not add a fourth CLI
-to the dharness product and it is deliberately absent from the commit hook.
+Mutation testing for this repository's Go code is `ditto staged`. There is no
+wrapper here any more: `tools/mutationstaged` and `internal/testsupport/mutation`
+were fourteen files that gave ditto conciousness of the index, and ditto has that
+now.
 
 ## Run It
 
 ```sh
-go run ./tools/mutationstaged -dry
-go run ./tools/mutationstaged
+go install github.com/Disble/ditto/cmd/ditto@latest
+
+ditto staged --dry --exclude-prefix tools/
+ditto staged --exclude-prefix tools/ --threshold 0.80 \
+  --test-command "go test -short -count=1 ./internal/cli/"
 ```
 
-The dry run prints selected files, owning test packages, staged byte ranges,
-candidate mutants, and kept/dropped node counters. It reports an excluded-file
-count only on the fail-open path, which is the only path that excludes anything
-by pattern. The real run uses the same plan and defaults to a minimum score of
-`0.80`.
+`--dry` reports the staged files and the byte ranges they justify and runs
+nothing. The real run mutates only those ranges.
 
-Set `DHARNESS_MUTATION_THRESHOLD` to a number from 0 to 1 only when a reviewed
-workflow needs a different threshold. There is currently no repository
-measurement supporting a different default.
+## What moved, and what did not
 
-## Contract
-
-| Input or condition | Result |
+| Was | Is |
 | --- | --- |
-| No staged production Go | Exit 0 before starting ooze. |
-| Staged test or tooling file | Excluded from mutation. |
-| Unstaged edits over a staged production file | Fail with a partial-staging correction. |
-| Derivable staged lines | Convert index content lines to byte ranges and filter all 14 ooze mutators. |
-| Derivable staged lines | Pass no exclusion pattern: ditto drops every file the scope does not name. |
-| Underivable staged scope | Fail open to whole-file mutation and print the reason. |
-| Underivable staged scope | Enumerate every other tracked Go file as the exclusion pattern, which is then the whole guard. |
-| Derived scope with zero mutation candidates | Fail before `ooze.Release` with a zero-execution diagnosis. |
+| `go run ./tools/mutationstaged` | `ditto staged` |
+| `DHARNESS_MUTATION_THRESHOLD` | `--threshold` |
+| `mutationExcludedPrefixes` in Go | `--exclude-prefix`, repeatable |
+| the test command derived from the staged files' packages | `--test-command`, given by you |
 
-Production source means `.go` files excluding `_test.go`, `tools/`, and
-`internal/testsupport/`. Each mutant runs only the packages owning selected
-files through `go test -short -count=1`.
+**That last row is the one to know about.** The wrapper worked out which packages
+owned the staged files and ran only those, so a mutant cost one package's tests.
+ditto takes one command and does not derive it, so `./...` makes every mutant run
+the whole suite. Name the owning package when you know it — the measurement below
+was taken that way.
 
-## Index Identity
+Everything else is the same answer. Held against the wrapper on two staged
+changes of this repository, with the same test command, exclusions and threshold:
+**4 mutants, 1 killed, 3 survived** on one file and **9, 5, 4** on two, identical
+on both paths, with the same survivors by mutator. The second case is the
+control — the numbers had to move, and both moved together.
+`ditto/docs/experiments/replacing-the-wrapper.md`.
 
-The wrapper reads paths and diffs from Git's index, converts ranges against
-`git show :path`, then materializes the full index with `git checkout-index` in a
-temporary sandbox. ooze mutates and tests that sandbox. Worktree-only content is
-never part of the verdict.
+And it says more than the wrapper could: every survivor now carries a
+`path:line:col` address, which ditto gained in v0.3.0 and the wrapper never saw
+because it was pinned to v0.2.0.
 
-Paths from Git are NUL-delimited, normalized for Windows, and ooze exclusion
-patterns match both slash forms. The sandbox prefix uses the platform separator
-required by `git checkout-index`.
+## What it refuses, and why
 
-ooze's `Virus.Incubate` API does not identify the source file. Ranges from
-multiple staged files are therefore unioned for the runtime filter. This can
-retain an extra mutant when equal byte offsets occur in different files. The
-over-approximation costs execution time and never drops a staged mutant.
+| Condition | Result |
+| --- | --- |
+| Nothing staged worth mutating | Exits 0 without starting. |
+| A staged file also edited in the worktree | Refuses: the bytes measured must be the bytes scored. |
+| A red baseline | Refuses. A failing command is how ditto recognises a killed mutant, so a red suite scores every mutant killed and reports a perfect score for a run that tested nothing. Measured at 431 of 431 in 5.46 seconds before the guard existed. |
+| A scope that yields no mutants | The score is -1, which is below any threshold, so the run fails rather than reporting a vacuous pass. |
+| A diff that cannot be turned into ranges | Fails open to whole files and says why. |
 
-## Silent No-Ops
+## Why the index and not the working tree
 
-`ooze.Release` can call `t.Fatal` before control returns to the harness. A guard
-placed after that call cannot diagnose zero execution. The wrapper therefore
-parses staged index content first and asks the same 14 mutators for candidate
-infections without applying them. A real run starts only after this reachable
-preflight reports at least one candidate.
+ditto runs the suite against a checkout of the **index**, not of your working
+tree. This is not caution. Measured on a fixture built for it: pointed at the
+worktree, with one tracked file left dirty and unstaged, **seven of eight
+verdicts moved** — a score of 0.13 against 1.00 for the identical eight mutants
+of an identical file.
 
-The opt-in fixture pins a known baseline of one candidate and one killed mutant:
+Refusing a partially staged file does not cover that case, because the file that
+moved the verdicts was never staged. The two guards look alike and are not.
 
-```powershell
-$env:DHARNESS_MUTATION_FIXTURE='1'
-go test ./tools/mutationstaged -run TestMutationFixtureRunsOozeEndToEnd -count=1 -v
-Remove-Item Env:DHARNESS_MUTATION_FIXTURE
-```
+## Where it belongs in the loop
 
-The fixture creates and stages a separate temporary Git repository. It never
-reads or changes the user's index.
+The cycle is RED → GREEN → **MUTATE** → REFACTOR. Mutation testing answers
+whether a test would notice the code breaking, which only means anything once the
+tests are green — so it runs when a unit of work is finished, and it is
+deliberately absent from the commit hook.
 
-## Dependency Boundary
+## Dependency boundary
 
-ooze v0.2.0 is the module's sole direct development dependency. Its imports are
-confined to `tools/mutationstaged` and `internal/testsupport/mutation`; the
-`cmd/dharness` dependency graph remains stdlib-only. `AGENTS.md` records this
-tradeoff as an explicit deviation from the former module-wide stdlib-only rule.
+`go.mod` now requires one module, and it is not this one: ditto is a command you
+install, not a dependency this repository compiles. `cmd/dharness` is stdlib-only
+again, and the deviation `AGENTS.md` recorded for it is closed.
