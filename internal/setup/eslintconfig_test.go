@@ -843,12 +843,17 @@ func TestRegisteredPluginsReadsOnlyTheKey(t *testing.T) {
 	keys := registeredPlugins(p)
 
 	for _, want := range []string{"@", "import", "react", "react-doctor"} {
-		if !keys[want] {
+		if _, ok := keys[want]; !ok {
 			t.Errorf("registeredPlugins() = %v, want it to carry %q", keys, want)
 		}
 	}
-	if keys["react-doctor:react-doctor@0.9.12"] {
-		t.Error("registeredPlugins() kept the whole entry, want only the key before the colon")
+	if _, ok := keys["react-doctor:react-doctor@0.9.12"]; ok {
+		t.Error("registeredPlugins() kept the whole entry as a key, want the key before the colon")
+	}
+	// The build after the colon is kept as the value: the withdrawal note
+	// names it, and it is the same read that decided the withdrawal.
+	if keys["react-doctor"] != "react-doctor@0.9.12" {
+		t.Errorf("registeredPlugins()[%q] = %q, want the build ESLint reported", "react-doctor", keys["react-doctor"])
 	}
 }
 
@@ -940,7 +945,7 @@ func TestRegisteredPluginsAsksEveryProbePath(t *testing.T) {
 
 	keys := registeredPlugins(project.Project{Root: root, Source: root})
 
-	if !keys["react-doctor"] {
+	if _, ok := keys["react-doctor"]; !ok {
 		t.Errorf("registeredPlugins() = %v, want the key only one probed path reports", keys)
 	}
 	if len(asked) < 3 {
