@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.1](https://github.com/Disble/dharness/compare/v1.7.0...v1.7.1) (2026-08-30)
+
+
+### Bug Fixes
+
+* **preset:** write an Expo ESLint config that actually loads ([#39](https://github.com/Disble/dharness/issues/39)) ([255f43f](https://github.com/Disble/dharness/commit/255f43f485c4c358874c5d32944a7265db67421a))
+
 ## [1.7.0](https://github.com/Disble/dharness/compare/v1.6.0...v1.7.0) (2026-08-21)
 
 
