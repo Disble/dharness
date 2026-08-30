@@ -97,9 +97,10 @@ func (expo) Detect(p project.Project) (Match, bool) {
 				},
 				reactDoctorRecommended,
 				{
-					Package:  reactDoctorPluginPackage,
-					Binding:  reactDoctorBinding,
-					Accessor: []string{"configs", "react-native"},
+					Package:   reactDoctorPluginPackage,
+					Binding:   reactDoctorBinding,
+					Accessor:  []string{"configs", "react-native"},
+					Registers: reactDoctorPluginKey,
 					Because: reactDoctorPluginDocs + `: react-doctor publishes a "react-native" preset in ` +
 						`its own ESLint plugin, which is the one an Expo project matches. dharness runs ` +
 						`react-doctor in the gate, and react-doctor's CLI adopts an existing lint config ` +

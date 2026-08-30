@@ -1,16 +1,20 @@
 package setup
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/Disble/dharness/internal/jsconfig"
 	"github.com/Disble/dharness/internal/preset"
 	"github.com/Disble/dharness/internal/project"
+	"github.com/Disble/dharness/internal/runner"
 )
 
 // TestOwnedEslintConfigParamListMatchesBindingsByteForByte pins the
@@ -611,7 +615,7 @@ export default eslintConfig;
 		{Package: "eslint-plugin-react-doctor", Binding: "dharnessReactDoctor"},
 	}
 
-	got := contributedLayers(layers, config)
+	got := contributedLayers(project.Project{}, layers, config)
 
 	if len(got) != 1 || got[0].Package != "eslint-plugin-react-doctor" {
 		t.Errorf("contributedLayers() = %v, want only the layer the project does not already have", got)
@@ -632,7 +636,7 @@ export default [];
 `)
 	layers := []preset.Layer{{Package: "eslint-config-next/core-web-vitals", Binding: "dharnessNext", Spread: true}}
 
-	if got := contributedLayers(layers, config); len(got) != 1 {
+	if got := contributedLayers(project.Project{}, layers, config); len(got) != 1 {
 		t.Errorf("contributedLayers() = %v, want the layer kept: dharness's own import is not the project's", got)
 	}
 }
@@ -646,7 +650,7 @@ func TestContributedLayersKeepsADifferentSubpath(t *testing.T) {
 	config := []byte("import next from \"eslint-config-next\";\nexport default [...next];\n")
 	layers := []preset.Layer{{Package: "eslint-config-next/core-web-vitals", Binding: "dharnessNext", Spread: true}}
 
-	if got := contributedLayers(layers, config); len(got) != 1 {
+	if got := contributedLayers(project.Project{}, layers, config); len(got) != 1 {
 		t.Errorf("contributedLayers() = %v, want the subpath kept", got)
 	}
 }
@@ -666,7 +670,7 @@ func TestContributedLayersFoldsTheJSExtension(t *testing.T) {
 	config := []byte("const expoConfig = require('eslint-config-expo/flat');\nmodule.exports = [expoConfig];\n")
 	layers := []preset.Layer{{Package: "eslint-config-expo/flat.js", Binding: "dharnessExpo", Spread: true}}
 
-	if got := contributedLayers(layers, config); len(got) != 0 {
+	if got := contributedLayers(project.Project{}, layers, config); len(got) != 0 {
 		t.Errorf("contributedLayers() = %v, want the layer dropped: require() resolves both spellings to one file", got)
 	}
 }
@@ -680,7 +684,170 @@ func TestContributedLayersFoldsNothingButJS(t *testing.T) {
 	config := []byte("import base from \"eslint-config-example/flat\";\nexport default [...base];\n")
 	layers := []preset.Layer{{Package: "eslint-config-example/flat.mjs", Binding: "dharnessExample", Spread: true}}
 
-	if got := contributedLayers(layers, config); len(got) != 1 {
+	if got := contributedLayers(project.Project{}, layers, config); len(got) != 1 {
 		t.Errorf("contributedLayers() = %v, want the layer kept: .mjs is not what require() would have resolved", got)
+	}
+}
+
+// eslintPrintConfigStub seams runner.Run so a probe answers with the plugin
+// list a real `eslint --print-config` would print, in ESLint's own
+// "key:name@version" shape.
+func eslintPrintConfigStub(t *testing.T, plugins ...string) {
+	t.Helper()
+	resetPluginProbeForTest()
+	t.Cleanup(resetPluginProbeForTest)
+	t.Cleanup(runner.SetForTest(func(_ runner.Command, stdout, _ io.Writer) error {
+		resolved := struct {
+			Plugins []string `json:"plugins"`
+		}{Plugins: plugins}
+		return json.NewEncoder(stdout).Encode(resolved)
+	}))
+}
+
+// eslintProject is the fixture the withdrawal tests share: a JS project with
+// a local ESLint and a flat config carrying whatever src says.
+func eslintProject(t *testing.T, src string) project.Project {
+	t.Helper()
+	root := t.TempDir()
+	for name, contents := range map[string]string{
+		"package.json":      `{"name":"x"}`,
+		"package-lock.json": `{"lockfileVersion":3}`,
+		"eslint.config.js":  src,
+	} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(contents), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	binary := filepath.Join(root, "node_modules", ".bin", "eslint")
+	if runtime.GOOS == "windows" {
+		binary += ".cmd"
+	}
+	if err := os.MkdirAll(filepath.Dir(binary), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(binary, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return project.Project{Root: root, Source: root}
+}
+
+// reactDoctorLayers is the pair every framework preset contributes, reduced
+// to what the withdrawal rule reads.
+// The withdrawable layer sits in the middle on purpose: a rule that stopped
+// at it rather than skipping it would produce the same list as one that
+// skipped it if it were last, and the two are not the same rule.
+func reactDoctorLayers() []preset.Layer {
+	return []preset.Layer{
+		{Package: "eslint-config-expo/flat.js", Binding: "dharnessExpo", Spread: true, Because: "documented"},
+		{Package: "eslint-plugin-react-doctor", Binding: "dharnessReactDoctor", Accessor: []string{"configs", "recommended"}, Registers: "react-doctor", Because: "documented"},
+		{Package: "eslint-config-next/typescript", Binding: "dharnessNextTypeScript", Spread: true, Because: "documented"},
+	}
+}
+
+// TestContributedLayersWithdrawsAPluginTheProjectAlreadyRegisters is the
+// defect this rule exists for. Flat config refuses one plugin key
+// registered twice from two instances, and a project that already loads
+// react-doctor through another package makes dharness's copy the second
+// one. Contributing it anyway produces a config ESLint cannot load at all,
+// which is strictly worse than contributing everything else.
+//
+// The Expo layer stays. It registers four plugins and is still a
+// framework's environment rather than one plugin's rules, which is what
+// Registers being empty on it says.
+func TestContributedLayersWithdrawsAPluginTheProjectAlreadyRegisters(t *testing.T) {
+	eslintPrintConfigStub(t, "@", "react-doctor:react-doctor@0.7.4", "react")
+	p := eslintProject(t, "import dlinter from \"dlinter-ts-react\";\nexport default [...dlinter];\n")
+
+	got := contributedLayers(p, reactDoctorLayers(), []byte("import dlinter from \"dlinter-ts-react\";\n"))
+
+	if len(got) != 2 {
+		t.Fatalf("contributedLayers() = %v, want the react-doctor layer withdrawn and both framework layers kept", got)
+	}
+	if got[0].Package != "eslint-config-expo/flat.js" || got[1].Package != "eslint-config-next/typescript" {
+		t.Errorf("contributedLayers() = %v, want withdrawal to skip the layer rather than stop at it", got)
+	}
+}
+
+// TestContributedLayersKeepsWhatDharnessItselfRegistered is the half that
+// makes the answer stable across runs. On the second sync the plugin is in
+// the resolved list because dharness put it there, and withdrawing it would
+// drop every react-doctor layer on run two and re-add them on run three.
+//
+// Read off dharness's own import region rather than remembered: the region
+// names what dharness contributed last time, and the config having resolved
+// at all proves there was no collision.
+func TestContributedLayersKeepsWhatDharnessItselfRegistered(t *testing.T) {
+	eslintPrintConfigStub(t, "@", "react-doctor:react-doctor@0.9.12")
+	wired := eslintImportBegin + "\nimport dharnessReactDoctor from \"eslint-plugin-react-doctor\";\n" + eslintImportEnd + "\n\nexport default [];\n"
+	p := eslintProject(t, wired)
+
+	got := contributedLayers(p, reactDoctorLayers(), []byte(wired))
+
+	if len(got) != 3 {
+		t.Errorf("contributedLayers() = %v, want every layer kept: dharness registered that plugin itself", got)
+	}
+}
+
+// TestContributedLayersWithdrawsNothingWhenTheConfigCannotResolve holds the
+// order between this rule and eslintExtendsStep's own check. A config ESLint
+// cannot load reports no plugins at all, and withdrawing on that would be
+// guessing at which registration was the problem — the step's failure is
+// what speaks instead.
+func TestContributedLayersWithdrawsNothingWhenTheConfigCannotResolve(t *testing.T) {
+	resetPluginProbeForTest()
+	t.Cleanup(resetPluginProbeForTest)
+	t.Cleanup(runner.SetForTest(func(runner.Command, io.Writer, io.Writer) error {
+		return errors.New("exit status 2")
+	}))
+	p := eslintProject(t, "export default [];\n")
+
+	if got := contributedLayers(p, reactDoctorLayers(), []byte("export default [];\n")); len(got) != 3 {
+		t.Errorf("contributedLayers() = %v, want everything contributed when nothing was measured", got)
+	}
+}
+
+// TestContributedLayersWithdrawsNothingWithoutESLint is the absence row, the
+// same shape every other measurement in this package uses: no local binary
+// is no measurement and never a silent reduction (§20).
+func TestContributedLayersWithdrawsNothingWithoutESLint(t *testing.T) {
+	var commands []runner.Command
+	resetPluginProbeForTest()
+	t.Cleanup(resetPluginProbeForTest)
+	t.Cleanup(runner.SetForTest(func(cmd runner.Command, _, _ io.Writer) error {
+		commands = append(commands, cmd)
+		return nil
+	}))
+
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "eslint.config.js"), []byte("export default [];\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p := project.Project{Root: root, Source: root}
+
+	if got := contributedLayers(p, reactDoctorLayers(), []byte("export default [];\n")); len(got) != 3 {
+		t.Errorf("contributedLayers() = %v, want everything contributed with no ESLint to ask", got)
+	}
+	if len(commands) != 0 {
+		t.Errorf("contributedLayers() ran %d commands with no local binary, want 0", len(commands))
+	}
+}
+
+// TestRegisteredPluginsReadsOnlyTheKey pins what is read out of ESLint's
+// JSON. Entries are "key:name@version" — the key is what flat config
+// refuses to see twice, and the name and version after it identify the
+// build, which is a different question this rule does not ask.
+func TestRegisteredPluginsReadsOnlyTheKey(t *testing.T) {
+	eslintPrintConfigStub(t, "@", "import:eslint-plugin-import@2.32.0", "react", "react-doctor:react-doctor@0.9.12")
+	p := eslintProject(t, "export default [];\n")
+
+	keys := registeredPlugins(p)
+
+	for _, want := range []string{"@", "import", "react", "react-doctor"} {
+		if !keys[want] {
+			t.Errorf("registeredPlugins() = %v, want it to carry %q", keys, want)
+		}
+	}
+	if keys["react-doctor:react-doctor@0.9.12"] {
+		t.Error("registeredPlugins() kept the whole entry, want only the key before the colon")
 	}
 }

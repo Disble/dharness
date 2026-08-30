@@ -73,8 +73,8 @@ func TestNextjsContributesESLintConfigLayer(t *testing.T) {
 	assertLayerContribution(t, nextjs{}.Detect,
 		`{"dependencies":{"next":"^14.0.0"}}`, []wantLayer{
 			{pkg: "eslint-config-next/core-web-vitals", binding: "dharnessNext", spread: true},
-			{pkg: "eslint-plugin-react-doctor", binding: "dharnessReactDoctor", accessor: []string{"configs", "recommended"}},
-			{pkg: "eslint-plugin-react-doctor", binding: "dharnessReactDoctor", accessor: []string{"configs", "next"}},
+			{pkg: "eslint-plugin-react-doctor", binding: "dharnessReactDoctor", accessor: []string{"configs", "recommended"}, registers: "react-doctor"},
+			{pkg: "eslint-plugin-react-doctor", binding: "dharnessReactDoctor", accessor: []string{"configs", "next"}, registers: "react-doctor"},
 		})
 }
 
