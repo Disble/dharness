@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -151,6 +152,7 @@ func RunCheck(args []string, stdout io.Writer) error {
 		fmt.Fprintf(stdout, "\n── %s ──\n", stage.label)
 
 		if err := runner.Run(stage.command, stdout, stdout); err != nil {
+			fmt.Fprint(stdout, eslintConfigErrorNote(stage, err))
 			if skipped := stages[index+1:]; len(skipped) > 0 {
 				fmt.Fprintf(stdout, "\n%s failed, so %s did not run. There may be more to fix behind it.\n",
 					stage.label, names(skipped))
@@ -161,6 +163,48 @@ func RunCheck(args []string, stdout io.Writer) error {
 	}
 
 	return nil
+}
+
+// eslintConfigErrorCode is ESLint's own exit code for a configuration it
+// could not load, as against 1 for a file it linted and found problems in.
+// Measured on ESLint 9.39.4: a config whose merged objects redefine a plugin
+// exits 2 and lints nothing, and one lint error exits 1.
+const eslintConfigErrorCode = 2
+
+// eslintConfigErrorNote separates the two things an ESLint failure can mean.
+//
+// The gate is right either way — it stops, and it exits with the tool's own
+// code — but the two failures have nothing in common. Exit 1 is the gate
+// doing its job: a staged file has a problem, and the fix is in that file.
+// Exit 2 is ESLint never having run at all, which means every later stage was
+// skipped over a config nobody linted against, and the fix is not in any
+// staged file.
+//
+// It reads the exit code, never the message. The text below is dharness's,
+// the report above it is ESLint's, and nothing here parses one to produce the
+// other (§11).
+func eslintConfigErrorNote(s stage, err error) string {
+	// The stage's label, never command.Name: tool.Installed puts the binary's
+	// resolved path in Name and the tool's name in Label, so a check against
+	// Name matches nothing in the product and everything in a hand-built
+	// fixture. That is exactly how this shipped wrong once — the unit test
+	// passed against a stage the gate never builds, and running the binary is
+	// what said so.
+	if s.label != tool.ESLint {
+		return ""
+	}
+	var exit *runner.ExitError
+	if !errors.As(err, &exit) || exit.Code != eslintConfigErrorCode {
+		return ""
+	}
+	return "\n" + tool.ESLint + ` exited with a configuration error, not lint findings:
+it could not load this project's config, so no staged file was linted at all.
+The fix is in the config the report above names, not in the staged change.
+
+    dharness sync
+
+checks the same thing and says what it would write.
+`
 }
 
 // stage is one wrapped tool, the command that runs it, and the command that

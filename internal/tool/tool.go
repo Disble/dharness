@@ -352,6 +352,27 @@ func ESLintStaged(files []string) []string {
 	return append([]string{"--no-warn-ignored"}, files...)
 }
 
+// ESLintPrintConfig asks ESLint to resolve its configuration for one file
+// and print it, which is how dharness finds out whether the config it just
+// wrote can be loaded at all.
+//
+// It is a read, not a lint: ESLint builds the config array, applies every
+// matcher to this one path, and prints the result as JSON. Nothing is
+// parsed, so a syntax error in the file is not what this reports; a config
+// that throws while loading, or one whose merged objects redefine a plugin,
+// is. Exit 2 is ESLint's own configuration-error code and the whole verdict
+// (§11) — the JSON on stdout is discarded.
+//
+// The path is per-file on purpose. A plugin redefinition is only detected
+// among the configs that apply to one file, measured against ESLint 9.39.4:
+// two configs registering "react-doctor" under files ["**/*.ts"] and
+// ["**/*.tsx"] both resolve cleanly, and the same two under one matcher
+// exit 2. So a single probe answers for a single extension, and the caller
+// decides how many to ask.
+func ESLintPrintConfig(file string) []string {
+	return []string{"--print-config", file}
+}
+
 func mutate(paths []string) []string {
 	args := make([]string, 0, len(paths)*2)
 	for _, path := range paths {
