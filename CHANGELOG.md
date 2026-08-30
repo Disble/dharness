@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.3](https://github.com/Disble/dharness/compare/v1.7.2...v1.7.3) (2026-08-30)
+
+
+### Bug Fixes
+
+* **preset:** withdraw a layer whose plugin the project already registers ([#43](https://github.com/Disble/dharness/issues/43)) ([c19cd10](https://github.com/Disble/dharness/commit/c19cd109dca842ff24c3c29e4fd0f54349e99184))
+
 ## [1.7.2](https://github.com/Disble/dharness/compare/v1.7.1...v1.7.2) (2026-08-30)
 
 
