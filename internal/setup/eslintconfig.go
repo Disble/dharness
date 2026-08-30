@@ -1,16 +1,22 @@
 package setup
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/Disble/dharness/internal/jsconfig"
 	"github.com/Disble/dharness/internal/preset"
 	"github.com/Disble/dharness/internal/project"
+	"github.com/Disble/dharness/internal/runner"
+	"github.com/Disble/dharness/internal/tool"
 )
 
 // projectEslintModule reports which dialect dharness must write for this
@@ -316,10 +322,16 @@ func eslintLayerRegion(layers []preset.Layer, indent, eol string) string {
 // dharness's own marked import region is excluded before the question is
 // asked. It imports every layer dharness contributes, so counting it would
 // drop every layer on the second run and re-add them on the third.
-func contributedLayers(layers []preset.Layer, projectConfig []byte) []preset.Layer {
+func contributedLayers(p project.Project, layers []preset.Layer, projectConfig []byte) []preset.Layer {
 	present := map[string]bool{}
 	for _, specifier := range jsconfig.Imports(withoutDharnessImports(projectConfig)) {
 		present[sameModuleKey(specifier)] = true
+	}
+
+	registered := registeredPlugins(p)
+	mine := map[string]bool{}
+	for _, specifier := range dharnessImports(projectConfig) {
+		mine[sameModuleKey(specifier)] = true
 	}
 
 	kept := make([]preset.Layer, 0, len(layers))
@@ -327,9 +339,154 @@ func contributedLayers(layers []preset.Layer, projectConfig []byte) []preset.Lay
 		if present[sameModuleKey(layer.Package)] {
 			continue
 		}
+		if withdrawn(layer, registered, mine) {
+			continue
+		}
 		kept = append(kept, layer)
 	}
 	return kept
+}
+
+// withdrawn reports whether this layer's plugin is already registered by
+// somebody other than dharness, which is the one case flat config refuses:
+// one key, two instances, `Cannot redefine plugin`.
+//
+// The "other than dharness" half is what makes the answer stable across
+// runs, and it is read off dharness's own import region rather than
+// remembered. Three states, each one stable on repetition:
+//
+//   - The plugin is registered and dharness's region does not import it —
+//     the project brings it. Withdraw, and keep withdrawing: the next run
+//     reads the same two facts and answers the same way.
+//   - The plugin is registered and dharness's region does import it —
+//     dharness brings it, and since the config resolved at all there is no
+//     collision. Contribute.
+//   - The plugin is not registered. Contribute.
+//
+// A config ESLint cannot load reports no plugins at all, so everything is
+// contributed and eslintExtendsStep's own check is what speaks. That is the
+// right order: withdrawing on a config nobody could resolve would be
+// guessing at which registration was the problem.
+func withdrawn(layer preset.Layer, registered, mine map[string]bool) bool {
+	if layer.Registers == "" {
+		return false
+	}
+	return registered[layer.Registers] && !mine[sameModuleKey(layer.Package)]
+}
+
+// dharnessImports is the specifiers inside dharness's own marked import
+// region — the exact complement of withoutDharnessImports, which cuts that
+// region out. One asks what the project brings, the other what dharness
+// brought last time, and both questions are answered from the same bytes.
+func dharnessImports(src []byte) []string {
+	from, to, state := markerRegion(string(src), eslintImportBegin, eslintImportEnd)
+	if state != markersPresent {
+		return nil
+	}
+	return jsconfig.Imports(src[from:to])
+}
+
+// registeredPlugins is the set of ESLint plugin keys the project's config
+// resolves to, or an empty set when there is nothing to ask or nothing
+// answered.
+//
+// The source is `eslint --print-config`, whose JSON carries a `plugins`
+// array of "key:name@version" entries — measured against ESLint 9.39.4:
+// ["@", "import:eslint-plugin-import@2.32.0", "react-doctor:react-doctor@0.9.12",
+// ...]. Only the key before the first colon is read, because the key is what
+// flat config refuses to see twice; the name and version after it identify
+// the build, which is a different question and not this one.
+//
+// It is the direct signal (§09). Which packages register which plugins is
+// not derivable from a package name — dlinter-ts-react registers
+// react-doctor and says so nowhere dharness can read — and the alternative
+// is a table of "packages that bundle react-doctor", which is the invented
+// proxy this repository keeps deleting.
+//
+// No local ESLint, no flat config, or a config that does not resolve all
+// answer the same empty set: nothing measured, nothing withdrawn (§20).
+func registeredPlugins(p project.Project) map[string]bool {
+	if !p.HasSource() {
+		return nil
+	}
+	binary := p.LocalBinary(tool.ESLint)
+	if binary == "" {
+		return nil
+	}
+	config := eslintFlatConfig(p.Source)
+	if config == "" {
+		return nil
+	}
+	relative, err := filepath.Rel(p.Source, config)
+	if err != nil {
+		return nil
+	}
+	return pluginProbe.keys(p, binary, filepath.ToSlash(relative))
+}
+
+// pluginProbe memoises registeredPlugins for the life of one process,
+// keyed by the config it asked about.
+//
+// Every renderer asks the same question about the same file — the owned
+// factory, the import region and the layer region all derive their own layer
+// list — and one --print-config costs about a second. This is not the
+// recorded state §07 refuses: nothing is written, nothing outlives the
+// process, and the next run derives it again from the repository.
+//
+// The key is the config path rather than nothing at all. A single answer
+// shared by every caller would be right for one sync of one project and
+// silently wrong the moment a process asks about a second, which is exactly
+// the class of bug this file already carries two comments about.
+var pluginProbe = pluginKeyProbe{answers: map[string]map[string]bool{}}
+
+type pluginKeyProbe struct {
+	mu      sync.Mutex
+	answers map[string]map[string]bool
+}
+
+func (probe *pluginKeyProbe) keys(p project.Project, binary, file string) map[string]bool {
+	key := filepath.Join(p.Source, file)
+
+	probe.mu.Lock()
+	defer probe.mu.Unlock()
+	if answer, asked := probe.answers[key]; asked {
+		return answer
+	}
+	answer := readRegisteredPlugins(p, binary, file)
+	probe.answers[key] = answer
+	return answer
+}
+
+// resetPluginProbeForTest clears the memo so one test's answer cannot leak
+// into the next. The tests seam runner.Run, so without this the first test
+// to probe would answer for every test after it.
+func resetPluginProbeForTest() {
+	pluginProbe = pluginKeyProbe{answers: map[string]map[string]bool{}}
+}
+
+// readRegisteredPlugins runs the probe and parses the one field it reads.
+func readRegisteredPlugins(p project.Project, binary, file string) map[string]bool {
+	var stdout bytes.Buffer
+	probe := tool.Installed(tool.ESLint, binary, p.Source, tool.ESLintPrintConfig(file)...)
+	if err := runner.Run(probe, &stdout, io.Discard); err != nil {
+		return nil
+	}
+
+	var resolved struct {
+		Plugins []string `json:"plugins"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &resolved); err != nil {
+		return nil
+	}
+
+	keys := make(map[string]bool, len(resolved.Plugins))
+	for _, entry := range resolved.Plugins {
+		key, _, _ := strings.Cut(entry, ":")
+		if key != "" {
+			keys[key] = true
+		}
+	}
+	return keys
 }
 
 // sameModuleKey is the specifier under which two spellings of one module
@@ -379,5 +536,5 @@ func projectContributedLayers(p project.Project, layers []preset.Layer) []preset
 	if err != nil {
 		return layers
 	}
-	return contributedLayers(layers, raw)
+	return contributedLayers(p, layers, raw)
 }

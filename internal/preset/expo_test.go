@@ -67,8 +67,8 @@ func TestExpoContributesESLintConfigLayer(t *testing.T) {
 	assertLayerContribution(t, expo{}.Detect,
 		`{"dependencies":{"expo":"~51.0.0"}}`, []wantLayer{
 			{pkg: "eslint-config-expo/flat.js", binding: "dharnessExpo", spread: true},
-			{pkg: "eslint-plugin-react-doctor", binding: "dharnessReactDoctor", accessor: []string{"configs", "recommended"}},
-			{pkg: "eslint-plugin-react-doctor", binding: "dharnessReactDoctor", accessor: []string{"configs", "react-native"}},
+			{pkg: "eslint-plugin-react-doctor", binding: "dharnessReactDoctor", accessor: []string{"configs", "recommended"}, registers: "react-doctor"},
+			{pkg: "eslint-plugin-react-doctor", binding: "dharnessReactDoctor", accessor: []string{"configs", "react-native"}, registers: "react-doctor"},
 		})
 }
 

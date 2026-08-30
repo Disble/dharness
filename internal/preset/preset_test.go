@@ -425,10 +425,11 @@ func containsKey(keys []string, want string) bool {
 // non-empty rather than for its text, which is prose that will be re-quoted
 // whenever the upstream page is re-read.
 type wantLayer struct {
-	pkg      string
-	binding  string
-	accessor []string
-	spread   bool
+	pkg       string
+	binding   string
+	accessor  []string
+	spread    bool
+	registers string
 }
 
 // assertLayerContribution pins the whole Layer contract for one framework
@@ -465,6 +466,9 @@ func assertLayerContribution(t *testing.T, detect func(project.Project) (Match, 
 		}
 		if layer.Spread != w.spread {
 			t.Errorf("Layers[%d].Spread = %v, want %v", i, layer.Spread, w.spread)
+		}
+		if layer.Registers != w.registers {
+			t.Errorf("Layers[%d].Registers = %q, want %q", i, layer.Registers, w.registers)
 		}
 		if layer.Because == "" {
 			t.Errorf("Layers[%d].Because is empty, want a checkable observable", i)

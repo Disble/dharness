@@ -57,6 +57,17 @@ const reactDoctorPluginPackage = "eslint-plugin-react-doctor"
 // reactDoctorPluginDocs is the page every react-doctor Layer's Because cites.
 const reactDoctorPluginDocs = "https://www.react.doctor/docs/configuration/eslint-and-oxlint-plugins"
 
+// reactDoctorPluginKey is the name react-doctor's own ESLint plugin
+// registers itself under, which is the plugin's own choice and not a
+// convention dharness picks: measured through `eslint --print-config` on a
+// project that loads it, the resolved plugin list carries
+// "react-doctor:react-doctor@0.9.12" — key first, then the plugin's own
+// meta name and version.
+//
+// It is what Layer.Registers carries for every react-doctor layer, and the
+// key flat config refuses to see registered twice from two instances.
+const reactDoctorPluginKey = "react-doctor"
+
 // reactDoctorBinding is the one identifier the plugin is imported under, no
 // matter how many presets read a config off it. Several framework presets
 // contribute a layer bound to it — nextjs reads configs.next, expo reads
@@ -168,9 +179,10 @@ func nextjsLayers(p project.Project) []Layer {
 	}
 
 	return append(layers, reactDoctorRecommended, Layer{
-		Package:  reactDoctorPluginPackage,
-		Binding:  reactDoctorBinding,
-		Accessor: []string{"configs", "next"},
+		Package:   reactDoctorPluginPackage,
+		Binding:   reactDoctorBinding,
+		Accessor:  []string{"configs", "next"},
+		Registers: reactDoctorPluginKey,
 		Because: reactDoctorPluginDocs + `: react-doctor publishes a "next" preset in its own ESLint ` +
 			`plugin. dharness runs react-doctor in the gate, and react-doctor's CLI adopts an existing ` +
 			`lint config only when that config is JSON — so a flat config's rules reach it through this ` +
@@ -195,9 +207,10 @@ func nextjsLayers(p project.Project) []Layer {
 // that overlaps them is what would make it matter, and this is where to look
 // when it does.
 var reactDoctorRecommended = Layer{
-	Package:  reactDoctorPluginPackage,
-	Binding:  reactDoctorBinding,
-	Accessor: []string{"configs", "recommended"},
+	Package:   reactDoctorPluginPackage,
+	Binding:   reactDoctorBinding,
+	Accessor:  []string{"configs", "recommended"},
+	Registers: reactDoctorPluginKey,
 	Because: reactDoctorPluginDocs + `: "` + "`recommended`" + ` contains the framework-independent ` +
 		`rules" — the framework presets add to it rather than including it (measured against ` +
 		`eslint-plugin-react-doctor 0.9.12: 581 rules in recommended, none of them in next or ` +

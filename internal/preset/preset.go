@@ -176,6 +176,27 @@ type Layer struct {
 	// carries is what the export actually is, measured.
 	Spread bool
 
+	// Registers is the ESLint plugin key this layer's config registers, for
+	// a layer that exists to make that plugin's rules available — and "" for
+	// every other layer.
+	//
+	// It is what lets dharness withdraw a layer whose plugin the project's
+	// own config already registers, which flat config refuses to have twice
+	// under one key from two instances. The distinction is not "does this
+	// config register a plugin", because eslint-config-expo/flat.js
+	// registers four and is still a framework's environment rather than one
+	// plugin's rules: withdrawing it because a project already registers
+	// `react` would drop the parser, the globals and the framework's own
+	// rules along with it. A layer carries this only when the project
+	// registering that plugin itself makes dharness's copy redundant rather
+	// than merely overlapping.
+	//
+	// Withdrawing is not the same as the plugin being unnecessary. The
+	// project may register an older build with fewer rules, and dharness
+	// says so rather than pretending the two are equivalent — which is why
+	// the withdrawal is reported on every run instead of being silent.
+	Registers string
+
 	// Because names the observable, exactly as Fact.Because does.
 	Because string
 }

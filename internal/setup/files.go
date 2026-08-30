@@ -399,7 +399,7 @@ func spliceEslintConfig(p project.Project, path string, src []byte) ([]byte, err
 	// Filtered against the very bytes being spliced, so what the factory
 	// destructures and what this file spreads can never disagree about which
 	// layers the project already brings in itself.
-	layers := contributedLayers(preset.Layers(preset.Resolve(p)), src)
+	layers := contributedLayers(p, preset.Layers(preset.Resolve(p)), src)
 	dir := filepath.Dir(path)
 	raw := string(src)
 	module := jsconfig.ModuleOf(src)
