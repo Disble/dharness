@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.5](https://github.com/Disble/dharness/compare/v1.7.4...v1.7.5) (2026-08-30)
+
+
+### Bug Fixes
+
+* **setup:** name both builds in the withdrawal note ([#47](https://github.com/Disble/dharness/issues/47)) ([1c57fd6](https://github.com/Disble/dharness/commit/1c57fd61d83dcb4dcb2c095639ebe9f3257a8640))
+
 ## [1.7.4](https://github.com/Disble/dharness/compare/v1.7.3...v1.7.4) (2026-08-30)
 
 
