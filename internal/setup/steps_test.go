@@ -1,6 +1,8 @@
 package setup
 
 import (
+	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -12,6 +14,7 @@ import (
 	"github.com/Disble/dharness/internal/preset"
 	"github.com/Disble/dharness/internal/project"
 	"github.com/Disble/dharness/internal/runner"
+	"github.com/Disble/dharness/internal/tool"
 )
 
 // stubMatch builds a preset.Match with one fact, for tests that need to
@@ -1457,5 +1460,276 @@ func TestHookInstallDelegationWarnsAboutBunsBlockedPostinstall(t *testing.T) {
 	npmWhy, _ := (hookInstallStep{}).Delegated(npm)
 	if strings.Contains(npmWhy, "bun pm trust") {
 		t.Errorf("Delegated() = %q for npm, want no advice about a problem npm does not have", npmWhy)
+	}
+}
+
+// writeNestedFixtureFile is writeGoldenFixtureFile for a path whose
+// directory does not exist yet, which is every fixture the ESLint probe
+// walk needs: the walk is about tree shape, so the tree has to have one.
+func writeNestedFixtureFile(t *testing.T, dir, name, contents string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeGoldenFixtureFile(t, dir, name, contents)
+}
+
+// writeLocalESLintBinary is writeLocalFallowBinary for ESLint: the file
+// p.LocalBinary(tool.ESLint) looks for, in the shape npm writes it. Its
+// contents never run — runner.Run is seamed in every test that uses it.
+func writeLocalESLintBinary(t *testing.T, source string) {
+	t.Helper()
+	name := tool.ESLint
+	if runtime.GOOS == "windows" {
+		name = tool.ESLint + ".cmd"
+	}
+	path := filepath.Join(source, "node_modules", ".bin", name)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestEslintVerifyShortCircuitsOnNoLocalBinary pins the absence row: a
+// project with no ESLint installed produces no measurement and no failure,
+// and never builds a subprocess to find that out. A missing tool is not a
+// broken config (§20), and dharness does not install one at verification
+// time.
+func TestEslintVerifyShortCircuitsOnNoLocalBinary(t *testing.T) {
+	var commands []runner.Command
+	t.Cleanup(runner.SetForTest(func(cmd runner.Command, _, _ io.Writer) error {
+		commands = append(commands, cmd)
+		return nil
+	}))
+
+	root := t.TempDir()
+	writeGoldenFixtureFile(t, root, "package.json", `{"name":"x"}`)
+	writeGoldenFixtureFile(t, root, "package-lock.json", `{"lockfileVersion":3}`)
+	p := project.Project{Root: root, Source: root}
+
+	if err := (eslintExtendsStep{}).Verify(p); err != nil {
+		t.Errorf("Verify() = %v, want nil with no local ESLint", err)
+	}
+	if len(commands) != 0 {
+		t.Errorf("Verify() ran %d commands with no local binary, want 0: %v", len(commands), commands)
+	}
+}
+
+// TestEslintVerifyCarriesESLintsOwnMessage is the whole point of the step:
+// a config that does not load must fail the step and say why in ESLint's
+// own words. Nothing here parses that message — the exit code is the
+// verdict (§11) and the text is carried verbatim, because the fix is almost
+// never in dharness.
+func TestEslintVerifyCarriesESLintsOwnMessage(t *testing.T) {
+	const message = `ConfigError: Config (unnamed): Key "plugins": Cannot redefine plugin "react-doctor".`
+	t.Cleanup(runner.SetForTest(func(_ runner.Command, _, stderr io.Writer) error {
+		fmt.Fprintln(stderr, message)
+		return errors.New("exit status 2")
+	}))
+
+	root := t.TempDir()
+	writeGoldenFixtureFile(t, root, "package.json", `{"name":"x"}`)
+	writeGoldenFixtureFile(t, root, "package-lock.json", `{"lockfileVersion":3}`)
+	writeGoldenFixtureFile(t, root, "eslint.config.js", "export default [];\n")
+	writeLocalESLintBinary(t, root)
+	p := project.Project{Root: root, Source: root}
+
+	err := (eslintExtendsStep{}).Verify(p)
+	if err == nil {
+		t.Fatal("Verify() = nil, want a failure: ESLint could not load the config")
+	}
+	if !strings.Contains(err.Error(), message) {
+		t.Errorf("Verify() = %v, want it to carry ESLint's own message", err)
+	}
+}
+
+// TestEslintVerifyPassesWhenTheConfigLoads is the other half: an exit 0
+// from every probe is the step's postcondition holding, and Verify adds no
+// caveat of its own.
+func TestEslintVerifyPassesWhenTheConfigLoads(t *testing.T) {
+	var probes []string
+	t.Cleanup(runner.SetForTest(func(cmd runner.Command, _, _ io.Writer) error {
+		probes = append(probes, strings.Join(cmd.Args, " "))
+		return nil
+	}))
+
+	root := t.TempDir()
+	writeGoldenFixtureFile(t, root, "package.json", `{"name":"x"}`)
+	writeGoldenFixtureFile(t, root, "package-lock.json", `{"lockfileVersion":3}`)
+	writeGoldenFixtureFile(t, root, "eslint.config.js", "export default [];\n")
+	writeNestedFixtureFile(t, filepath.Join(root, "src"), "a.ts", "export const a = 1;\n")
+	writeLocalESLintBinary(t, root)
+	p := project.Project{Root: root, Source: root}
+
+	if err := (eslintExtendsStep{}).Verify(p); err != nil {
+		t.Errorf("Verify() = %v, want nil when every probe exits 0", err)
+	}
+	if len(probes) == 0 {
+		t.Fatal("Verify() ran no probe at all")
+	}
+	for _, probe := range probes {
+		if !strings.Contains(probe, "--print-config") {
+			t.Errorf("Verify() ran %q, want ESLint's own --print-config", probe)
+		}
+	}
+}
+
+// TestEslintProbePathsCoverEveryExtensionOnce pins the per-extension rule
+// tool.ESLintPrintConfig's measurement forces: a plugin redefinition is
+// scoped to the configs that apply to one file, so a .ts-only probe passes
+// a project whose collision is on .tsx. One path per distinct extension,
+// and never two for the same one.
+func TestEslintProbePathsCoverEveryExtensionOnce(t *testing.T) {
+	root := t.TempDir()
+	writeNestedFixtureFile(t, filepath.Join(root, "src"), "a.ts", "")
+	writeNestedFixtureFile(t, filepath.Join(root, "src"), "b.ts", "")
+	writeNestedFixtureFile(t, filepath.Join(root, "src"), "c.tsx", "")
+	writeGoldenFixtureFile(t, root, "eslint.config.js", "export default [];\n")
+	p := project.Project{Root: root, Source: root}
+
+	paths := eslintProbePaths(p)
+
+	extensions := map[string]int{}
+	for _, path := range paths {
+		extensions[filepath.Ext(path)]++
+	}
+	if extensions[".ts"] != 1 || extensions[".tsx"] != 1 {
+		t.Errorf("eslintProbePaths() = %v, want exactly one .ts and one .tsx probe", paths)
+	}
+	if len(paths) != 3 {
+		t.Errorf("eslintProbePaths() = %v, want three probes: one .ts, one .tsx, and the config", paths)
+	}
+}
+
+// TestEslintProbePathsIgnoreInstalledPackages keeps the walk out of
+// node_modules. Every dependency ships source files, and probing one would
+// ask ESLint about a path the project does not lint and cannot fix.
+func TestEslintProbePathsIgnoreInstalledPackages(t *testing.T) {
+	root := t.TempDir()
+	// .mjs, not .js: the config at the root already claims the .js probe, so
+	// a .js file under node_modules is deduped away and the assertion would
+	// hold whether or not the walk descended into it.
+	writeNestedFixtureFile(t, filepath.Join(root, "node_modules", "left-pad"), "index.mjs", "")
+	writeGoldenFixtureFile(t, root, "eslint.config.js", "export default [];\n")
+	p := project.Project{Root: root, Source: root}
+
+	paths := eslintProbePaths(p)
+	for _, path := range paths {
+		if strings.Contains(path, "node_modules") {
+			t.Errorf("eslintProbePaths() = %q, want nothing under node_modules", path)
+		}
+	}
+	if len(paths) != 1 {
+		t.Errorf("eslintProbePaths() = %v, want only the project's own config", paths)
+	}
+}
+
+// TestEslintProbePathsAlwaysAskAboutTheConfig is the floor, and the walk is
+// what provides it: a flat config is itself a source file, at a root the
+// walk never skips. A project with no other source file would otherwise
+// report a config that loads because nothing asked, which is the same
+// silence this step exists to end. An explicit floor was written first and
+// deleted — mutation testing found both its branches unkillable.
+func TestEslintProbePathsAlwaysAskAboutTheConfig(t *testing.T) {
+	root := t.TempDir()
+	writeGoldenFixtureFile(t, root, "eslint.config.js", "export default [];\n")
+	p := project.Project{Root: root, Source: root}
+
+	paths := eslintProbePaths(p)
+	if len(paths) != 1 || paths[0] != "eslint.config.js" {
+		t.Errorf("eslintProbePaths() = %v, want just the config itself", paths)
+	}
+}
+
+// TestEslintSatisfiedIsFalseWhenTheConfigCannotLoad is what makes this
+// release reach the machines that have the problem. A project wired by an
+// earlier dharness has a byte-identical config, so the comparison says
+// satisfied, a satisfied step is never applied, and a step never applied is
+// never verified — the fix would print exactly what the defect printed.
+func TestEslintSatisfiedIsFalseWhenTheConfigCannotLoad(t *testing.T) {
+	t.Cleanup(runner.SetForTest(func(_ runner.Command, _, stderr io.Writer) error {
+		fmt.Fprintln(stderr, `ConfigError: Cannot redefine plugin "react-doctor".`)
+		return errors.New("exit status 2")
+	}))
+
+	root := t.TempDir()
+	writeGoldenFixtureFile(t, root, "package.json", `{"name":"x"}`)
+	writeGoldenFixtureFile(t, root, "package-lock.json", `{"lockfileVersion":3}`)
+	writeLocalESLintBinary(t, root)
+	p := project.Project{Root: root, Source: root}
+
+	// Wire it exactly as dharness would, so the byte comparison is the one
+	// thing that cannot be what makes this unsatisfied.
+	if err := wireEslintExtends(p, &Writer{}); err != nil {
+		t.Fatalf("wireEslintExtends() = %v", err)
+	}
+
+	if (eslintExtendsStep{}).Satisfied(p) {
+		t.Error("Satisfied() = true for a byte-perfect config ESLint cannot load")
+	}
+}
+
+// TestEslintSatisfiedStaysTrueWithoutESLint holds the absence row at the
+// Satisfied end too: no local ESLint is no measurement, never a step that
+// reports itself pending forever on a project that does not lint (§20).
+func TestEslintSatisfiedStaysTrueWithoutESLint(t *testing.T) {
+	var commands []runner.Command
+	t.Cleanup(runner.SetForTest(func(cmd runner.Command, _, _ io.Writer) error {
+		commands = append(commands, cmd)
+		return errors.New("exit status 2")
+	}))
+
+	root := t.TempDir()
+	writeGoldenFixtureFile(t, root, "package.json", `{"name":"x"}`)
+	writeGoldenFixtureFile(t, root, "package-lock.json", `{"lockfileVersion":3}`)
+	p := project.Project{Root: root, Source: root}
+	if err := wireEslintExtends(p, &Writer{}); err != nil {
+		t.Fatalf("wireEslintExtends() = %v", err)
+	}
+
+	if !(eslintExtendsStep{}).Satisfied(p) {
+		t.Error("Satisfied() = false with no local ESLint; absence is not a broken config")
+	}
+	if len(commands) != 0 {
+		t.Errorf("Satisfied() ran %d commands with no local binary, want 0", len(commands))
+	}
+}
+
+// TestEslintProbePathsIgnoreDotDirectories keeps the walk out of everything
+// a dot names: .git, .next, .expo, and the directory dharness itself owns —
+// which is why that one needs no clause of its own. A build artefact is not
+// a file the project lints, and asking ESLint about one is asking about a
+// path nobody can fix.
+func TestEslintProbePathsIgnoreDotDirectories(t *testing.T) {
+	root := t.TempDir()
+	writeNestedFixtureFile(t, filepath.Join(root, ".next", "static"), "chunk.js", "")
+	writeNestedFixtureFile(t, filepath.Join(root, project.Dir), "eslint.config.mjs", "")
+	writeGoldenFixtureFile(t, root, "eslint.config.js", "export default [];\n")
+	p := project.Project{Root: root, Source: root}
+
+	for _, path := range eslintProbePaths(p) {
+		if strings.Contains(path, ".next") || strings.Contains(path, project.Dir) {
+			t.Errorf("eslintProbePaths() = %q, want nothing under a dot-directory", path)
+		}
+	}
+}
+
+// TestEslintProbePathsWalkADotPrefixedSourceRoot is the other side of the
+// same condition. The skip applies to directories the walk descends into,
+// never to the root it starts from: a project whose source directory is
+// itself dot-prefixed is an ordinary layout, and skipping it would probe
+// nothing at all.
+func TestEslintProbePathsWalkADotPrefixedSourceRoot(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, ".app")
+	writeNestedFixtureFile(t, filepath.Join(source, "src"), "thing.ts", "")
+	writeGoldenFixtureFile(t, source, "eslint.config.js", "export default [];\n")
+	p := project.Project{Root: root, Source: source}
+
+	paths := eslintProbePaths(p)
+	if !slices.Contains(paths, "src/thing.ts") {
+		t.Errorf("eslintProbePaths() = %v, want src/thing.ts: the root is never what the skip is about", paths)
 	}
 }

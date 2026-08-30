@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/Disble/dharness/internal/jsconfig"
@@ -480,7 +482,15 @@ func (s eslintExtendsStep) Satisfied(p project.Project) bool {
 	if err != nil {
 		return false
 	}
-	return bytes.Equal(candidate, raw)
+	if !bytes.Equal(candidate, raw) {
+		return false
+	}
+
+	// The bytes being right is not the same as the wiring working, and this
+	// step's whole purpose is the second one. Asked last, so it costs
+	// nothing on the runs the comparison above already decided (§12).
+	_, loads := eslintConfigLoads(p)
+	return loads
 }
 
 func (eslintExtendsStep) Describe(p project.Project) string {
@@ -585,6 +595,162 @@ func (eslintExtendsStep) Apply(p project.Project, w *Writer, _ io.Writer) (Facts
 		return Facts{}, fmt.Errorf("%s: %w", filepath.Base(path), err)
 	}
 	return Facts{}, w.Write(path, candidate)
+}
+
+// Verify runs ESLint against the config this step just wired and reports
+// what ESLint says when it cannot load it.
+//
+// It exists because a green sync and a working config were, until now, the
+// same report. `sync` writes the import region, the layer call and the whole
+// of .dharness/eslint.config.mjs, and every one of those is inside a region
+// it rewrites on the next run — so a config that does not load has no
+// project-owned seam to patch around, and the only signal the user got was
+// `0 failed`. Two releases shipped that way: 1.7.0 with three defects and
+// 1.7.1 with one, and both printed the same clean line. Verify is what makes
+// those two runs report differently.
+//
+// The check is a command ESLint already ships (§01) and a verdict that is an
+// exit code (§11): `eslint --print-config` builds the config array, resolves
+// it for one path and prints it. Nothing here reads the message — it is
+// carried to the user verbatim because the fix is almost never in dharness,
+// and ESLint names it better than this function could.
+//
+// A failure retracts, it does not warn. run() treats a failed postcondition
+// as a failed step, so the splice this step wrote is undone and the project
+// is left as it was rather than with a config nothing can load.
+//
+// No local ESLint means no measurement and no failure, the same shape
+// resolvedConfig already uses for fallow and for the same reason (§20): a
+// missing tool is not a broken config, and dharness does not install one at
+// verification time to find out.
+func (eslintExtendsStep) Verify(p project.Project) error {
+	why, loads := eslintConfigLoads(p)
+	if loads {
+		return nil
+	}
+	return errors.New(why)
+}
+
+// eslintConfigLoads asks ESLint whether it can load the project's config,
+// and returns false only when it measured that it cannot.
+//
+// It is one function because Satisfied and Verify have to agree about it.
+// Verify alone would leave every project already wired by an earlier
+// release reporting `0 failed` forever: a byte-identical config is
+// satisfied, a satisfied step is never applied, and a step that is never
+// applied is never verified — so the release that fixes this would print
+// exactly what the release that broke it printed, on the machines that
+// actually have the problem. A config ESLint cannot load has not been
+// pointed at anything, whoever wrote it and whenever.
+//
+// It runs after Satisfied's byte comparison rather than before, which is
+// §12's ascending-cost order: comparing bytes costs nothing and answers
+// most runs.
+//
+// Shelling out from Satisfied is not new here — boundariesOwnerStep's
+// already resolves fallow's own config through two subprocesses for the
+// same kind of question, and for the same reason: the direct signal belongs
+// to the tool, not to dharness (§09).
+//
+// The absence row is deliberately "loads". No local ESLint is no
+// measurement, not a failure — the shape resolvedConfig already uses for
+// fallow (§20). dharness does not install a tool at verification time to
+// find out, and a project without ESLint has no config for ESLint to
+// refuse.
+func eslintConfigLoads(p project.Project) (why string, loads bool) {
+	if !p.HasSource() {
+		return "", true
+	}
+	binary := p.LocalBinary(tool.ESLint)
+	if binary == "" {
+		return "", true
+	}
+
+	for _, file := range eslintProbePaths(p) {
+		var stderr bytes.Buffer
+		probe := tool.Installed(tool.ESLint, binary, p.Source, tool.ESLintPrintConfig(file)...)
+		if err := runner.Run(probe, io.Discard, &stderr); err != nil {
+			return fmt.Sprintf(
+				"the layer is wired, but ESLint cannot load the resulting config for %s:\n\n%s",
+				file, strings.TrimSpace(stderr.String())), false
+		}
+	}
+	return "", true
+}
+
+// eslintProbePaths lists what Verify asks ESLint about: one file per
+// distinct source extension under p.Source.
+//
+// One path per extension, rather than one path, because a plugin
+// redefinition is scoped to the configs that apply to a single file
+// (tool.ESLintPrintConfig records the measurement). A project whose two
+// toolchains collide only on .tsx would pass a .ts-only probe, and a check
+// that answers for a file nobody asked about is the proxy §09 refuses.
+//
+// The set is bounded at eight by project.IsSourceFile, so it needs no cap of
+// its own; in practice it is one or two.
+//
+// It never returns nothing for a project this step has anything to say
+// about. A flat config is itself one of those extensions and sits at the
+// root, which the walk never skips — so the config is always among the
+// probes, and a project with no other source file still has its config
+// asked about. An explicit floor for that was written first and deleted:
+// mutation testing found both of its branches unkillable, because the walk
+// had already answered.
+func eslintProbePaths(p project.Project) []string {
+	byExtension := map[string]string{}
+
+	filepath.WalkDir(p.Source, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if entry.IsDir() {
+			// Installed packages and dot-directories, and nothing else. The
+			// directory dharness owns needs no clause of its own: it is
+			// project.Dir, which begins with a dot, and in a split layout it
+			// is not under p.Source at all. A third condition that can never
+			// decide anything is a line no test can hold to account.
+			//
+			// The root itself is never skipped. A project whose source
+			// directory is itself dot-prefixed is an ordinary layout, and
+			// skipping it would probe nothing at all.
+			name := entry.Name()
+			if path != p.Source && (name == "node_modules" || strings.HasPrefix(name, ".")) {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if !project.IsSourceFile(path) {
+			return nil
+		}
+		extension := strings.ToLower(filepath.Ext(path))
+		if _, seen := byExtension[extension]; seen {
+			return nil
+		}
+		relative, relErr := filepath.Rel(p.Source, path)
+		if relErr != nil {
+			return nil
+		}
+		byExtension[extension] = filepath.ToSlash(relative)
+		return nil
+	})
+
+	paths := make([]string, 0, len(byExtension))
+	for _, extension := range sortedKeys(byExtension) {
+		paths = append(paths, byExtension[extension])
+	}
+	return paths
+}
+
+// sortedKeys is the map's keys in a stable order, so two runs over one tree
+// probe in the same sequence and a failure names the same file twice.
+func sortedKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for key := range m {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // --------------------------------------------------- boundaries owner

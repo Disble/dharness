@@ -1123,3 +1123,32 @@ func TestCheckSaysNothingWhenThereIsNothingToCheck(t *testing.T) {
 		t.Errorf("the gate explained a wait it never had:\n%s", out.String())
 	}
 }
+
+// TestGateSeparatesAConfigErrorFromLintFindings pins the distinction the
+// gate's own output could not make: ESLint exit 2 is a config that never
+// loaded, so no staged file was linted and the fix is not in the change;
+// exit 1 is the gate working. The note reads the exit code and nothing else.
+func TestGateSeparatesAConfigErrorFromLintFindings(t *testing.T) {
+	// Built the way the gate builds it, not by hand: the first version of
+	// this test constructed a stage the product never produces, and passed
+	// against a note the gate could not print.
+	root := t.TempDir()
+	eslint := localStage(project.Project{Root: root, Source: root}, tool.ESLint, filepath.Join(root, "node_modules", ".bin", "eslint"))
+
+	configError := eslintConfigErrorNote(eslint, &runner.ExitError{Command: tool.ESLint, Code: 2})
+	if !strings.Contains(configError, "configuration error") {
+		t.Errorf("eslintConfigErrorNote() on exit 2 = %q, want it to name a configuration error", configError)
+	}
+	if !strings.Contains(configError, "dharness sync") {
+		t.Errorf("eslintConfigErrorNote() on exit 2 = %q, want it to name the command that checks the same thing", configError)
+	}
+
+	if findings := eslintConfigErrorNote(eslint, &runner.ExitError{Command: tool.ESLint, Code: 1}); findings != "" {
+		t.Errorf("eslintConfigErrorNote() on exit 1 = %q, want nothing: that is the gate working", findings)
+	}
+
+	other := stage{command: runner.Command{Name: tool.Fallow}}
+	if note := eslintConfigErrorNote(other, &runner.ExitError{Command: tool.Fallow, Code: 2}); note != "" {
+		t.Errorf("eslintConfigErrorNote() = %q for a stage that is not ESLint, want nothing", note)
+	}
+}
