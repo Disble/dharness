@@ -65,6 +65,13 @@ func collectNotes(p project.Project) []report.Note {
 // resident copy keeps every `eslint-disable` comment and every CI grep
 // working, and the newer one has the rules. What dharness owes is the fact
 // that the choice is being made.
+//
+// It prints on every run, including a second identical sync, and that is a
+// decision rather than a default. A note shown once is a note missed by
+// whoever runs the second sync, and the thing it is guarding against is a
+// rule set quietly shrinking — the exact failure that goes unnoticed for
+// releases at a time. The cost is that a project syncing often reads it
+// often; the alternative is that a project syncing often stops being told.
 func WithdrawnLayerNote(p project.Project) (entries []string, reason string) {
 	if !p.HasSource() {
 		return nil, ""
@@ -78,12 +85,15 @@ func WithdrawnLayerNote(p project.Project) (entries []string, reason string) {
 		kept[layerIdentity(layer)] = true
 	}
 
+	registered := registeredPlugins(p)
+	packages := map[string]string{}
 	registers := map[string]bool{}
 	for _, layer := range all {
 		if layer.Registers == "" || kept[layerIdentity(layer)] {
 			continue
 		}
 		registers[layer.Registers] = true
+		packages[layer.Registers] = layer.InstallName()
 		entries = append(entries, layerIdentity(layer))
 	}
 	if len(entries) == 0 {
@@ -95,19 +105,77 @@ func WithdrawnLayerNote(p project.Project) (entries []string, reason string) {
 		named = append(named, fmt.Sprintf("%q", plugin))
 	}
 	sort.Strings(named)
-
 	plugins := strings.Join(named, ", ")
-	return entries, fmt.Sprintf(
-		"this project's ESLint config already registers %s, from a package that is not dharness's. "+
-			"Flat config refuses one plugin key registered twice from two instances, so contributing "+
-			"these as well would produce a config ESLint cannot load at all. They are left out, and "+
-			"the copy already there is what runs. That copy is not necessarily the same build: if it "+
-			"is an older one, the rules it is missing are simply not enforced, and `npx eslint "+
-			"--print-config <a source file>` names which by listing the `rules` keys under that "+
-			"plugin's prefix. Two ways out, and the choice is this project's: drop the package that "+
-			"registers the older copy, or keep it and accept the rules it does not carry. dharness "+
-			"contributes these layers again by itself once nothing else registers %s.",
-		plugins, plugins)
+
+	opening := versionGap(p, registers, packages, registered)
+	if opening == "" {
+		opening = fmt.Sprintf("this project's ESLint config already registers %s, from a package that is not dharness's. ", plugins)
+	}
+
+	return entries, opening + fmt.Sprintf(
+		"It cannot be registered twice: flat config refuses one plugin key registered from two "+
+			"instances, so contributing these layers as well would produce a config ESLint cannot "+
+			"load at all. They are left out, and the copy already there is what runs. Two ways out, "+
+			"and the choice is this project's: drop the package that brings the copy already here, "+
+			"or keep it and accept the rules it does not carry. dharness contributes these layers "+
+			"again by itself once nothing else registers %s.",
+		plugins)
+}
+
+// versionGap opens the note with the fact a reader acts on, or with nothing
+// when there is no fact to state.
+//
+// It leads rather than follows because it is the load-bearing sentence: the
+// cost of a withdrawal is rules that silently stop being enforced, and a
+// note that buries that behind the mechanism is a note that gets skimmed.
+//
+// Both numbers are already in hand at the moment this is written — the
+// resident build comes out of the same `plugins` entry the withdrawal
+// decision was made from, and the other is the package dharness installs,
+// read from node_modules. The first version of this note described the gap
+// in the abstract ("not necessarily the same build: if it is an older
+// one…") while holding the concrete numbers, which asks the reader to first
+// suspect a gap exists and then go measure it. Naming both turns a
+// conditional into a fact, and a fact is what gets acted on.
+//
+// The conditional form survives only where a number is genuinely missing:
+// an unreadable node_modules, or a plugin ESLint reported without a build
+// string. Saying "0.7.4 against " with a blank would be worse than the
+// hedge it replaced.
+func versionGap(p project.Project, registers map[string]bool, packages, registered map[string]string) string {
+	var gaps []string
+	for plugin := range registers {
+		resident := buildVersion(registered[plugin])
+		ours := installedBuild(p, packages[plugin])
+		if resident == "" || ours == "" || resident == ours {
+			continue
+		}
+		gaps = append(gaps, fmt.Sprintf("%q here is %s, and dharness installs %s", plugin, resident, ours))
+	}
+	if len(gaps) == 0 {
+		return ""
+	}
+	sort.Strings(gaps)
+
+	return fmt.Sprintf(
+		"the copy of %s — so every rule the newer build adds is not enforced on this project, "+
+			"and nothing else will say so. ",
+		strings.Join(gaps, "; "))
+}
+
+// buildVersion is the version out of ESLint's "name@version" plugin entry,
+// or "" when the entry carries none.
+//
+// The name is dropped rather than printed: it is the plugin's own meta name,
+// which for the case this note exists for is "react-doctor" — the same
+// string as the key it is already shown under, and repeating it reads as two
+// different things.
+func buildVersion(entry string) string {
+	_, version, found := strings.Cut(entry, "@")
+	if !found {
+		return ""
+	}
+	return version
 }
 
 // layerIdentity names one layer the way a person reading the note would:

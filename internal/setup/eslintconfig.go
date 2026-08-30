@@ -367,11 +367,12 @@ func contributedLayers(p project.Project, layers []preset.Layer, projectConfig [
 // contributed and eslintExtendsStep's own check is what speaks. That is the
 // right order: withdrawing on a config nobody could resolve would be
 // guessing at which registration was the problem.
-func withdrawn(layer preset.Layer, registered, mine map[string]bool) bool {
+func withdrawn(layer preset.Layer, registered map[string]string, mine map[string]bool) bool {
 	if layer.Registers == "" {
 		return false
 	}
-	return registered[layer.Registers] && !mine[sameModuleKey(layer.Package)]
+	_, alreadyRegistered := registered[layer.Registers]
+	return alreadyRegistered && !mine[sameModuleKey(layer.Package)]
 }
 
 // dharnessImports is the specifiers inside dharness's own marked import
@@ -420,7 +421,7 @@ func dharnessImports(src []byte) []string {
 //
 // No local ESLint, or a config that does not resolve, both answer the same
 // empty set: nothing measured, nothing withdrawn (§20).
-func registeredPlugins(p project.Project) map[string]bool {
+func registeredPlugins(p project.Project) map[string]string {
 	if !p.HasSource() {
 		return nil
 	}
@@ -429,16 +430,21 @@ func registeredPlugins(p project.Project) map[string]bool {
 		return nil
 	}
 
-	var keys map[string]bool
+	var builds map[string]string
 	for _, file := range eslintProbePaths(p) {
-		for key := range pluginProbe.keys(p, binary, file) {
-			if keys == nil {
-				keys = map[string]bool{}
+		for key, build := range pluginProbe.keys(p, binary, file) {
+			if builds == nil {
+				builds = map[string]string{}
 			}
-			keys[key] = true
+			// First answer wins. A key resolving to two builds across two
+			// paths is a project ESLint would already refuse on one of
+			// them, so there is no case where the second is the truer one.
+			if _, seen := builds[key]; !seen {
+				builds[key] = build
+			}
 		}
 	}
-	return keys
+	return builds
 }
 
 // pluginProbe memoises registeredPlugins for the life of one process,
@@ -454,14 +460,14 @@ func registeredPlugins(p project.Project) map[string]bool {
 // shared by every caller would be right for one sync of one project and
 // silently wrong the moment a process asks about a second, which is exactly
 // the class of bug this file already carries two comments about.
-var pluginProbe = pluginKeyProbe{answers: map[string]map[string]bool{}}
+var pluginProbe = pluginKeyProbe{answers: map[string]map[string]string{}}
 
 type pluginKeyProbe struct {
 	mu      sync.Mutex
-	answers map[string]map[string]bool
+	answers map[string]map[string]string
 }
 
-func (probe *pluginKeyProbe) keys(p project.Project, binary, file string) map[string]bool {
+func (probe *pluginKeyProbe) keys(p project.Project, binary, file string) map[string]string {
 	key := filepath.Join(p.Source, file)
 
 	probe.mu.Lock()
@@ -478,11 +484,37 @@ func (probe *pluginKeyProbe) keys(p project.Project, binary, file string) map[st
 // into the next. The tests seam runner.Run, so without this the first test
 // to probe would answer for every test after it.
 func resetPluginProbeForTest() {
-	pluginProbe = pluginKeyProbe{answers: map[string]map[string]bool{}}
+	pluginProbe = pluginKeyProbe{answers: map[string]map[string]string{}}
+}
+
+// installedBuild is the version of a package as it is actually unpacked in
+// the project, read from the copy in node_modules rather than from the range
+// package.json declares.
+//
+// The two differ, and the note this feeds is about a version gap, so the
+// declared "^0.9.12" would be a range where the reader needs a build.
+// Measured against eslint-plugin-react-doctor: the installed package version
+// and the version ESLint reports for the plugin it registers are the same
+// string ("react-doctor:react-doctor@0.9.12" beside a package.json saying
+// 0.9.12), which is what makes it honest to print the two side by side.
+// They are separate facts from separate sources, so they are labelled by
+// source and not merged.
+func installedBuild(p project.Project, pkg string) string {
+	raw, err := os.ReadFile(filepath.Join(p.Source, "node_modules", filepath.FromSlash(pkg), "package.json"))
+	if err != nil {
+		return ""
+	}
+	var manifest struct {
+		Version string `json:"version"`
+	}
+	if json.Unmarshal(raw, &manifest) != nil {
+		return ""
+	}
+	return manifest.Version
 }
 
 // readRegisteredPlugins runs the probe and parses the one field it reads.
-func readRegisteredPlugins(p project.Project, binary, file string) map[string]bool {
+func readRegisteredPlugins(p project.Project, binary, file string) map[string]string {
 	var stdout bytes.Buffer
 	probe := tool.Installed(tool.ESLint, binary, p.Source, tool.ESLintPrintConfig(file)...)
 	if err := runner.Run(probe, &stdout, io.Discard); err != nil {
@@ -496,11 +528,11 @@ func readRegisteredPlugins(p project.Project, binary, file string) map[string]bo
 		return nil
 	}
 
-	keys := make(map[string]bool, len(resolved.Plugins))
+	keys := make(map[string]string, len(resolved.Plugins))
 	for _, entry := range resolved.Plugins {
-		key, _, _ := strings.Cut(entry, ":")
+		key, build, _ := strings.Cut(entry, ":")
 		if key != "" {
-			keys[key] = true
+			keys[key] = build
 		}
 	}
 	return keys
