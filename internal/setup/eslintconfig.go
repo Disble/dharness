@@ -134,7 +134,8 @@ func ownedIgnorePattern(p project.Project) string {
 // the two apart at runtime. Measured against the packages the registry
 // actually names: eslint-plugin-react-doctor 0.9.12 required from CommonJS
 // comes back tagged "Module" with its configs under .default, while
-// eslint-config-expo/flat 57.0.1 is a plain object with no tag. A looser
+// eslint-config-expo/flat.js 57.0.2 is a plain config array with no tag,
+// which the same check passes through untouched. A looser
 // check — "does it have .default" — would unwrap a CommonJS module that
 // happens to export a key called default, which is a different thing.
 //
@@ -318,17 +319,38 @@ func eslintLayerRegion(layers []preset.Layer, indent, eol string) string {
 func contributedLayers(layers []preset.Layer, projectConfig []byte) []preset.Layer {
 	present := map[string]bool{}
 	for _, specifier := range jsconfig.Imports(withoutDharnessImports(projectConfig)) {
-		present[specifier] = true
+		present[sameModuleKey(specifier)] = true
 	}
 
 	kept := make([]preset.Layer, 0, len(layers))
 	for _, layer := range layers {
-		if present[layer.Package] {
+		if present[sameModuleKey(layer.Package)] {
 			continue
 		}
 		kept = append(kept, layer)
 	}
 	return kept
+}
+
+// sameModuleKey is the specifier under which two spellings of one module
+// compare equal: the specifier with a trailing ".js" removed.
+//
+// It exists because dharness contributes "eslint-config-expo/flat.js" while
+// Expo's own generated config requires "eslint-config-expo/flat", and
+// CommonJS resolves both to the same file — measured on 57.0.2, the two
+// requires return the identical instance. Without this the layer stops
+// looking present the moment the extension was added, and the whole Expo
+// config comes back a second time in a project that already had it, which
+// is the duplication contributedLayers exists to prevent.
+//
+// Only ".js" is folded, and only as a suffix. It is the one extension a
+// CommonJS require() appends for a specifier written without it, so it is
+// the one case where two spellings are provably the same module rather than
+// two that merely look alike: "X/foo.mjs" and "X/foo" are different files to
+// require(), and treating them as one would drop a layer the project has
+// not actually got.
+func sameModuleKey(specifier string) string {
+	return strings.TrimSuffix(specifier, ".js")
 }
 
 // withoutDharnessImports returns src with dharness's own import region cut

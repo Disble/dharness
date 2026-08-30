@@ -28,8 +28,8 @@ func TestMatchCarriesUncertain(t *testing.T) {
 // TestSchemaConstant pins the manifest shape presets contribute. v2 is the
 // first bump: Layer gained Accessor and Spread, because the forms the
 // frameworks actually document are not all "default export, spread" —
-// eslint-config-expo/flat is a single object and eslint-plugin-react-doctor's
-// presets are read off `configs`.
+// eslint-plugin-react-doctor's presets are read off `configs`, and each one
+// is a single config object rather than an array to spread.
 func TestSchemaConstant(t *testing.T) {
 	if Schema != "dharness.preset/v2" {
 		t.Errorf("Schema = %q, want %q", Schema, "dharness.preset/v2")
