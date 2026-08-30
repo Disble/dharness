@@ -851,3 +851,99 @@ func TestRegisteredPluginsReadsOnlyTheKey(t *testing.T) {
 		t.Error("registeredPlugins() kept the whole entry, want only the key before the colon")
 	}
 }
+
+// eslintPrintConfigPerFile seams runner.Run so each probed path gets its own
+// plugin list, which is the only way to express what a real flat config
+// does: a plugin registered under files ["**/*.ts", "**/*.tsx"] is in the
+// config resolved for a .tsx file and absent from the one resolved for the
+// .mjs config file beside it.
+func eslintPrintConfigPerFile(t *testing.T, byFile map[string][]string) {
+	t.Helper()
+	resetPluginProbeForTest()
+	t.Cleanup(resetPluginProbeForTest)
+	t.Cleanup(runner.SetForTest(func(cmd runner.Command, stdout, _ io.Writer) error {
+		file := cmd.Args[len(cmd.Args)-1]
+		resolved := struct {
+			Plugins []string `json:"plugins"`
+		}{Plugins: byFile[file]}
+		return json.NewEncoder(stdout).Encode(resolved)
+	}))
+}
+
+// TestContributedLayersWithdrawsAPluginScopedToOneExtension is the defect
+// 1.7.3 shipped. A plugin redefinition is scoped to the configs that apply
+// to one file, so a project registering react-doctor under files
+// ["**/*.ts", "**/*.tsx"] — which is how dlinter-ts-react registers it —
+// does not register it in the config resolved for the .mjs config file
+// beside those sources.
+//
+// 1.7.3 asked exactly that one file, saw no registration, contributed the
+// layer, and left the verifier to find the collision the detector had just
+// been told about in another form. Measured on the reporting project:
+// --print-config on eslint.config.mjs returns ["@"] and on a .tsx returns
+// ["@", "react-doctor:react-doctor@0.7.4"].
+//
+// The two questions have to be asked over the same paths, which is what
+// this holds.
+func TestContributedLayersWithdrawsAPluginScopedToOneExtension(t *testing.T) {
+	root := t.TempDir()
+	writeNestedFixtureFile(t, filepath.Join(root, "src"), "screen.tsx", "")
+	writeGoldenFixtureFile(t, root, "package.json", `{"name":"x"}`)
+	writeGoldenFixtureFile(t, root, "package-lock.json", `{"lockfileVersion":3}`)
+	writeGoldenFixtureFile(t, root, "eslint.config.mjs", "export default [];\n")
+	writeLocalESLintBinary(t, root)
+
+	// The config file's own extension reports nothing, exactly as measured.
+	eslintPrintConfigPerFile(t, map[string][]string{
+		"eslint.config.mjs": {"@"},
+		"src/screen.tsx":    {"@", "react-doctor:react-doctor@0.7.4"},
+	})
+
+	p := project.Project{Root: root, Source: root}
+	got := contributedLayers(p, reactDoctorLayers(), []byte("export default [];\n"))
+
+	for _, layer := range got {
+		if layer.Registers == "react-doctor" {
+			t.Errorf("contributedLayers() kept %v; the project registers that plugin for .tsx, and the config file alone cannot see it", layer)
+		}
+	}
+	if len(got) != 2 {
+		t.Errorf("contributedLayers() = %v, want the two framework layers kept", got)
+	}
+}
+
+// TestRegisteredPluginsAsksEveryProbePath pins the mechanism behind it: the
+// answer is the union over the same paths eslintExtendsStep's own check
+// asks about, because a collision on any file dharness would lint is a
+// config that does not load.
+func TestRegisteredPluginsAsksEveryProbePath(t *testing.T) {
+	root := t.TempDir()
+	writeNestedFixtureFile(t, filepath.Join(root, "src"), "screen.tsx", "")
+	writeNestedFixtureFile(t, filepath.Join(root, "src"), "thing.ts", "")
+	writeGoldenFixtureFile(t, root, "eslint.config.mjs", "export default [];\n")
+	writeLocalESLintBinary(t, root)
+
+	var asked []string
+	resetPluginProbeForTest()
+	t.Cleanup(resetPluginProbeForTest)
+	t.Cleanup(runner.SetForTest(func(cmd runner.Command, stdout, _ io.Writer) error {
+		file := cmd.Args[len(cmd.Args)-1]
+		asked = append(asked, file)
+		plugins := []string{"@"}
+		if file == "src/screen.tsx" {
+			plugins = append(plugins, "react-doctor:react-doctor@0.7.4")
+		}
+		return json.NewEncoder(stdout).Encode(struct {
+			Plugins []string `json:"plugins"`
+		}{Plugins: plugins})
+	}))
+
+	keys := registeredPlugins(project.Project{Root: root, Source: root})
+
+	if !keys["react-doctor"] {
+		t.Errorf("registeredPlugins() = %v, want the key only one probed path reports", keys)
+	}
+	if len(asked) < 3 {
+		t.Errorf("registeredPlugins() asked about %v, want one path per source extension", asked)
+	}
+}

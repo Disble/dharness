@@ -387,8 +387,8 @@ func dharnessImports(src []byte) []string {
 }
 
 // registeredPlugins is the set of ESLint plugin keys the project's config
-// resolves to, or an empty set when there is nothing to ask or nothing
-// answered.
+// resolves to, across every path eslintProbePaths names, or an empty set
+// when there is nothing to ask or nothing answered.
 //
 // The source is `eslint --print-config`, whose JSON carries a `plugins`
 // array of "key:name@version" entries — measured against ESLint 9.39.4:
@@ -397,14 +397,29 @@ func dharnessImports(src []byte) []string {
 // flat config refuses to see twice; the name and version after it identify
 // the build, which is a different question and not this one.
 //
+// It asks about the same paths eslintExtendsStep's own check asks about, and
+// that is the whole of what 1.7.3 got wrong. This asked about one file — the
+// project's flat config — and a plugin registered under files ["**/*.ts",
+// "**/*.tsx"], which is how dlinter-ts-react registers react-doctor, is not
+// in the config resolved for a .mjs config file. So the detector saw no
+// registration, contributed the layer, and the verifier — which does ask per
+// extension — then found the collision the detector had just been told about
+// in another form. Measured on the reporting project and reproduced in a
+// fixture: --print-config on eslint.config.mjs returns ["@"], and on a .tsx
+// returns ["@", "react-doctor:react-doctor@0.7.4"].
+//
+// The union across paths is the right shape rather than a widening: a
+// collision on any file dharness would lint is a config that does not load,
+// and one that does not load is not a config.
+//
 // It is the direct signal (§09). Which packages register which plugins is
 // not derivable from a package name — dlinter-ts-react registers
 // react-doctor and says so nowhere dharness can read — and the alternative
 // is a table of "packages that bundle react-doctor", which is the invented
 // proxy this repository keeps deleting.
 //
-// No local ESLint, no flat config, or a config that does not resolve all
-// answer the same empty set: nothing measured, nothing withdrawn (§20).
+// No local ESLint, or a config that does not resolve, both answer the same
+// empty set: nothing measured, nothing withdrawn (§20).
 func registeredPlugins(p project.Project) map[string]bool {
 	if !p.HasSource() {
 		return nil
@@ -413,15 +428,17 @@ func registeredPlugins(p project.Project) map[string]bool {
 	if binary == "" {
 		return nil
 	}
-	config := eslintFlatConfig(p.Source)
-	if config == "" {
-		return nil
+
+	var keys map[string]bool
+	for _, file := range eslintProbePaths(p) {
+		for key := range pluginProbe.keys(p, binary, file) {
+			if keys == nil {
+				keys = map[string]bool{}
+			}
+			keys[key] = true
+		}
 	}
-	relative, err := filepath.Rel(p.Source, config)
-	if err != nil {
-		return nil
-	}
-	return pluginProbe.keys(p, binary, filepath.ToSlash(relative))
+	return keys
 }
 
 // pluginProbe memoises registeredPlugins for the life of one process,

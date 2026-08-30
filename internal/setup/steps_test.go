@@ -1733,3 +1733,34 @@ func TestEslintProbePathsWalkADotPrefixedSourceRoot(t *testing.T) {
 		t.Errorf("eslintProbePaths() = %v, want src/thing.ts: the root is never what the skip is about", paths)
 	}
 }
+
+// TestEslintProbePathsCoverTheConfigsOwnExtension is the invariant the
+// withdrawal rule leans on and a reader would reasonably doubt: the union
+// the detector builds has to include the config file's own extension, not
+// only the extensions of the sources beside it.
+//
+// A project registering a plugin globally rather than under a files matcher
+// shows it on every path including the config, and one registering it for
+// TS only shows it on none of the config's kind — so a set that covered
+// sources alone would answer for a narrower world than "any file dharness
+// would lint". It holds for free because a flat config is itself a source
+// file at a root the walk never skips, which is exactly the kind of "holds
+// for free" that stops holding silently.
+func TestEslintProbePathsCoverTheConfigsOwnExtension(t *testing.T) {
+	root := t.TempDir()
+	writeNestedFixtureFile(t, filepath.Join(root, "src"), "a.ts", "")
+	writeNestedFixtureFile(t, filepath.Join(root, "src"), "b.tsx", "")
+	writeGoldenFixtureFile(t, root, "eslint.config.mjs", "export default [];\n")
+	p := project.Project{Root: root, Source: root}
+
+	paths := eslintProbePaths(p)
+
+	if !slices.Contains(paths, "eslint.config.mjs") {
+		t.Errorf("eslintProbePaths() = %v, want the config's own extension covered", paths)
+	}
+	for _, want := range []string{"src/a.ts", "src/b.tsx"} {
+		if !slices.Contains(paths, want) {
+			t.Errorf("eslintProbePaths() = %v, want %s covered too", paths, want)
+		}
+	}
+}
