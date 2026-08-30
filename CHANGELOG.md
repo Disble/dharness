@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.2](https://github.com/Disble/dharness/compare/v1.7.1...v1.7.2) (2026-08-30)
+
+
+### Bug Fixes
+
+* **sync:** fail when the config it just wrote cannot load ([#41](https://github.com/Disble/dharness/issues/41)) ([674fe18](https://github.com/Disble/dharness/commit/674fe1895c739f72e5b5950428e11728de5c793f))
+
 ## [1.7.1](https://github.com/Disble/dharness/compare/v1.7.0...v1.7.1) (2026-08-30)
 
 
