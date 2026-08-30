@@ -22,14 +22,17 @@ const expoESLintDocs = "https://docs.expo.dev/guides/using-eslint/"
 // versioned by Expo itself (expo/expo, packages/eslint-config-expo), not a
 // version dharness invents.
 //
-// It is the /flat subpath, not the bare package. The first version of this
-// preset contributed "eslint-config-expo" and spread it; Expo's own guide
-// generates `require('eslint-config-expo/flat')` and includes the result
-// directly, because it is a single config object rather than an array. Both
-// halves of that were wrong here, and neither is visible from Go — the
-// import resolves, the spread of a non-iterable is what fails, at ESLint
-// startup in the adopting project.
-const eslintConfigExpoPackage = "eslint-config-expo/flat"
+// It is the /flat subpath, not the bare package, and it carries the ".js"
+// Expo's own guide leaves off. The package ships both a flat/ directory and
+// a flat.js file and declares no `exports` map, so the two dialects resolve
+// the bare subpath differently: CommonJS `require` finds the file, and Node
+// ESM refuses the directory outright with ERR_UNSUPPORTED_DIR_IMPORT. Every
+// config dharness writes for a project with no flat config of its own is
+// ESM, so the bare subpath is a config that cannot load. Measured on
+// eslint-config-expo 57.0.2 / Node 22.19.0: `require("…/flat")` and
+// `require("…/flat.js")` return the same instance, so the extension costs
+// the CommonJS path nothing and is the one spelling that works in both.
+const eslintConfigExpoPackage = "eslint-config-expo/flat.js"
 
 // expo is the Expo preset: Source scope, "expo" declared in package.json.
 //
@@ -84,10 +87,13 @@ func (expo) Detect(p project.Project) (Match, bool) {
 				{
 					Package: eslintConfigExpoPackage,
 					Binding: "dharnessExpo",
+					Spread:  true,
 					Because: expoESLintDocs + `: "npx expo lint" generates an eslint.config.js whose own ` +
-						"example is `const expoConfig = require('eslint-config-expo/flat')` included " +
-						`directly in the exported array — published and versioned by Expo itself, not a ` +
-						`version dharness invents`,
+						"example is `const expoConfig = require('eslint-config-expo/flat')` — published and " +
+						`versioned by Expo itself, not a version dharness invents. It is spread because ` +
+						`the subpath exports an array (13 configs, measured on 57.0.2); Expo's example ` +
+						`includes it unspread only because defineConfig() flattens nested arrays, and the ` +
+						`array dharness's factory returns is not passed through defineConfig`,
 				},
 				reactDoctorRecommended,
 				{

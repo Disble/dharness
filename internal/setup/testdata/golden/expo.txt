@@ -197,7 +197,7 @@
 export default function dharnessLayer({ plugin, dharnessExpo, dharnessReactDoctor }) {
   return [
     { ignores: [".dharness/**"] },
-    dharnessExpo,
+    ...dharnessExpo,
     dharnessReactDoctor.configs.recommended,
     dharnessReactDoctor.configs["react-native"],
     {
@@ -274,7 +274,7 @@ eslint.config.js
 ---
 // dharness:eslint-import begin — rewritten by `dharness sync`; edits here are lost.
 import dharnessPlugin from "dharness-eslint-plugin";
-import dharnessExpo from "eslint-config-expo/flat";
+import dharnessExpo from "eslint-config-expo/flat.js";
 import dharnessReactDoctor from "eslint-plugin-react-doctor";
 import dharnessLayer from "./.dharness/eslint.config.mjs";
 // dharness:eslint-import end

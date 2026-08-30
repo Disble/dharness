@@ -180,10 +180,11 @@ func TestLayerExpressionRendersEveryDocumentedForm(t *testing.T) {
 			want:  "...dharnessNext",
 		},
 		{
-			// Expo: `const expoConfig = require("eslint-config-expo/flat")` then `expoConfig,` — one object.
+			// react-doctor: a preset read off `configs` is one config object,
+			// included as-is rather than spread.
 			name:  "single object",
-			layer: preset.Layer{Binding: "dharnessExpo"},
-			want:  "dharnessExpo",
+			layer: preset.Layer{Binding: "dharnessReactDoctor"},
+			want:  "dharnessReactDoctor",
 		},
 		{
 			// react-doctor: `reactDoctor.configs.next`.
@@ -320,13 +321,13 @@ func TestOwnedImportSpecifierKeepsAnAscendingPath(t *testing.T) {
 func TestImportRegionRendersCommonJSDeclarations(t *testing.T) {
 	root := t.TempDir()
 	p := project.Project{Root: root, Source: root}
-	layers := []preset.Layer{{Package: "eslint-config-expo/flat", Binding: "dharnessExpo", Because: "documented"}}
+	layers := []preset.Layer{{Package: "eslint-config-expo/flat.js", Binding: "dharnessExpo", Because: "documented"}}
 
 	got := eslintImportRegion(p, p.Source, layers, jsconfig.CommonJS, "", "\n")
 
 	for _, want := range []string{
 		`const dharnessPlugin = require("dharness-eslint-plugin");`,
-		`const dharnessExpo = require("eslint-config-expo/flat");`,
+		`const dharnessExpo = require("eslint-config-expo/flat.js");`,
 		`const dharnessLayer = require("./.dharness/eslint.config.cjs");`,
 	} {
 		if !strings.Contains(got, want) {
@@ -417,14 +418,14 @@ func TestDedupeKeepsTheFirstOccurrence(t *testing.T) {
 // through `import` is already the default export.
 //
 // Measured against eslint-plugin-react-doctor 0.9.12 and
-// eslint-config-expo/flat 57.0.1: the first comes back with
+// eslint-config-expo/flat.js 57.0.2: the first comes back with
 // Symbol.toStringTag === "Module" and its configs under .default, the second
-// is a plain CommonJS object with no tag at all. Unwrapping only a tagged
-// namespace is what keeps both correct.
+// is a plain CommonJS config array with no tag at all. Unwrapping only a
+// tagged namespace is what keeps both correct.
 func TestCommonJSUnwrapsAnESModuleNamespace(t *testing.T) {
 	p := project.At(t.TempDir(), t.TempDir())
 	layers := []preset.Layer{
-		{Package: "eslint-config-expo/flat", Binding: "dharnessExpo", Because: "documented"},
+		{Package: "eslint-config-expo/flat.js", Binding: "dharnessExpo", Because: "documented"},
 		{Package: "eslint-plugin-react-doctor", Binding: "dharnessReactDoctor", Accessor: []string{"configs", "recommended"}, Because: "documented"},
 	}
 
@@ -647,5 +648,39 @@ func TestContributedLayersKeepsADifferentSubpath(t *testing.T) {
 
 	if got := contributedLayers(layers, config); len(got) != 1 {
 		t.Errorf("contributedLayers() = %v, want the subpath kept", got)
+	}
+}
+
+// TestContributedLayersFoldsTheJSExtension is the other half of the subpath
+// rule, and the reason contributedLayers survived the Expo specifier gaining
+// ".js". dharness contributes "eslint-config-expo/flat.js" because Node ESM
+// refuses the bare subpath as a directory import; `npx expo lint` generates
+// `require("eslint-config-expo/flat")`, and CommonJS resolves both spellings
+// to the same file — measured on 57.0.2, the two requires return the
+// identical instance.
+//
+// Compared literally, the project would stop looking like it already had the
+// config and the whole thing would come back a second time in a file that
+// already spreads it.
+func TestContributedLayersFoldsTheJSExtension(t *testing.T) {
+	config := []byte("const expoConfig = require('eslint-config-expo/flat');\nmodule.exports = [expoConfig];\n")
+	layers := []preset.Layer{{Package: "eslint-config-expo/flat.js", Binding: "dharnessExpo", Spread: true}}
+
+	if got := contributedLayers(layers, config); len(got) != 0 {
+		t.Errorf("contributedLayers() = %v, want the layer dropped: require() resolves both spellings to one file", got)
+	}
+}
+
+// TestContributedLayersFoldsNothingButJS holds the fold to the one extension
+// it is true for. require() appends ".js" to a specifier written without
+// one, so those two spellings are provably one module; it does not append
+// ".mjs", so "X/foo" and "X/foo.mjs" are different files and folding them
+// would drop a layer the project has not got.
+func TestContributedLayersFoldsNothingButJS(t *testing.T) {
+	config := []byte("import base from \"eslint-config-example/flat\";\nexport default [...base];\n")
+	layers := []preset.Layer{{Package: "eslint-config-example/flat.mjs", Binding: "dharnessExample", Spread: true}}
+
+	if got := contributedLayers(layers, config); len(got) != 1 {
+		t.Errorf("contributedLayers() = %v, want the layer kept: .mjs is not what require() would have resolved", got)
 	}
 }

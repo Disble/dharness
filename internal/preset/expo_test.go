@@ -46,27 +46,34 @@ func TestExpoNoMatchWithoutDependency(t *testing.T) {
 }
 
 // TestExpoContributesESLintConfigLayer is TestNextjsContributesESLintConfigLayer's
-// counterpart for Expo: eslint-config-expo/flat then react-doctor's
+// counterpart for Expo: eslint-config-expo/flat.js then react-doctor's
 // react-native preset, both namespaced, verified against Expo's own "Using
 // ESLint" guide and react-doctor's plugin page rather than invented — unlike
 // Facts and Seeds, these are checkable observables, so they ship even though
 // expo otherwise stays detection-only.
 //
-// Neither is spread. Expo's own example includes eslint-config-expo/flat
-// directly because it is one config object, and react-doctor's presets are
-// single objects too. Spreading either is a TypeError at ESLint startup, not
-// a Go failure, which is why the sandbox run is what proves this.
+// The Expo layer is spread and react-doctor's two are not. Expo's own
+// example includes eslint-config-expo/flat unspread, which reads as "one
+// config object" and is not one: the subpath exports an array of 13, and
+// the example survives only because defineConfig() flattens nested arrays.
+// dharness's factory returns a plain array, so an unspread layer reaches
+// ESLint as `TypeError: Unexpected array` at startup — not a Go failure,
+// which is why the sandbox run is what proves this.
+//
+// The specifier carries ".js" for the same class of reason: the package
+// ships both flat/ and flat.js and declares no exports map, so the bare
+// subpath is a directory import that Node ESM refuses outright.
 func TestExpoContributesESLintConfigLayer(t *testing.T) {
 	assertLayerContribution(t, expo{}.Detect,
 		`{"dependencies":{"expo":"~51.0.0"}}`, []wantLayer{
-			{pkg: "eslint-config-expo/flat", binding: "dharnessExpo"},
+			{pkg: "eslint-config-expo/flat.js", binding: "dharnessExpo", spread: true},
 			{pkg: "eslint-plugin-react-doctor", binding: "dharnessReactDoctor", accessor: []string{"configs", "recommended"}},
 			{pkg: "eslint-plugin-react-doctor", binding: "dharnessReactDoctor", accessor: []string{"configs", "react-native"}},
 		})
 }
 
 // TestExpoLayerInstallsTheBasePackage is the subpath split over Expo's own
-// specifier: ESLint imports eslint-config-expo/flat, npm installs
+// specifier: ESLint imports eslint-config-expo/flat.js, npm installs
 // eslint-config-expo.
 func TestExpoLayerInstallsTheBasePackage(t *testing.T) {
 	root := t.TempDir()

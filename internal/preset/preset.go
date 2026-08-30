@@ -31,9 +31,9 @@ import (
 //
 // v2 bumped it. v1's Layer could express exactly one form — a default export
 // spread into the config array — and that turned out to be the minority of
-// what the frameworks document about themselves: eslint-config-expo/flat is
-// a single config object included directly, and eslint-plugin-react-doctor's
-// presets are read off a `configs` property. Layer gained Accessor and
+// what the frameworks document about themselves: eslint-plugin-react-doctor's
+// presets are read off a `configs` property, and each one is a single config
+// object included as-is rather than spread. Layer gained Accessor and
 // Spread rather than the presets rendering their own JavaScript, which would
 // have moved code generation into the package that holds no writer.
 const Schema = "dharness.preset/v2"
@@ -162,10 +162,18 @@ type Layer struct {
 	// requires spread into the exported array, or a single config object,
 	// which is included as-is.
 	//
-	// There is no safe default. eslint-config-next/core-web-vitals is an
-	// array and eslint-config-expo/flat is one object; each framework
-	// documents its own answer and the preset carries it rather than the
-	// renderer guessing from a shape it cannot see at build time.
+	// There is no safe default. eslint-config-next/core-web-vitals and
+	// eslint-config-expo/flat.js are arrays and react-doctor's
+	// configs.recommended is one object; each framework documents its own
+	// answer and the preset carries it rather than the renderer guessing
+	// from a shape it cannot see at build time.
+	//
+	// The framework's documented example is not always the answer on its
+	// own. Expo's guide includes eslint-config-expo/flat unspread, which
+	// reads as "one object" and is not — it works there because the example
+	// wraps the whole array in defineConfig(), which flattens nesting.
+	// dharness's factory returns a plain array, so the answer this field
+	// carries is what the export actually is, measured.
 	Spread bool
 
 	// Because names the observable, exactly as Fact.Because does.
