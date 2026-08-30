@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.4](https://github.com/Disble/dharness/compare/v1.7.3...v1.7.4) (2026-08-30)
+
+
+### Bug Fixes
+
+* **preset:** ask the withdrawal question over every probed path ([#45](https://github.com/Disble/dharness/issues/45)) ([24ed12e](https://github.com/Disble/dharness/commit/24ed12ed4785542b0ac5ca1b6915602e01b2ee28))
+
 ## [1.7.3](https://github.com/Disble/dharness/compare/v1.7.2...v1.7.3) (2026-08-30)
 
 
