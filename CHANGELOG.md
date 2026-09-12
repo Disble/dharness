@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.6](https://github.com/Disble/dharness/compare/v1.7.5...v1.7.6) (2026-09-12)
+
+
+### Bug Fixes
+
+* **gate:** ignore the GIT_DIR git exports into worktree hooks ([#50](https://github.com/Disble/dharness/issues/50)) ([0ce0654](https://github.com/Disble/dharness/commit/0ce06543be79a1c1dfc6e6f20e229f7f64041ded))
+
 ## [1.7.5](https://github.com/Disble/dharness/compare/v1.7.4...v1.7.5) (2026-08-30)
 
 
