@@ -124,6 +124,7 @@ func execute(cmd Command, stdout, stderr io.Writer) error {
 		applyCmdLine(process, target.CmdLine)
 	}
 	process.Dir = cmd.Dir
+	process.Env = Environ()
 	process.Stdout = stdout
 	process.Stderr = stderr
 	// Left nil when the caller supplied nothing: os/exec then connects the

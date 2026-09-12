@@ -1,18 +1,29 @@
 package project
 
 import (
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
+
+	"github.com/Disble/dharness/internal/runner"
 )
 
 // gitOutput is swappable so the gate can be tested without a repository. git
 // is seamed and the filesystem is not: a temp directory is a real tree, but a
 // real repository with a real index is process-global setup a test should not
 // need.
+//
+// The seam has one blind spot, and it cost a release. A stub answers for the
+// root the test already holds, so it cannot show what git would have answered
+// under an inherited environment — and that is where the worktree defect lived,
+// in this function, below every stub. See runner.Environ for what it was, and
+// internal/project/worktree_test.go, which drives a real repository for exactly
+// that reason.
 var gitOutput = func(dir string, args ...string) ([]byte, error) {
 	command := exec.Command("git", args...)
 	command.Dir = dir
+	command.Env = runner.Environ()
 	return command.Output()
 }
 
@@ -37,9 +48,59 @@ func (e *NotAGitRepositoryError) Unwrap() error { return e.Cause }
 
 func (e *NotAGitRepositoryError) Error() string {
 	return fmt.Sprintf(
-		"cannot read the staged files in %s: the gate scopes itself to the index, so it needs a git repository; run it from inside one",
-		e.Dir,
+		"cannot read the staged files in %s: the gate scopes itself to the index, so it needs a git repository; run it from inside one%s",
+		e.Dir, whatFailed(e.Cause),
 	)
+}
+
+// whatFailed renders the underlying failure beneath the message.
+//
+// The advice above is right for a caller standing outside a repository, and in
+// the worktree defect it was printed to one who had been inside a worktree the
+// whole time: the directory named was a path discovery had constructed and
+// nothing had created. Following the advice taught that reader nothing, and the
+// run had to be reproduced by hand to find out why.
+//
+// The distinction was never dharness's to phrase. A missing directory and a
+// directory that is not a repository already fail with different sentences,
+// written by git on its standard error or by the operating system when the
+// subprocess could not even change directory. Both are in hand here; only
+// printing them was missing.
+func whatFailed(cause error) string {
+	if cause == nil {
+		return ""
+	}
+
+	said := cause.Error()
+	var exit *exec.ExitError
+	if errors.As(cause, &exit) {
+		if diagnostic := gitDiagnostic(exit.Stderr); diagnostic != "" {
+			said = diagnostic
+		}
+	}
+	return "\n\n    " + strings.ReplaceAll(said, "\n", "\n    ")
+}
+
+// gitDiagnostic is git's standard error up to the usage block it appends when
+// it rejects the command line outright.
+//
+// All of stderr is not printable. Outside a repository `git diff --cached`
+// falls back to --no-index mode, reports `error: unknown option 'cached'` and
+// then prints forty lines of usage — which would bury the one line that says
+// what happened under a manual page nobody asked for.
+//
+// Everything before the usage is kept rather than only the first line, because
+// git's most consequential message here is multi-line: dubious ownership names
+// the repository, both users, and the safe.directory command that fixes it.
+func gitDiagnostic(stderr []byte) string {
+	var lines []string
+	for line := range strings.SplitSeq(string(stderr), "\n") {
+		if strings.HasPrefix(line, "usage:") {
+			break
+		}
+		lines = append(lines, line)
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
 // HasCommits reports whether the repository has any history behind the index.

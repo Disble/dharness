@@ -273,3 +273,45 @@ func TestHooksDirFailsOutsideARepository(t *testing.T) {
 		t.Errorf("HooksDir() = %v, want a *NotAGitRepositoryError", err)
 	}
 }
+
+// TestGitDiagnosticStopsAtTheUsageBlock pins where the diagnostic ends, not
+// merely that the usage line itself is gone.
+//
+// Dropping only that line and keeping the forty that follow it reads as a fix
+// and is not one: the manual page still buries git's rejection. Mutation
+// testing found exactly that gap — `break` weakened to `continue` survived a
+// test that asserted "usage:" was absent.
+func TestGitDiagnosticStopsAtTheUsageBlock(t *testing.T) {
+	// git diff outside a repository, verbatim in shape: the rejection, the
+	// usage line, then the option list.
+	stderr := []byte("error: unknown option `cached'\n" +
+		"usage: git diff --no-index [<options>] <path> <path> [<pathspec>...]\n" +
+		"\n" +
+		"    -p, --patch           generate patch\n" +
+		"    --stat                show diffstat instead of patch\n")
+
+	want := "error: unknown option `cached'"
+	if got := gitDiagnostic(stderr); got != want {
+		t.Errorf("gitDiagnostic() = %q, want %q — the rejection and nothing after the usage block", got, want)
+	}
+}
+
+// TestGitDiagnosticKeepsAMultiLineFatal is the other half, and the reason the
+// rule is "stop at the usage block" rather than "keep the first line".
+//
+// git's most consequential message here spans several lines: dubious ownership
+// names the repository and the safe.directory command that fixes it, and a
+// diagnostic trimmed to its first line would drop the remedy.
+func TestGitDiagnosticKeepsAMultiLineFatal(t *testing.T) {
+	stderr := []byte("fatal: detected dubious ownership in repository at 'D:/repo'\n" +
+		"To add an exception for this directory, call:\n" +
+		"\n" +
+		"\tgit config --global --add safe.directory D:/repo\n")
+
+	got := gitDiagnostic(stderr)
+	for _, want := range []string{"dubious ownership", "safe.directory D:/repo"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("gitDiagnostic() = %q, want it to keep %q", got, want)
+		}
+	}
+}
