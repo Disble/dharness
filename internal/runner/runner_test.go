@@ -46,6 +46,14 @@ const stdinHelperEnv = "DHARNESS_RUNNER_STDIN_HELPER"
 // these tests were added for.
 const argvHelperEnv = "DHARNESS_RUNNER_ARGV_HELPER"
 
+// environHelperEnv turns this test binary into a process that reports the
+// names of the git variables it inherited, one per line.
+//
+// Names only, values never: the question is which variables reached the child,
+// and a test that compared paths would start asserting about the machine the
+// suite runs on.
+const environHelperEnv = "DHARNESS_RUNNER_ENVIRON_HELPER"
+
 func TestMain(m *testing.M) {
 	if _, isHelper := os.LookupEnv(stdinHelperEnv); isHelper {
 		_, _ = io.Copy(os.Stdout, os.Stdin)
@@ -54,6 +62,14 @@ func TestMain(m *testing.M) {
 	if _, isHelper := os.LookupEnv(argvHelperEnv); isHelper {
 		for _, arg := range os.Args[1:] {
 			fmt.Printf("<%s>\n", arg)
+		}
+		os.Exit(0)
+	}
+	if _, isHelper := os.LookupEnv(environHelperEnv); isHelper {
+		for _, entry := range os.Environ() {
+			if name, _, ok := strings.Cut(entry, "="); ok && strings.HasPrefix(name, "GIT_") {
+				fmt.Println(name)
+			}
 		}
 		os.Exit(0)
 	}
