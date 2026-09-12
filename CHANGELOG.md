@@ -7,6 +7,26 @@
 
 * **gate:** ignore the GIT_DIR git exports into worktree hooks ([#50](https://github.com/Disble/dharness/issues/50)) ([0ce0654](https://github.com/Disble/dharness/commit/0ce06543be79a1c1dfc6e6f20e229f7f64041ded))
 
+### Worth knowing if you wrote your own hook scripts
+
+The mechanism behind this fix is not specific to dharness, and elsewhere it
+fails quietly. `git` exports `GIT_DIR` into every hook it runs, and an
+explicit `GIT_DIR` switches git's discovery off: `git rev-parse
+--show-toplevel` then answers with the **current directory** rather than the
+working tree root, and reports no error doing it.
+
+So a script that derives a path prefix from `--show-toplevel` while running
+under a hook manager's `root:` computes an empty prefix, filters its whole
+input away, and reports success having checked nothing. Every dharness
+project has a `root:` by construction. Reported from the field alongside this
+defect, in a repository's own staged-mutation guard, where it had been inert
+for every commit made inside a worktree — which is worse than the failure
+fixed here, because nothing ever went red.
+
+If such a script reads the index, clear `GIT_DIR` but keep `GIT_INDEX_FILE`:
+`git commit --only <paths>` points it at a temporary index, so scrubbing both
+silently widens the check from the commit under way to everything staged.
+
 ## [1.7.5](https://github.com/Disble/dharness/compare/v1.7.4...v1.7.5) (2026-08-30)
 
 
