@@ -349,6 +349,14 @@ type StrykerSelection struct {
 	// customised it can only be respected by reading it from the same JSON
 	// Stryker config testRunner already comes from.
 	ReportPath string
+
+	// VitestConfigFile is the vitest config Stryker's own vitest-runner will
+	// load, read from vitest.configFile in the JSON Stryker config, or empty
+	// when the project never set it. Stryker itself documents no CLI
+	// equivalent, and a run guard (internal/staged) that asked vitest's own
+	// CLI without it could resolve a different config than the one Stryker
+	// will actually use.
+	VitestConfigFile string
 }
 
 // StrykerRunnerError reports a runner selection that cannot be translated into
@@ -380,6 +388,9 @@ func (p Project) StrykerRunner() (StrykerSelection, error) {
 			JSONReporter  struct {
 				FileName string `json:"fileName"`
 			} `json:"jsonReporter"`
+			Vitest struct {
+				ConfigFile string `json:"configFile"`
+			} `json:"vitest"`
 		}
 		if err := json.Unmarshal(raw, &configured); err != nil {
 			return StrykerSelection{}, &StrykerRunnerError{message: fmt.Sprintf("Stryker cannot read testRunner from %s: %v; fix the JSON config and retry", config, err)}
@@ -391,10 +402,11 @@ func (p Project) StrykerRunner() (StrykerSelection, error) {
 			return StrykerSelection{}, &StrykerRunnerError{message: fmt.Sprintf("Stryker config %s selects unsupported testRunner %q; dharness supports vitest or jest", config, configured.TestRunner)}
 		}
 		return StrykerSelection{
-			TestRunner:    configured.TestRunner,
-			Configured:    true,
-			AppendPlugins: configured.AppendPlugins,
-			ReportPath:    filepath.FromSlash(configured.JSONReporter.FileName),
+			TestRunner:       configured.TestRunner,
+			Configured:       true,
+			AppendPlugins:    configured.AppendPlugins,
+			ReportPath:       filepath.FromSlash(configured.JSONReporter.FileName),
+			VitestConfigFile: filepath.FromSlash(configured.Vitest.ConfigFile),
 		}, nil
 	}
 
