@@ -34,7 +34,21 @@ dharness init      # set the project up, end to end
 dharness sync      # report what init would do, and change nothing
 dharness check     # the commit gate: react-doctor on the staged change, then fallow
 dharness mutate <path...>   # find out whether these files' tests would notice the code breaking
+dharness mutate --staged    # mutate exactly the lines a staged change added, never installs Stryker
 ```
+
+`--staged` reads the scope from the index instead of named paths: every line
+range a staged change added, minus what compiles to nothing at all — a
+`declare`-only file, a types-only namespace, `export type *`, `declare
+global` — which the project's own local `tsc` classifies before Stryker ever
+runs. `--exclude-prefix <p>` excludes staged files under that prefix from
+scope and is repeatable. It refuses a positional path, `--dry-run` and
+`--upgrade`; `--fresh` is accepted but changes nothing, since a staged run
+never reads or writes an incremental file. It never installs Stryker — a
+project without a local install is refused, naming the command that would
+fix it — and it mutates every scoped file, dropped ones included, so a file
+the classifier believed empty but Stryker still instruments a mutant for
+fails the run as a classifier disagreement rather than passing silently.
 
 Stryker's JSON config must select `vitest` or `jest`; dharness preserves that
 selection and any `appendPlugins` while adding the remote runner it provisions.

@@ -183,6 +183,17 @@ documented suppression (`// dharness-ignore-next-line mutant <reason>` in the sp
 equivalent, here is why" and keep the build meaningful. Right now the only options are an
 unclearable failure or not running `mutate` in CI.
 
+**Resolved, but not as a next-line marker.** dharness does not invent its own suppression
+syntax: Stryker already ships one, `// Stryker disable <mutatorName>: <reason>` paired with
+`// Stryker restore <mutatorName>`, and `mutate`'s own survivor hint now points at exactly
+that pair rather than at a `dharness-ignore-next-line` dharness would have to parse and
+own. The form is a range (disable … restore around the statement), not a next-line comment,
+because next-line does not reach a mutant sitting inside a call argument on the following
+lines — a dependency array is the shape that was measured. Ignored mutants a directive
+already silenced are read back from the report and printed with their own reason (WU4,
+`internal/tool.IgnoredInScope`), so a team can see dharness agrees without opening the JSON
+report by hand.
+
 ---
 
 ## What worked well

@@ -42,32 +42,34 @@ and `:5-7` pass.
 
 ---
 
+## Closed on 2026-09-13
+
+**1. Whether this command belongs in a pre-commit hook.** Closed by `--staged`
+(SDD `mutate-staged`), which answers both points this entry left unmeasured.
+
+- **Partial staging** is refused explicitly now: `internal/staged.Scope` cross-
+  checks every file it is about to scope against `git diff --name-only` and
+  fails closed with `PartiallyStagedError` the moment one carries changes
+  beyond what is indexed. This is the same refusal the pre-commit hook this
+  entry compared against already had, now built in rather than left to the
+  caller.
+- **What a commit-sized run costs** is no longer approximated from
+  `--dry-run`'s file-level count: `--staged` scopes to the exact line ranges a
+  staged change added, the same ranges `mutate <path>:<range>` already
+  supported, and never installs Stryker — a missing local binary is refused
+  rather than paid for mid-commit.
+
+It still never installs at gate time — `internal/cli/check.go`'s own
+declining-to-install stays true of `--staged` too, for the identical reason:
+a command that can run unattended, potentially behind a Ctrl-C, must not be
+the moment `package.json` and the lockfile change. `docs/design-principles.md`
+§03's "`mutate` no es el gate" is amended rather than reopened by this: a
+staged run can now sit IN the gate without becoming the gate, because it still
+never installs and still runs only what a finished, staged change justifies.
+
 ## Open
 
-## 1. Whether this command belongs in a pre-commit hook
-
-The migration that opened this file wanted `mutate` on every commit, and the
-scoping it asked for is now there. The disagreement it exposed is not.
-
-`RunMutate`'s own doc comment says mutation testing "belongs after the green step
-and before the refactor — invoked when a unit of work is finished, never on every
-commit", and the install added on 2026-08-13 leans on that sentence: it is paid
-once per finished unit, and it writes to `package.json` and the lockfile when a
-new Stryker ships. On every commit that is a different bargain.
-
-Two things stay unmeasured, and they are the ones that decide it:
-
-- **Partial staging.** The hook `mutate` would replace refuses it explicitly.
-  dharness does not handle it at all — it mutates what the working tree holds,
-  which for a partially staged file is not what is being committed.
-- **What a commit-sized run actually costs.** `--dry-run` exists to answer this
-  and nobody has pointed it at the case: the number that matters is how many
-  tests the runner considers related to a diff-sized range, not to a file.
-
-Until both are measured, the honest position is that ranges make the command
-*affordable* to run on a commit, not *correct* to run there.
-
-## 2. `evidence.json` has one slot and is committed
+## 1. `evidence.json` has one slot and is committed
 
 **Reported 2026-08-13** by the frontend project running v1.4.0, and confirmed
 in the code the same day.
