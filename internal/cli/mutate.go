@@ -167,6 +167,40 @@ func (e *PathOutsideSourceError) Error() string {
 	return fmt.Sprintf("%s is outside this project's JS source (%s), and Stryker only mutates what is inside it", e.Path, e.Source)
 }
 
+// InvalidMutatePathError reports a path carrying a character that Stryker's
+// own glob matching over --mutate would not read literally.
+//
+// Every path dharness is given is joined into one --mutate argument
+// separated by commas, so a comma inside a path could not be told apart from
+// that separator; *, ?, { and } are minimatch metacharacters Stryker's
+// matcher already treats specially, and a leading ! is minimatch's negation
+// marker. Escaping any of these is unmeasured, so dharness refuses rather
+// than guessing at a form that might silently mutate the wrong files.
+type InvalidMutatePathError struct {
+	Path string
+}
+
+func (e *InvalidMutatePathError) Error() string {
+	return fmt.Sprintf(
+		"%q cannot be mutated: it contains a character (comma, *, ?, {, } or a leading !) that Stryker's own glob matching over --mutate would not read literally, and escaping it is unmeasured",
+		e.Path,
+	)
+}
+
+// invalidMutatePathChars are the minimatch metacharacters dharness refuses
+// rather than escapes, plus the comma the comma-joined --mutate argument
+// uses as its own separator.
+const invalidMutatePathChars = ",*?{}"
+
+// validateMutatePath rejects a path Stryker's glob matching or the
+// comma-joined --mutate argument would misread.
+func validateMutatePath(path string) error {
+	if strings.HasPrefix(path, "!") || strings.ContainsAny(path, invalidMutatePathChars) {
+		return &InvalidMutatePathError{Path: path}
+	}
+	return nil
+}
+
 // scopePaths re-expresses the paths a person typed the way Stryker will read
 // them.
 //
@@ -197,7 +231,17 @@ func scopePaths(p project.Project, dir string, paths []string) ([]tool.MutationS
 		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			return nil, &PathOutsideSourceError{Path: given, Source: p.Source}
 		}
-		scoped = append(scoped, scope.WithPath(filepath.ToSlash(rel)))
+
+		// Validated after re-rooting, not before: "./!x.ts" and
+		// "src/../!x.ts" carry no refused character as typed, but
+		// filepath.Join/Rel clean away the leading "./" or "src/../" and
+		// leave a re-rooted argument that starts with "!" — the one
+		// character validateMutatePath exists to catch.
+		relSlash := filepath.ToSlash(rel)
+		if err := validateMutatePath(relSlash); err != nil {
+			return nil, err
+		}
+		scoped = append(scoped, scope.WithPath(relSlash))
 	}
 	return scoped, nil
 }

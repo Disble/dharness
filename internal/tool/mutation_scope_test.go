@@ -139,6 +139,31 @@ func TestSurvivorsInScopeCountsAnOverlappingSurvivorOnce(t *testing.T) {
 	}
 }
 
+// TestArgumentEscapesGlobSignificantBracketsInThePathOnly pins the escaping.
+// --mutate resolves through Stryker's own glob matching, which reads an
+// unescaped [ or ] as a character class — so a Next.js dynamic route segment
+// such as src/app/[id]/page.ts never matches its own file. Escaping follows
+// the convention Stryker documents for its own glob syntax, [ -> [[] and
+// ] -> []], and must never reach the :start-end suffix, which is not a glob.
+// Measured: backslash-escaping the brackets does not work on Windows, while
+// this form matches src/app/[[]id[]]/page.ts to exactly the literal file.
+func TestArgumentEscapesGlobSignificantBracketsInThePathOnly(t *testing.T) {
+	got := ParseMutationScope("src/app/[id]/page.ts:3-5").Argument()
+	want := "src/app/[[]id[]]/page.ts:3-5"
+	if got != want {
+		t.Errorf("Argument() = %q, want %q", got, want)
+	}
+}
+
+// A bare path with brackets and no range escapes the same way.
+func TestArgumentEscapesBracketsWithNoRangeSuffix(t *testing.T) {
+	got := (MutationScope{Path: "src/app/[id]/page.ts"}).Argument()
+	want := "src/app/[[]id[]]/page.ts"
+	if got != want {
+		t.Errorf("Argument() = %q, want %q", got, want)
+	}
+}
+
 // A scope built by hand, without a typed suffix, still renders its range.
 func TestArgumentRendersARangeItDidNotParse(t *testing.T) {
 	if got := (MutationScope{Path: "src/a.ts", Start: 5, End: 7}).Argument(); got != "src/a.ts:5-7" {
