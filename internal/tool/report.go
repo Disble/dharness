@@ -20,7 +20,8 @@ import (
 // when deciding what to ignore in git.
 var MutationReportPath = filepath.Join("reports", "mutation", "mutation.json")
 
-// Survivor is one mutant that no test noticed.
+// Survivor is one mutant that no test noticed — either by surviving one that
+// ran, or by never being run at all.
 type Survivor struct {
 	File        string
 	Line        int
@@ -35,6 +36,11 @@ type Survivor struct {
 	// here was removed". Working the rest out meant parsing by hand the same
 	// JSON dharness had just read to reach its verdict.
 	Replacement string
+
+	// Status is the report's own mutant status: "Survived" or "NoCoverage".
+	// It is what String uses to tell the two apart, since they fail for
+	// different reasons — a test ran and missed it, or no test ran at all.
+	Status string
 }
 
 // String is one survivor on one line, which is what makes the list scannable.
@@ -43,11 +49,19 @@ type Survivor struct {
 // expression carries its newlines into the report, and a list that reflows is
 // a list nobody can read down. The schema marks the field optional, so an
 // absent one prints no arrow rather than an arrow pointing at nothing.
+//
+// NoCoverage carries a trailing note because it is a different failure from
+// Survived: nothing ever exercised the mutated line, so there is no test run
+// to say "missed it" about.
 func (s Survivor) String() string {
-	if s.Replacement == "" {
-		return fmt.Sprintf("%s:%d %s", s.File, s.Line, s.Description)
+	suffix := ""
+	if s.Status == "NoCoverage" {
+		suffix = " (no test ran it)"
 	}
-	return fmt.Sprintf("%s:%d %s → %s", s.File, s.Line, s.Description, collapse(s.Replacement))
+	if s.Replacement == "" {
+		return fmt.Sprintf("%s:%d %s%s", s.File, s.Line, s.Description, suffix)
+	}
+	return fmt.Sprintf("%s:%d %s → %s%s", s.File, s.Line, s.Description, collapse(s.Replacement), suffix)
 }
 
 // collapse folds any run of whitespace into one space and trims the ends.
@@ -83,6 +97,17 @@ type mutationReport struct {
 // Timeouts are not survivors. A mutant that hangs the suite was detected by
 // it, which is the question being asked; Stryker's own score treats it the
 // same way.
+//
+// NoCoverage mutants are survivors, and this is the one deviation from
+// Stryker's own score. Measured on dharness 1.7.6: a range with 11
+// Killed and 8 NoCoverage mutants — an exported function no test called —
+// exited 0 and printed "Every mutant was caught: these tests notice this
+// code breaking", over code no test ever ran at all. Also measured:
+// the same untested function reports Survived when no other in-scope mutant
+// is hit and NoCoverage when one is, so the two statuses describe the same
+// underlying failure and have to share one verdict — treating them
+// differently would make the exit code depend on which other lines happened
+// to be in scope alongside the untested one.
 func Survivors(r io.Reader) ([]Survivor, error) {
 	var report mutationReport
 	if err := json.NewDecoder(r).Decode(&report); err != nil {
@@ -92,7 +117,7 @@ func Survivors(r io.Reader) ([]Survivor, error) {
 	var survivors []Survivor
 	for path, file := range report.Files {
 		for _, mutant := range file.Mutants {
-			if mutant.Status != "Survived" {
+			if mutant.Status != "Survived" && mutant.Status != "NoCoverage" {
 				continue
 			}
 			survivors = append(survivors, Survivor{
@@ -100,6 +125,7 @@ func Survivors(r io.Reader) ([]Survivor, error) {
 				Line:        mutant.Location.Start.Line,
 				Description: mutant.MutatorName,
 				Replacement: mutant.Replacement,
+				Status:      mutant.Status,
 			})
 		}
 	}
