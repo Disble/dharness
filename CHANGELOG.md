@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.8.0](https://github.com/Disble/dharness/compare/v1.7.6...v1.8.0) (2026-09-13)
+
+
+### Features
+
+* **mutate:** add --staged ([d40a1b9](https://github.com/Disble/dharness/commit/d40a1b98bd8716acfba34503796478602a35f602))
+* **mutate:** materialise the index with ignored inputs linked ([2e53ae2](https://github.com/Disble/dharness/commit/2e53ae2a5e01d39d1f1ea8810c782abf87fc5470))
+* **mutate:** print ignored mutants and the range-form escape ([feb6a87](https://github.com/Disble/dharness/commit/feb6a8777d1f9b43df077bd5b3ba272de0c0d629))
+* **mutate:** read staged lines as mutation ranges ([62008c9](https://github.com/Disble/dharness/commit/62008c9d2e89c7793ba6669ab4d2225cceb196e6))
+* **mutate:** refuse a vitest suite that cannot load ([e197c2e](https://github.com/Disble/dharness/commit/e197c2ece452b5306d54f56c2d7c19803bcbd496))
+* **mutate:** skip staged files the compiler erases ([f394df4](https://github.com/Disble/dharness/commit/f394df40863333ad3d3c96682166a37472b865fe))
+
+
+### Bug Fixes
+
+* **mutate:** fail on mutants no test ran ([443a4ed](https://github.com/Disble/dharness/commit/443a4ed29dcc8aa5ef6d883311c539bd87ab1cf6))
+* **mutate:** judge only the report this run wrote ([2b02abb](https://github.com/Disble/dharness/commit/2b02abbee515d6077db9059a31eb6ba79918f165))
+* **mutate:** name every path in one --mutate argument ([31e6bdf](https://github.com/Disble/dharness/commit/31e6bdfaefc55074575834b6e4732b3e205516ab))
+* **mutate:** stop printing "Every mutant was caught" when no in-scope mutant was actually tested (for example, every one was skipped as a static mutant under `ignoreStatic`); plain `dharness mutate` now says the mutants were skipped ([d40a1b9](https://github.com/Disble/dharness/commit/d40a1b98bd8716acfba34503796478602a35f602))
+
 ## [1.7.6](https://github.com/Disble/dharness/compare/v1.7.5...v1.7.6) (2026-09-12)
 
 
