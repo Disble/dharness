@@ -62,14 +62,50 @@ func (s MutationScope) WithPath(path string) MutationScope {
 }
 
 // Argument rebuilds the token Stryker receives.
+//
+// The path is escaped for Stryker's own glob matching; the :start-end suffix
+// never is, because it is not a glob at all — see escapeBrackets.
 func (s MutationScope) Argument() string {
+	path := escapeBrackets(s.Path)
 	if s.suffix != "" {
-		return s.Path + s.suffix
+		return path + s.suffix
 	}
 	if s.Start == 0 && s.End == 0 {
-		return s.Path
+		return path
 	}
-	return s.Path + ":" + strconv.Itoa(s.Start) + "-" + strconv.Itoa(s.End)
+	return path + ":" + strconv.Itoa(s.Start) + "-" + strconv.Itoa(s.End)
+}
+
+// escapeBrackets escapes glob-significant brackets so Stryker's own glob
+// matching treats them literally, following the escaping convention measured
+// against minimatch's character-class escaping, which is what Stryker's own
+// glob matcher uses: [ becomes [[] and ] becomes []].
+//
+// Measured rather than assumed: backslash-escaping does not work on Windows,
+// where a path such as src/app/[id]/page.ts is exactly what a Next.js dynamic
+// route segment produces, and left unescaped Stryker's glob matcher reads the
+// brackets as a character class rather than as literal characters — so the
+// path never matches its own file. This has to run one character at a time
+// rather than as two sequential whole-string replacements: replacing every
+// "[" first and then every "]" would also rewrite the "]" the first pass just
+// introduced.
+func escapeBrackets(path string) string {
+	if !strings.ContainsAny(path, "[]") {
+		return path
+	}
+	var escaped strings.Builder
+	escaped.Grow(len(path))
+	for _, r := range path {
+		switch r {
+		case '[':
+			escaped.WriteString("[[]")
+		case ']':
+			escaped.WriteString("[]]")
+		default:
+			escaped.WriteRune(r)
+		}
+	}
+	return escaped.String()
 }
 
 // slashed normalises a path for comparison, and deliberately does not use

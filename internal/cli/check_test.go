@@ -330,6 +330,11 @@ func TestStrykerRunsTheBinaryTheProjectInstalled(t *testing.T) {
 
 // --incremental keeps the accumulated report and --force reruns this scope
 // anyway. Dropping either one silently changes what the review means.
+//
+// Both paths land in one --mutate argument, joined by a comma: Stryker
+// 9.6.1's own splitter ignores every value but the last on a repeated flag
+// (stryker-cli.js:11-14,114), so two --mutate flags would silently mutate
+// only src/b.ts.
 func TestMutatePairsIncrementalWithForceAndBoundsConcurrency(t *testing.T) {
 	captured, root := stub(t, "")
 	mutable(t, root)
@@ -337,10 +342,13 @@ func TestMutatePairsIncrementalWithForceAndBoundsConcurrency(t *testing.T) {
 	_ = RunMutate([]string{"src/a.ts", "src/b.ts"}, io.Discard)
 
 	args := strykerArgs(t, captured)
-	for _, want := range []string{"--mutate src/a.ts", "--mutate src/b.ts", "--incremental", "--force", "--concurrency 2"} {
+	for _, want := range []string{"--mutate src/a.ts,src/b.ts", "--incremental", "--force", "--concurrency 2"} {
 		if !strings.Contains(args, want) {
 			t.Errorf("stryker invoked without %q: %s", want, args)
 		}
+	}
+	if strings.Count(args, "--mutate") != 1 {
+		t.Errorf("stryker was given more than one --mutate flag, only the last of which it would honour: %s", args)
 	}
 }
 
@@ -633,7 +641,7 @@ func TestMutateAcceptsFlagsAfterPaths(t *testing.T) {
 	_ = RunMutate([]string{"src/a.ts", "--concurrency", "4", "src/b.ts"}, io.Discard)
 
 	args := strykerArgs(t, captured)
-	for _, want := range []string{"--mutate src/a.ts", "--mutate src/b.ts", "--concurrency 4"} {
+	for _, want := range []string{"--mutate src/a.ts,src/b.ts", "--concurrency 4"} {
 		if !strings.Contains(args, want) {
 			t.Errorf("stryker invoked without %q: %s", want, args)
 		}

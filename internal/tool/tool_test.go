@@ -92,3 +92,50 @@ func TestESLintStagedSuppressesTheIgnoredFileWarning(t *testing.T) {
 		t.Errorf("ESLintStaged() = %v, want it to still name the staged file", args)
 	}
 }
+
+// TestMutateNamesEveryPathInOneArgument pins the comma join. Stryker 9.6.1's own
+// stryker-cli.js parses --mutate with a splitter that ignores the previous
+// value on a repeated flag (stryker-cli.js:11-14,114), so dharness emitting
+// one --mutate per path silently mutated only the last one named. The fix is
+// one --mutate whose value is every path joined by commas.
+func TestMutateNamesEveryPathInOneArgument(t *testing.T) {
+	args := StrykerMutate([]string{"src/a.ts", "src/b.ts"}, "vitest", "", "sandbox", 2)
+
+	count := 0
+	for _, arg := range args {
+		if arg == "--mutate" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("StrykerMutate() carries %d --mutate flag(s), want exactly 1: %v", count, args)
+	}
+
+	index := slices.Index(args, "--mutate")
+	if index < 0 || index+1 >= len(args) || args[index+1] != "src/a.ts,src/b.ts" {
+		t.Errorf("StrykerMutate() = %v, want --mutate src/a.ts,src/b.ts", args)
+	}
+}
+
+// A single path still carries no comma: joining one element changes nothing.
+func TestMutateJoinsASinglePathWithNoComma(t *testing.T) {
+	args := StrykerMutate([]string{"src/a.ts"}, "vitest", "", "sandbox", 2)
+
+	index := slices.Index(args, "--mutate")
+	if index < 0 || index+1 >= len(args) || args[index+1] != "src/a.ts" {
+		t.Errorf("StrykerMutate() = %v, want --mutate src/a.ts", args)
+	}
+}
+
+// TestMutateOmitsTheFlagWithNoPaths pins the empty case rather than leaving it
+// to whatever strings.Join(nil, ",") happens to produce: no paths means no
+// --mutate flag at all, never one carrying an empty value Stryker would read
+// as "mutate nothing named", which is a different question from "mutate
+// everything" — Stryker's own default when --mutate is absent entirely.
+func TestMutateOmitsTheFlagWithNoPaths(t *testing.T) {
+	args := StrykerMutate(nil, "vitest", "", "sandbox", 2)
+
+	if slices.Contains(args, "--mutate") {
+		t.Errorf("StrykerMutate() = %v, want no --mutate flag for zero paths", args)
+	}
+}

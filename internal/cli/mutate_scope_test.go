@@ -60,6 +60,54 @@ func TestMutateRefusesPathsOutsideTheJSProject(t *testing.T) {
 	}
 }
 
+// TestMutateRefusesPathsWithCharactersStrykerWouldMisread pins the path
+// refusal. Escaping a comma inside one --mutate argument would be
+// indistinguishable from the comma that separates paths, and *, ?, {, } and a
+// leading ! are minimatch metacharacters Stryker's own glob matching already
+// treats specially — escaping any of them is unmeasured here, so dharness
+// refuses rather than guesses.
+func TestMutateRefusesPathsWithCharactersStrykerWouldMisread(t *testing.T) {
+	root := t.TempDir()
+	p := project.At(root, root)
+
+	for _, given := range []string{"src/a,b.ts", "src/*.ts", "src/a?.ts", "src/{a,b}.ts", "!src/a.ts"} {
+		t.Run(given, func(t *testing.T) {
+			_, err := scopePaths(p, root, []string{given})
+
+			var invalid *InvalidMutatePathError
+			if !errors.As(err, &invalid) {
+				t.Fatalf("scopePaths(%q) = %v, want InvalidMutatePathError", given, err)
+			}
+			if invalid.Path != given {
+				t.Errorf("InvalidMutatePathError.Path = %q, want %q", invalid.Path, given)
+			}
+		})
+	}
+}
+
+// TestMutateRefusesPathsThatOnlyBecomeInvalidAfterReRooting pins where the
+// check runs: validateMutatePath used to run on the path exactly as typed,
+// before filepath.Rel re-rooted it against the JS project. "./!x.ts" and
+// "src/../!x.ts" do not start with "!" and carry none of the other refused
+// characters, so the old ordering let them through — and Join/Rel then
+// cleaned away the leading "./" or "src/../", leaving a re-rooted argument
+// "!x.ts" that Stryker's glob matcher reads as a negation nobody typed.
+func TestMutateRefusesPathsThatOnlyBecomeInvalidAfterReRooting(t *testing.T) {
+	root := t.TempDir()
+	p := project.At(root, root)
+
+	for _, given := range []string{"./!x.ts", "src/../!x.ts"} {
+		t.Run(given, func(t *testing.T) {
+			_, err := scopePaths(p, root, []string{given})
+
+			var invalid *InvalidMutatePathError
+			if !errors.As(err, &invalid) {
+				t.Fatalf("scopePaths(%q) = %v, want InvalidMutatePathError", given, err)
+			}
+		})
+	}
+}
+
 // TestShortestPathNamesTheStateSomebodyCanFind pins the reader-facing half of
 // the cumulative note. The absolute form of a state path under the git common
 // directory runs past eighty characters before it reaches the part that

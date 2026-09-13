@@ -373,10 +373,16 @@ func ESLintPrintConfig(file string) []string {
 	return []string{"--print-config", file}
 }
 
+// mutate builds the single --mutate argument Stryker will actually read.
+//
+// Measured against Stryker 9.6.1's own stryker-cli.js: its splitter for
+// --mutate ignores every value but the last on a repeated flag
+// (stryker-cli.js:11-14,114), so `dharness mutate a.ts b.ts` emitting one
+// --mutate per path mutated only b.ts. The fix is Stryker's own documented
+// syntax for naming several paths in one argument: comma-separated.
 func mutate(paths []string) []string {
-	args := make([]string, 0, len(paths)*2)
-	for _, path := range paths {
-		args = append(args, "--mutate", path)
+	if len(paths) == 0 {
+		return nil
 	}
-	return args
+	return []string{"--mutate", strings.Join(paths, ",")}
 }
