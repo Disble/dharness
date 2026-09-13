@@ -18,6 +18,7 @@
 * **mutate:** fail on mutants no test ran ([443a4ed](https://github.com/Disble/dharness/commit/443a4ed29dcc8aa5ef6d883311c539bd87ab1cf6))
 * **mutate:** judge only the report this run wrote ([2b02abb](https://github.com/Disble/dharness/commit/2b02abbee515d6077db9059a31eb6ba79918f165))
 * **mutate:** name every path in one --mutate argument ([31e6bdf](https://github.com/Disble/dharness/commit/31e6bdfaefc55074575834b6e4732b3e205516ab))
+* **mutate:** stop printing "Every mutant was caught" when no in-scope mutant was actually tested (for example, every one was skipped as a static mutant under `ignoreStatic`); plain `dharness mutate` now says the mutants were skipped ([d40a1b9](https://github.com/Disble/dharness/commit/d40a1b98bd8716acfba34503796478602a35f602))
 
 ## [1.7.6](https://github.com/Disble/dharness/compare/v1.7.5...v1.7.6) (2026-09-12)
 
