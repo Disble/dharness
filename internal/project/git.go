@@ -27,6 +27,17 @@ var gitOutput = func(dir string, args ...string) ([]byte, error) {
 	return command.Output()
 }
 
+// GitOutput runs git in dir through this package's probe and returns its
+// standard output.
+//
+// It is exported so every package that asks git a question shares one process
+// boundary. The worktree defect lived in the environment that boundary hands
+// the subprocess, and a second copy of it elsewhere is a second place the same
+// defect has to be fixed — and a second place it can quietly come back.
+func GitOutput(dir string, args ...string) ([]byte, error) {
+	return gitOutput(dir, args...)
+}
+
 // SetGitOutputForTest replaces the git probe and returns a restore function.
 func SetGitOutputForTest(probe func(string, ...string) ([]byte, error)) func() {
 	previous := gitOutput
