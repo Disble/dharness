@@ -70,10 +70,7 @@ func gitRun(t *testing.T, dir string, args ...string) string {
 // for a test to stage its own change on top.
 func newRepo(t *testing.T) string {
 	t.Helper()
-	isolateFromTheAmbientRepository(t)
-
-	root := t.TempDir()
-	gitRun(t, root, "init", "--quiet", "--initial-branch=main", ".")
+	root := newRepoUnderTheMachinesGitConfig(t)
 	// Pinned in the repository's own config, which outranks the system and
 	// global files. A Windows CI runner's system git sets core.autocrlf=true,
 	// so checkout-index smudged LF to CRLF exactly as a real checkout would,
@@ -81,6 +78,18 @@ func newRepo(t *testing.T) string {
 	// on a machine whose global config says otherwise. The product was right;
 	// the fixture depended on the machine.
 	gitRun(t, root, "config", "core.autocrlf", "false")
+	return root
+}
+
+// newRepoUnderTheMachinesGitConfig initialises an isolated repository that
+// pins nothing, so its line endings follow whatever the system and global git
+// config say — the configuration a real checkout on that machine has.
+func newRepoUnderTheMachinesGitConfig(t *testing.T) string {
+	t.Helper()
+	isolateFromTheAmbientRepository(t)
+
+	root := t.TempDir()
+	gitRun(t, root, "init", "--quiet", "--initial-branch=main", ".")
 	return root
 }
 
