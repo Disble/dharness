@@ -57,6 +57,27 @@ func TestSurvivorStringMarksNoCoverage(t *testing.T) {
 	}
 }
 
+// TestIgnoredStringNamesTheReason pins the reader-facing form. Measured:
+// `// Stryker disable next-line all: reason` produces
+// "status":"Ignored","statusReason":"reason" in the JSON report, and
+// Stryker's own clear-text reporter never prints either — an author who
+// marked a mutant equivalent otherwise has no way to see dharness agrees.
+func TestIgnoredStringNamesTheReason(t *testing.T) {
+	i := Ignored{File: "src/a.ts", Line: 5, Description: "ArrayDeclaration", Reason: "equivalent: order does not matter here"}
+	want := "src/a.ts:5 ArrayDeclaration — equivalent: order does not matter here"
+	if got := i.String(); got != want {
+		t.Errorf("String() = %q, want %q", got, want)
+	}
+}
+
+// A report is not obligated to carry a reason.
+func TestIgnoredStringWithNoReason(t *testing.T) {
+	i := Ignored{File: "src/a.ts", Line: 5, Description: "ArrayDeclaration"}
+	if got := i.String(); got != "src/a.ts:5 ArrayDeclaration" {
+		t.Errorf("String() = %q, want no dash when there is no reason", got)
+	}
+}
+
 func TestSurvivorsRejectsAReportItCannotRead(t *testing.T) {
 	if _, err := Survivors(newReader("not json")); err == nil {
 		t.Fatal("Survivors() = nil error on a malformed report; silence would read as a pass")

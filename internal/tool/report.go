@@ -69,15 +69,41 @@ func collapse(text string) string {
 	return strings.Join(strings.Fields(text), " ")
 }
 
+// Ignored is one mutant Stryker skipped because a `// Stryker disable`
+// directive marked it, carrying the reason the directive gave.
+//
+// Measured: `// Stryker disable next-line all: reason` produces
+// "status":"Ignored","statusReason":"reason" in the JSON report, and
+// Stryker's own clear-text reporter never prints either one — an author who
+// marked a mutant equivalent has no way to see that dharness agrees, or what
+// reason is on record, without opening the JSON report by hand.
+type Ignored struct {
+	File        string
+	Line        int
+	Description string
+	Reason      string
+}
+
+// String reads the same way a Survivor does, with an em dash marking the
+// reason rather than an arrow: nothing here "became" anything, the mutant
+// was never run at all.
+func (i Ignored) String() string {
+	if i.Reason == "" {
+		return fmt.Sprintf("%s:%d %s", i.File, i.Line, i.Description)
+	}
+	return fmt.Sprintf("%s:%d %s — %s", i.File, i.Line, i.Description, i.Reason)
+}
+
 // mutationReport is the subset of the mutation-testing report schema that
 // answers the only question dharness asks of it.
 type mutationReport struct {
 	Files map[string]struct {
 		Mutants []struct {
-			Status      string `json:"status"`
-			MutatorName string `json:"mutatorName"`
-			Replacement string `json:"replacement"`
-			Location    struct {
+			Status       string `json:"status"`
+			MutatorName  string `json:"mutatorName"`
+			Replacement  string `json:"replacement"`
+			StatusReason string `json:"statusReason"`
+			Location     struct {
 				Start struct {
 					Line int `json:"line"`
 				} `json:"start"`
