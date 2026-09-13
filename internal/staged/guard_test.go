@@ -1,6 +1,7 @@
 package staged
 
 import (
+	"context"
 	"errors"
 	"io"
 	"strings"
@@ -30,7 +31,7 @@ func TestGuardVitestSuiteRefusesWhenListFails(t *testing.T) {
 		return &runner.ExitError{Command: cmd.String(), Code: 1}
 	})()
 
-	err := GuardVitestSuite("vitest", "vitest", t.TempDir(), "")
+	err := GuardVitestSuite(context.Background(), "vitest", "vitest", t.TempDir(), "")
 
 	var suite *VitestSuiteError
 	if !errors.As(err, &suite) {
@@ -48,7 +49,7 @@ func TestGuardVitestSuitePassesWhenListSucceeds(t *testing.T) {
 		return nil
 	})()
 
-	if err := GuardVitestSuite("vitest", "vitest", t.TempDir(), ""); err != nil {
+	if err := GuardVitestSuite(context.Background(), "vitest", "vitest", t.TempDir(), ""); err != nil {
 		t.Errorf("GuardVitestSuite() = %v, want nil", err)
 	}
 }
@@ -60,7 +61,7 @@ func TestGuardVitestSuitePassesWhenListSucceeds(t *testing.T) {
 func TestGuardVitestSuiteNeverRunsForJest(t *testing.T) {
 	defer fakeVitestNeverCalled(t)()
 
-	if err := GuardVitestSuite("vitest", "jest", t.TempDir(), ""); err != nil {
+	if err := GuardVitestSuite(context.Background(), "vitest", "jest", t.TempDir(), ""); err != nil {
 		t.Errorf("GuardVitestSuite() = %v, want nil: jest is not guarded", err)
 	}
 }
@@ -76,7 +77,7 @@ func TestGuardVitestSuitePassesTheConfiguredConfigFile(t *testing.T) {
 		return nil
 	})()
 
-	if err := GuardVitestSuite("vitest", "vitest", t.TempDir(), "vitest.unit.config.ts"); err != nil {
+	if err := GuardVitestSuite(context.Background(), "vitest", "vitest", t.TempDir(), "vitest.unit.config.ts"); err != nil {
 		t.Fatalf("GuardVitestSuite() = %v", err)
 	}
 	want := []string{"list", "--config", "vitest.unit.config.ts"}
@@ -100,7 +101,7 @@ func TestGuardVitestSuiteOmitsConfigFlagWhenNotSet(t *testing.T) {
 		return nil
 	})()
 
-	if err := GuardVitestSuite("vitest", "vitest", t.TempDir(), ""); err != nil {
+	if err := GuardVitestSuite(context.Background(), "vitest", "vitest", t.TempDir(), ""); err != nil {
 		t.Fatalf("GuardVitestSuite() = %v", err)
 	}
 	if len(captured) != 1 || captured[0] != "list" {
@@ -119,7 +120,7 @@ func TestGuardVitestSuiteRunsFromTheSnapshotSource(t *testing.T) {
 		return nil
 	})()
 
-	if err := GuardVitestSuite("vitest", "vitest", snapshotSource, ""); err != nil {
+	if err := GuardVitestSuite(context.Background(), "vitest", "vitest", snapshotSource, ""); err != nil {
 		t.Fatalf("GuardVitestSuite() = %v", err)
 	}
 	if dir != snapshotSource {

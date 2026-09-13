@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -79,12 +80,22 @@ func RunMutate(args []string, stdout io.Writer) error {
 	dryRun := flags.Bool("dry-run", false, "measure how many tests a scoped run executes, without mutating anything")
 	upgrade := flags.Bool("upgrade", false, "bring Stryker to @latest, rewriting the version the project declares")
 	fresh := flags.Bool("fresh", false, "measure only the named paths, ignoring results kept from earlier runs")
+	stagedFlag := flags.Bool("staged", false, "mutate exactly the line ranges a staged change added, instead of named paths; never installs Stryker")
+	var excludePrefixes []string
+	flags.Func("exclude-prefix", "exclude staged files under this prefix from --staged scope (repeatable)", func(value string) error {
+		excludePrefixes = append(excludePrefixes, value)
+		return nil
+	})
 	paths, err := parseInterspersed(flags, args)
 	if err != nil {
 		return err
 	}
 	if helpRequested(args) {
 		return nil
+	}
+
+	if *stagedFlag {
+		return runMutateStaged(paths, *dryRun, *upgrade, *concurrency, excludePrefixes, stdout)
 	}
 
 	if len(paths) == 0 {
@@ -137,7 +148,7 @@ func RunMutate(args []string, stdout io.Writer) error {
 
 		// The count only exists in the output: --dryRunOnly writes no report.
 		var transcript bytes.Buffer
-		if err := runStryker(binary, p, selection, tool.StrykerDryRun(arguments, testRunnerArg, *concurrency), io.MultiWriter(stdout, &transcript)); err != nil {
+		if err := runStryker(context.Background(), binary, p.Source, selection, tool.StrykerDryRun(arguments, testRunnerArg, *concurrency), io.MultiWriter(stdout, &transcript)); err != nil {
 			return err
 		}
 		return recordMeasurement(p, transcript.String(), scopes[0].Path, stdout)
@@ -180,7 +191,7 @@ func RunMutate(args []string, stdout io.Writer) error {
 		return fmt.Errorf("clear the previous mutation report: %w", err)
 	}
 
-	if err := runStryker(binary, p, selection, tool.StrykerMutate(arguments, testRunnerArg, incremental, sandbox, *concurrency), stdout); err != nil {
+	if err := runStryker(context.Background(), binary, p.Source, selection, tool.StrykerMutate(arguments, testRunnerArg, incremental, sandbox, *concurrency), stdout); err != nil {
 		return err
 	}
 	return reportSurvivors(p.Source, reportPath, scopes, incremental, stdout)
@@ -364,12 +375,24 @@ func ensureStryker(p project.Project, selection project.StrykerSelection, upgrad
 	return binary, nil
 }
 
-func runStryker(binary string, p project.Project, selection project.StrykerSelection, args []string, stdout io.Writer) error {
-	command := tool.StrykerLocal(binary, p.Source, selection.TestRunner, selection.AppendPlugins, args...)
+// runStryker invokes Stryker in dir — p.Source for the ordinary path, the
+// snapshot's own copy of source for a staged run.
+//
+// ctx cancels the running process when it is done; context.Background()
+// behaves exactly as before. A staged run passes one an interrupt cancels,
+// so Ctrl-C kills Stryker rather than leaving it reading from a snapshot
+// whose cleanup is about to remove it — and a Stryker killed that way gets no
+// pointer to its help, which answers questions about findings, not about an
+// interrupt.
+func runStryker(ctx context.Context, binary, dir string, selection project.StrykerSelection, args []string, stdout io.Writer) error {
+	command := tool.StrykerLocal(binary, dir, selection.TestRunner, selection.AppendPlugins, args...)
+	command.Context = ctx
 
 	if err := runner.Run(command, stdout, stdout); err != nil {
-		help := tool.StrykerLocal(binary, p.Source, selection.TestRunner, selection.AppendPlugins, "run", "--help")
-		fmt.Fprint(stdout, pointer(help))
+		if ctx.Err() == nil && !runner.Interrupted(err) {
+			help := tool.StrykerLocal(binary, dir, selection.TestRunner, selection.AppendPlugins, "run", "--help")
+			fmt.Fprint(stdout, pointer(help))
+		}
 		return err
 	}
 	return nil
@@ -470,6 +493,25 @@ func reportSurvivors(dir, path string, scopes []tool.MutationScope, incremental 
 	}
 
 	if len(survivors) == 0 {
+		// A fourth read, for the same reason as the second and third: no
+		// survivor is what a clean run reports, and also what a scope whose
+		// every mutant Stryker skipped reports — measured on a real consumer at
+		// 110 files, each a static `export const valueNNN = 'vNNN';`, all
+		// Ignored under the project's own `ignoreStatic: true`. Both printed
+		// "Every mutant was caught" until this counted what was actually
+		// tested: Killed or Timeout, the two statuses that mean a test ran
+		// against the mutant at all.
+		if _, err := file.Seek(0, io.SeekStart); err != nil {
+			return fmt.Errorf("re-read the mutation report: %w", err)
+		}
+		tally, err := tool.MutantTallyInScope(file, scopes)
+		if err != nil {
+			return err
+		}
+		if tally.Killed+tally.Timeout == 0 {
+			fmt.Fprintln(stdout, "\nno mutant was tested: every in-scope mutant was skipped by Stryker (see the reasons above)")
+			return nil
+		}
 		fmt.Fprintln(stdout, "\nEvery mutant was caught: these tests notice this code breaking.")
 		return nil
 	}

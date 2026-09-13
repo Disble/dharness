@@ -7,10 +7,12 @@
 package runner
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os/exec"
+	"time"
 )
 
 // Command is one external invocation.
@@ -48,6 +50,19 @@ type Command struct {
 	// priority yields the moment something else wants the CPU. The run takes
 	// slightly longer in wall clock and the machine stays usable throughout.
 	LowPriority bool
+
+	// Context, when set, kills the running process the moment it is done —
+	// left nil for every ordinary call, which starts no watcher goroutine
+	// and behaves exactly as before.
+	//
+	// It exists for a staged mutation run: Stryker can run for minutes
+	// against a throwaway snapshot, and a Ctrl-C that only stops dharness
+	// itself would leave that child process still reading from — and the
+	// snapshot's own cleanup racing to delete — a directory the process is
+	// still using. Cancelling the Context kills the process first, so Run
+	// returns and the caller's own cleanup runs after there is nothing left
+	// reading from what it removes.
+	Context context.Context
 }
 
 func (c Command) String() string {
@@ -63,10 +78,28 @@ func (c Command) String() string {
 type ExitError struct {
 	Command string
 	Code    int
+
+	// Interrupted records that a console interrupt ended the process rather
+	// than the process failing on its own. See the Interrupted function.
+	Interrupted bool
 }
 
 func (e *ExitError) Error() string {
 	return fmt.Sprintf("%s exited with code %d", e.Command, e.Code)
+}
+
+// Interrupted reports whether err is a process a console interrupt ended —
+// Ctrl-C, or the console closing — under the default handling of it.
+//
+// It exists because such an interrupt reaches every process attached to the
+// console at the same moment, the caller included, and the child can be dead
+// before the caller's own handler has cancelled anything. Measured through a
+// real `taskkill /PID` mid-run: Stryker came back with 3221225786 while the
+// run's context was still live, and the run reported a Stryker failure beside
+// a pointer to Stryker's help. How the process ended does not race.
+func Interrupted(err error) bool {
+	var exit *ExitError
+	return errors.As(err, &exit) && exit.Interrupted
 }
 
 // StartError reports a command that could never be started — the binary was
@@ -113,6 +146,10 @@ var ErrUndeliverableArgument = errors.New("argument cannot be delivered unaltere
 // Run executes cmd, streaming its output to the given writers.
 var Run = execute
 
+// cancelledWaitDelay bounds how long Run waits, once a Command with a Context
+// has exited, for output pipes something else still holds. See execute.
+const cancelledWaitDelay = 2 * time.Second
+
 func execute(cmd Command, stdout, stderr io.Writer) error {
 	target := platformize(cmd.Name, cmd.Args)
 	if target.Err != nil {
@@ -145,6 +182,30 @@ func execute(cmd Command, stdout, stderr io.Writer) error {
 		afterStart(process.Process.Pid)
 	}
 
+	if cmd.Context != nil {
+		// Kill reaches the process started here and nothing it started. On
+		// Windows that process is cmd.exe running a .cmd shim, and the node
+		// process behind it keeps the output pipe open, so Wait would read
+		// until that grandchild exits on its own. Measured through an
+		// npm-style shim whose node script sleeps 30 seconds: cancelled after
+		// 1 second, Run returned after 30.10; with this delay, after 3.01, and
+		// the grandchild died writing to the closed pipe within a further 1.5.
+		// What this does not do is end the grandchild. One whose output is a
+		// file rather than a pipe pins nothing and runs on: a console
+		// interrupt reaches it directly, a signal sent to dharness alone does
+		// not.
+		process.WaitDelay = cancelledWaitDelay
+		stopWatching := make(chan struct{})
+		defer close(stopWatching)
+		go func() {
+			select {
+			case <-cmd.Context.Done():
+				_ = process.Process.Kill()
+			case <-stopWatching:
+			}
+		}()
+	}
+
 	err := process.Wait()
 	if err == nil {
 		return nil
@@ -152,7 +213,7 @@ func execute(cmd Command, stdout, stderr io.Writer) error {
 
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
-		return &ExitError{Command: cmd.String(), Code: exitErr.ExitCode()}
+		return &ExitError{Command: cmd.String(), Code: exitErr.ExitCode(), Interrupted: endedByConsoleInterrupt(exitErr.ProcessState)}
 	}
 	return &StartError{Command: cmd.String(), Cause: err}
 }

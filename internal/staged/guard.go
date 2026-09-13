@@ -2,6 +2,7 @@ package staged
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 
 	"github.com/Disble/dharness/internal/runner"
@@ -40,7 +41,12 @@ func (e *VitestSuiteError) Unwrap() error { return e.Cause }
 // vitest-runner will load rather than whatever vitest would resolve on its
 // own. snapshotSource is where `list` runs from — the snapshot's own copy of
 // source, the same tree Stryker itself is about to run in.
-func GuardVitestSuite(vitestBinary, testRunner, snapshotSource, vitestConfigFile string) error {
+//
+// ctx reaches `vitest list`, which runs for about 70 seconds on a real
+// project, so cancelling it kills the listing rather than waiting it out. A
+// killed listing reads here as a suite that failed to load; telling an
+// interrupt apart is the caller's, which holds ctx.
+func GuardVitestSuite(ctx context.Context, vitestBinary, testRunner, snapshotSource, vitestConfigFile string) error {
 	if testRunner != "vitest" {
 		return nil
 	}
@@ -50,7 +56,7 @@ func GuardVitestSuite(vitestBinary, testRunner, snapshotSource, vitestConfigFile
 		args = append(args, "--config", vitestConfigFile)
 	}
 
-	cmd := runner.Command{Label: "vitest", Name: vitestBinary, Args: args, Dir: snapshotSource}
+	cmd := runner.Command{Label: "vitest", Name: vitestBinary, Args: args, Dir: snapshotSource, Context: ctx}
 	var transcript bytes.Buffer
 	if err := runner.Run(cmd, &transcript, &transcript); err != nil {
 		return &VitestSuiteError{Cause: err}

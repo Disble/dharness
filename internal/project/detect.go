@@ -336,6 +336,11 @@ type StrykerSelection struct {
 	Configured    bool
 	AppendPlugins []string
 
+	// ConfigFile is the JSON Stryker config the selection was read from, as
+	// one of Stryker's own default names relative to Source, or empty when the
+	// project has none.
+	ConfigFile string
+
 	// ReportPath is where Stryker's json reporter will write, relative to
 	// Source, or empty when the project never configured jsonReporter.fileName.
 	//
@@ -405,6 +410,7 @@ func (p Project) StrykerRunner() (StrykerSelection, error) {
 			TestRunner:       configured.TestRunner,
 			Configured:       true,
 			AppendPlugins:    configured.AppendPlugins,
+			ConfigFile:       config,
 			ReportPath:       filepath.FromSlash(configured.JSONReporter.FileName),
 			VitestConfigFile: filepath.FromSlash(configured.Vitest.ConfigFile),
 		}, nil

@@ -1,9 +1,16 @@
 // Package tool holds the invocation of every CLI dharness wraps.
 //
 // These argument lists are the product. dharness owns no configuration file
-// and translates no format: what it contributes over calling the tools by hand
-// is exactly the flags below, in the order below. Keeping them in one file
-// means a flag is changed in one place and reviewed as a whole.
+// inside the project and translates no format: what it contributes over
+// calling the tools by hand is exactly the flags below, in the order below.
+// Keeping them in one file means a flag is changed in one place and reviewed
+// as a whole.
+//
+// The one file dharness does generate lives outside the project instead:
+// internal/cli.writeStagedStrykerConfig writes --staged's own Stryker config
+// into the disposable snapshot, never into the project, because cmd.exe's
+// 8191-character line cap refuses a --mutate large enough to name a whole
+// staged change. It is removed with the snapshot.
 package tool
 
 import (
@@ -297,6 +304,23 @@ func StrykerMutate(paths []string, testRunner, incrementalFile, sandbox string, 
 		"--reporters", "clear-text,json",
 	)
 	return args
+}
+
+// StrykerMutateFromConfig mutates what configFile's own mutate key names, with
+// configFile passed as run's [configFile] operand and no --mutate to overrule
+// it. Every other flag is StrykerMutate's, for a run with no incremental file.
+//
+// It exists for a scope a command line cannot hold. On Windows a local
+// Stryker is stryker.cmd, which runs through cmd.exe and its 8191-character
+// cap, and a long comma-joined --mutate is refused before Stryker starts:
+// "The command line is too long." Measured on a real project, the joined
+// staged scope passed that cap in 7 to 8 of its last 300 commits, reaching
+// 15764 characters and 212 ranges. The config-file mutate key takes the same
+// file:start-end entries: measured on Stryker 9.6.1, one range instrumented
+// the same 3 mutants from a config file as from --mutate.
+func StrykerMutateFromConfig(configFile, testRunner, sandbox string, concurrency int) []string {
+	args := StrykerMutate(nil, testRunner, "", sandbox, concurrency)
+	return append([]string{args[0], configFile}, args[1:]...)
 }
 
 // StrykerDryRun runs the initial test run without mutating anything.

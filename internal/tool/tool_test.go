@@ -139,3 +139,23 @@ func TestMutateOmitsTheFlagWithNoPaths(t *testing.T) {
 		t.Errorf("StrykerMutate() = %v, want no --mutate flag for zero paths", args)
 	}
 }
+
+// A scope named by a config file reaches Stryker as run's own [configFile]
+// operand, with no --mutate to overrule the file's mutate key, and with every
+// other flag a run without an incremental file carries.
+func TestStrykerMutateFromConfigNamesTheFileInsteadOfTheScope(t *testing.T) {
+	args := StrykerMutateFromConfig("scoped.stryker.config.json", "vitest", "sandbox", 3)
+
+	want := []string{
+		"run", "scoped.stryker.config.json",
+		"--testRunner", "vitest",
+		"--force",
+		"--concurrency", "3",
+		"--tempDirName", "sandbox",
+		"--cleanTempDir", "always",
+		"--reporters", "clear-text,json",
+	}
+	if !slices.Equal(args, want) {
+		t.Errorf("StrykerMutateFromConfig() = %v, want %v", args, want)
+	}
+}

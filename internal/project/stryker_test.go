@@ -164,6 +164,11 @@ func TestStrykerRunnerRecognizesEveryDefaultConfigFile(t *testing.T) {
 				if selection.TestRunner != "jest" || !selection.Configured || len(selection.AppendPlugins) != 1 || selection.AppendPlugins[0] != "custom-plugin" {
 					t.Errorf("StrykerRunner() inferred through authoritative %s: %+v", configFile, selection)
 				}
+				// A staged run hands Stryker a config of its own built from
+				// this one, so it has to know which of the sixteen names it is.
+				if selection.ConfigFile != configFile {
+					t.Errorf("StrykerRunner().ConfigFile = %q, want %q", selection.ConfigFile, configFile)
+				}
 				return
 			}
 
