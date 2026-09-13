@@ -53,6 +53,20 @@ funcionalidad a construir y resultó ser la sintaxis que `--mutate` ya documenta
 pidió y la vuelve a emitir textual. Reconstruirla desde los números parseados
 convertía `:1:3-1:5` en `:1-1` y ensanchaba en silencio lo que se muta.
 
+*Enmendado el 13 de septiembre de 2026.* El principio se sostiene: un archivo de
+configuración sigue siendo el propio mecanismo de Stryker para `mutate`, nunca
+uno que dharness inventa. Lo que se midió en falso fue la premisa de apoyo —
+«toda opción suya es un flag»— contra el tope de línea de `cmd.exe`, 8191
+caracteres: en los últimos 300 commits del consumidor real, el `--mutate` unido
+en un solo argumento superó ese tope en 7 u 8 de ellos, hasta 15 764 caracteres
+y 212 rangos, y lanzar `node` directo no lo evita donde `node` es el shim de
+Volta, que también relanza por `cmd.exe`. Por eso `--staged` pasa sus rangos en
+una config JSON transitoria, escrita dentro del snapshot desechable — nunca en
+el proyecto, y los flags de línea de comandos le siguen ganando a la config.
+Medido: el mismo subconjunto de 30 archivos instrumentó 458 mutantes tanto por
+`--mutate` en la CLI como por la config JSON, y 194 archivos por config
+instrumentaron 2246 mutantes sin ningún rechazo.
+
 ### 02. La frontera de la delegación es «¿existe un comando?»
 
 No es configuración contra código, ni preparación contra hallazgos. Todo lo que
@@ -151,6 +165,17 @@ levanta un 8.2.6 a 9.6.1 por sí solo, y sin nada que hacer cuesta 436 ms y deja
 el manifiesto idéntico—, así que dharness nunca consulta el registro ni compara
 versiones. Instalar no contradice a `check.go`, que declina instalar en tiempo de
 gate: `mutate` no es el gate, se invoca al terminar una unidad de trabajo.
+
+*Enmendado el 13 de septiembre de 2026.* La frase de arriba dejó de ser toda la
+verdad el día que `--staged` pudo correr dentro de un gate. La distinción real
+nunca fue *dónde* se invoca `mutate`, sino si instala: `--staged` nunca
+instala, sea cual sea el momento — un comando que puede correr desatendido,
+potencialmente detrás de un Ctrl-C, no puede ser el instante en que
+`package.json` y el lockfile cambian. Un `--staged` sin Stryker local rehúsa
+nombrando el comando, exactamente como `check.go` rehúsa correr ESLint sin
+binario en vez de instalarlo. Lo que sigue siendo cierto sin cambios: la
+corrida sin `--staged` sigue pagando la instalación una vez por unidad de
+trabajo terminada, nunca en cada commit.
 
 ### 04. Un comando que no se puede nombrar está haciendo dos cosas
 

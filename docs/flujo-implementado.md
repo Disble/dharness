@@ -478,7 +478,7 @@ flowchart TD
     N --> ST["resolver el incremental en .git/dharness y descartarlo si está corrupto"]
     Y --> ST
     ST --> CL["limpiar el sandbox anterior, con reintentos si Windows lo tiene tomado"]
-    CL --> INV["--mutate por ruta, --incremental --force, --tempDirName, --cleanTempDir always"]
+    CL --> INV["un solo --mutate separado por comas, --incremental --force, --tempDirName, --cleanTempDir always"]
     INV --> PR["ejecutar con prioridad reducida"]
     PR --> RD["leer el reporte y listar los supervivientes"]
     RD --> V{"¿sobrevivió alguno?"}
@@ -513,6 +513,115 @@ el error en vez de tragarlo.
 > minutos. Aquí el proceso corre con prioridad reducida, que cede continuamente
 > y no envejece: es el mismo problema resuelto por el sistema operativo en lugar
 > de por nosotros.
+
+---
+
+## `--staged` — mutar exactamente lo que un cambio agregó
+
+```mermaid
+%%{init: {"theme":"base","themeVariables":{"background":"#fbfcfd","primaryColor":"#ffffff","primaryTextColor":"#141b24","primaryBorderColor":"#8a97a5","lineColor":"#5c6773","textColor":"#141b24","mainBkg":"#ffffff","nodeBorder":"#8a97a5","clusterBkg":"#eef1f4","clusterBorder":"#c3ccd5","titleColor":"#1a5570","edgeLabelBackground":"#fbfcfd","fontSize":"14px"},"flowchart":{"htmlLabels":true,"wrappingWidth":190,"useMaxWidth":true}}}%%
+flowchart TD
+    A["dharness mutate --staged"] --> B["leer el scope del índice: rangos que el diff staged agregó"]
+    B --> C{"¿algo en scope?"}
+    C -->|"no"| N0["'nothing staged to mutate', salida 0 — sin snapshot, sin tsc, sin Stryker"]
+    C -->|"sí"| D{"¿hay un Stryker local instalado?"}
+    D -->|"no"| E["rehúsa nombrando el comando de instalación — nunca instala"]
+    D -->|"sí"| S["materializar el snapshot: todo el índice desde Root, ignorados enlazados desde Source"]
+    S --> CFG["releer la config de Stryker desde el snapshot, la que se va a commitear"]
+    CFG --> CL["clasificar cada archivo con el tsc local, en tandas bajo el tope de cmd.exe, cwd vacío fuera del proyecto"]
+    CL --> AllDrop{"¿todo compiló a nada?"}
+    AllDrop -->|"sí"| N1["imprime 'types-only: ...' por archivo, salida 0 — Stryker nunca corre"]
+    AllDrop -->|"no"| G{"¿el runner es vitest?"}
+    G -->|"sí"| GV["'vitest list', mismo config que Stryker; falla si un archivo no carga"]
+    G -->|"no"| RUN
+    GV -->|"falla"| ERef["rehúsa antes de correr Stryker"]
+    GV -->|"pasa"| RUN["correr Stryker sobre TODO el scope — mantenidos y descartados juntos — con --inPlace, el scope en una config JSON generada y no en --mutate"]
+    RUN --> SC{"¿algún archivo descartado aparece con mutantes?"}
+    SC -->|"sí"| ECD["ClassifierDisagreementError: el clasificador se equivocó sobre bytes reales"]
+    SC -->|"no"| M["imprime archivos, rangos y mutantes en scope por estado"]
+    M --> V{"¿sobrevivió algo dentro de lo mantenido?"}
+    V -->|"sí"| F["salida 1, nombrando archivo y línea"]
+    V -->|"no"| Z{"¿se generó algún mutante en lo mantenido?"}
+    Z -->|"no"| N2["'no mutants were generated in the staged ranges', salida 0"]
+    Z -->|"sí"| OK["'Every mutant was caught', salida 0"]
+```
+
+**Figura 8.** El scope nunca elige entre archivo o clasificación: Stryker recibe
+siempre el conjunto completo, mantenidos y descartados, y la clasificación solo
+decide qué cuenta para el veredicto. Correr Stryker sobre un archivo que se
+creyó vacío es el propio mecanismo de autochequeo — si aparece con un mutante
+real, el clasificador se equivocó sobre los bytes exactos que este commit va a
+llevar, y eso falla fuerte en vez de pasar en silencio.
+
+`--staged` nunca instala, ni siquiera cuando falta Stryker: se invoca a mitad de
+sesión, potencialmente detrás de un Ctrl-C, y ese es exactamente el momento en
+que `internal/cli/check.go` ya se niega a instalar por la misma razón.
+
+Un Ctrl-C —o un `taskkill` sin `/F`, que cierra la consola y Go entrega como
+SIGTERM, no como interrupción— cancela el contexto que reciben tsc,
+`vitest list` y Stryker. El hijo en curso muere, el paso que lo lanzó vuelve,
+la corrida se detiene en el chequeo que sigue a ese paso, y la limpieza del
+snapshot corre una sola vez, al final, cuando ya no queda ningún proceso
+trabajando adentro. Nada corre en paralelo con un hijo: en Windows `RemoveAll`
+falla —medido— tanto con un archivo abierto adentro como con el directorio de
+trabajo de un proceso vivo, y un snapshot a medio borrar queda. Matar
+el proceso alcanza a `cmd.exe`, no al node que el shim `.cmd` lanzó; con la
+salida en un pipe, `Wait` esperaba a ese nieto —medido: un sleep de 30 s
+cancelado al segundo devolvió a los 30,10 s—, así que `runner` le da dos
+segundos y cierra el pipe. Lo que no hace es matar al nieto: uno cuya salida no
+es un pipe sigue corriendo hasta que se entera por su cuenta, y una señal de
+consola le llega directo; una enviada solo a dharness, no.
+
+Esa señal de consola llega al hijo y a dharness a la vez, y el hijo puede estar
+muerto antes de que el manejador de dharness cancele nada. Medido con
+`taskkill /PID` a mitad de corrida, tres veces: la limpieza fue correcta las
+tres —sin `dh-*` en `%TEMP%`, fuera en 0,11 a 0,15 s—, pero una vez la corrida
+informó "stryker exited with code 3221225786" y las tres imprimió el puntero a
+la ayuda de Stryker. Por eso la corrida no le pregunta solo al contexto: cómo
+terminó el hijo —`STATUS_CONTROL_C_EXIT` en Windows, SIGINT o SIGTERM en POSIX—
+también cuenta como interrupción, y esa respuesta no compite con nada.
+
+El tope de línea de comandos de Windows limita cuánto cambio cabe en una
+corrida, y se rechaza fuerte, nunca se trunca. El clasificador parte los
+candidatos en tandas de hasta 6000 caracteres de rutas, porque tsc llega por su
+shim `.cmd` y `cmd.exe` rechaza una línea de más de 8191: con 150 archivos, una
+sola línea de unos 26 000 caracteres dejaba el clasificador inutilizable para
+todo el commit.
+
+Stryker, en cambio, no recibe los rangos por la línea de comandos. Un único
+`--mutate` no se puede partir: medido con 150 archivos, `cmd.exe` respondió "The
+command line is too long." y Stryker salió 1 sin mutar nada, y en los últimos
+300 commits del consumidor real el scope unido pasó ese tope en 7 u 8 de ellos,
+con hasta 15 764 caracteres y 212 rangos. Lanzar `node` directo en lugar del
+shim tampoco lo evita donde `node` es el shim de Volta, que relanza por
+`cmd.exe` con el mismo tope —medido: 9000 caracteres fallan con el `node.exe` de
+Volta y 30 000 pasan con el real.
+
+Por eso `--staged` escribe el scope en `dharness-staged.stryker.config.json`,
+dentro de la copia de Source del snapshot y al lado de la config del proyecto,
+y se lo pasa a Stryker como el argumento `[configFile]` de `run`, sin
+`--mutate`. La clave `mutate` de un archivo de configuración acepta las mismas
+entradas `archivo:inicio-fin` —medido con Stryker 9.6.1: un rango instrumentó
+los mismos 3 mutantes desde la config que desde `--mutate`—, y el escape de
+corchetes se conserva porque pasa por el mismo matcher. Nombrar un archivo
+reemplaza la config que Stryker habría encontrado, así que la del proyecto se
+copia entera: toda clave salvo `mutate` conserva su valor byte por byte, y las
+rutas relativas siguen resolviendo porque el archivo vive en el directorio desde
+el que corre Stryker. Solo llega JSON, porque `StrykerRunner` ya rechaza una
+config ejecutable, y una que no es un objeto JSON se rechaza nombrando el
+archivo. El resto de los flags sigue en la línea de comandos y le gana al
+archivo. La config generada muere con el snapshot; `dharness mutate` sin
+`--staged` conserva su `--mutate` separado por comas. Medido con el fixture de
+150 archivos: 17 699 caracteres de rangos en la config, y la corrida llegó a su
+veredicto con 300 mutantes en scope.
+
+Dos formas de refugio en el índice hacen fallar fuerte el chequeo de conteo de
+`Snapshot`, por diseño: un submódulo (una gitlink, no un blob) y una entrada con
+`sparse-checkout` o `skip-worktree` activo. Ninguna de las dos aparece en lo que
+`checkout-index --all` escribe a disco, así que el conteo contra `git ls-files`
+nunca cuadra — y eso es correcto: mutar una copia que no puede ver el índice
+completo respondería una pregunta distinta de la que `--staged` existe para
+hacer.
 
 ---
 
