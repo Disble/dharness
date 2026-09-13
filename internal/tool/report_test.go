@@ -7,9 +7,15 @@ import (
 
 func newReader(s string) *strings.Reader { return strings.NewReader(s) }
 
-// A timeout is a detection and an uncovered mutant is a coverage gap. Counting
-// either as a survivor would fail a commit for something the tests did notice,
-// or for something they were never given a chance to.
+// A timeout is a detection: the mutant hung the suite, which is exactly what
+// mutation testing exists to notice. NoCoverage is the opposite failure — no
+// test ever exercised the mutated line at all — and it now counts the same
+// as Survived. Measured on dharness 1.7.6: a range with 11 Killed
+// plus 8 NoCoverage mutants (an exported function no test called) exited 0
+// and printed "Every mutant was caught: these tests notice this code
+// breaking." Counting Timeout as a survivor would fail a commit for
+// something the tests did notice; leaving NoCoverage out reports a pass for
+// code no test ever ran.
 func TestSurvivorsCountsOnlyMutantsTheTestsMissed(t *testing.T) {
 	report := `{"files":{"src/b.ts":{"mutants":[
 		{"status":"Survived","mutatorName":"BooleanLiteral","location":{"start":{"line":4}}}
@@ -26,7 +32,11 @@ func TestSurvivorsCountsOnlyMutantsTheTestsMissed(t *testing.T) {
 	}
 
 	// Sorted, so a run over several files reads the same way twice.
-	want := []string{"src/a.ts:9 ConditionalExpression", "src/b.ts:4 BooleanLiteral"}
+	want := []string{
+		"src/a.ts:3 StringLiteral (no test ran it)",
+		"src/a.ts:9 ConditionalExpression",
+		"src/b.ts:4 BooleanLiteral",
+	}
 	if len(survivors) != len(want) {
 		t.Fatalf("Survivors() = %v, want %v", survivors, want)
 	}
@@ -34,6 +44,16 @@ func TestSurvivorsCountsOnlyMutantsTheTestsMissed(t *testing.T) {
 		if survivors[i].String() != expected {
 			t.Errorf("survivor %d = %q, want %q", i, survivors[i], expected)
 		}
+	}
+}
+
+// TestSurvivorStringMarksNoCoverage pins the reader-facing half: a mutant no
+// test ever ran reads differently from one a test ran and missed, so the
+// suffix names which failure this is.
+func TestSurvivorStringMarksNoCoverage(t *testing.T) {
+	s := Survivor{File: "src/a.ts", Line: 3, Description: "StringLiteral", Status: "NoCoverage"}
+	if got := s.String(); got != "src/a.ts:3 StringLiteral (no test ran it)" {
+		t.Errorf("String() = %q, want the no-test-ran-it suffix", got)
 	}
 }
 

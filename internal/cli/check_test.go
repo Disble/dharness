@@ -511,7 +511,10 @@ func TestMutateSaysNothingWhenTheReportMatchesTheRun(t *testing.T) {
 	}
 }
 
-// notice the code breaking.
+// A timeout is a detection: the mutant hung the suite, which is what
+// mutation testing exists to notice. NoCoverage is the opposite failure — no
+// test ever ran the mutated line at all — and it counts the same as
+// Survived.
 func TestMutateFailsOnSurvivors(t *testing.T) {
 	captured, root := stub(t, "")
 	mutable(t, root)
@@ -529,13 +532,51 @@ func TestMutateFailsOnSurvivors(t *testing.T) {
 	if !errors.As(err, &survivors) {
 		t.Fatalf("RunMutate() = %v, want SurvivorsError", err)
 	}
-	// A timeout is a detection, and an uncovered mutant is a coverage gap.
-	// Neither is a test that failed to notice a change it did observe.
-	if len(survivors.Survivors) != 1 {
-		t.Fatalf("reported %d survivors, want 1: %+v", len(survivors.Survivors), survivors.Survivors)
+	if len(survivors.Survivors) != 2 {
+		t.Fatalf("reported %d survivors, want 2: %+v", len(survivors.Survivors), survivors.Survivors)
 	}
 	if !strings.Contains(out.String(), "src/a.ts:7 EqualityOperator") {
 		t.Errorf("output does not locate the survivor:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "src/a.ts:11 StringLiteral (no test ran it)") {
+		t.Errorf("output does not locate the mutant no test ever ran:\n%s", out.String())
+	}
+}
+
+// TestMutateFailsWhenOnlyNoCoverageMutantsRemainInScope reproduces the
+// defect measured against dharness 1.7.6 directly: a range with 11
+// Killed and 8 NoCoverage mutants — an exported function no test calls —
+// exited 0 and printed "Every mutant was caught: these tests notice this
+// code breaking." Also measured: the same untested function reports
+// Survived when no other in-scope mutant is hit and NoCoverage when one is,
+// so the two statuses have to share one verdict rather than depend on what
+// else happens to be in scope alongside it.
+func TestMutateFailsWhenOnlyNoCoverageMutantsRemainInScope(t *testing.T) {
+	captured, root := stub(t, "")
+	mutable(t, root)
+
+	var mutants []string
+	for line := 1; line <= 11; line++ {
+		mutants = append(mutants, fmt.Sprintf(`{"status":"Killed","mutatorName":"BooleanLiteral","location":{"start":{"line":%d}}}`, line))
+	}
+	for line := 12; line <= 19; line++ {
+		mutants = append(mutants, fmt.Sprintf(`{"status":"NoCoverage","mutatorName":"StringLiteral","location":{"start":{"line":%d}}}`, line))
+	}
+	report := fmt.Sprintf(`{"files":{"src/a.ts":{"mutants":[%s]}}}`, strings.Join(mutants, ","))
+	stubWritesReportOnRun(captured, root, report)
+
+	var out bytes.Buffer
+	err := RunMutate([]string{"src/a.ts"}, &out)
+
+	var survivors *SurvivorsError
+	if !errors.As(err, &survivors) {
+		t.Fatalf("RunMutate() = %v, want SurvivorsError", err)
+	}
+	if len(survivors.Survivors) != 8 {
+		t.Fatalf("reported %d survivors, want 8: %+v", len(survivors.Survivors), survivors.Survivors)
+	}
+	if strings.Contains(out.String(), "Every mutant was caught") {
+		t.Errorf("output claims every mutant was caught while 8 were never even run:\n%s", out.String())
 	}
 }
 
