@@ -335,6 +335,20 @@ type StrykerSelection struct {
 	TestRunner    string
 	Configured    bool
 	AppendPlugins []string
+
+	// ReportPath is where Stryker's json reporter will write, relative to
+	// Source, or empty when the project never configured jsonReporter.fileName.
+	//
+	// Empty is a real, distinct value here rather than a placeholder for a
+	// default: project only reports what the repository declared, and
+	// "where dharness itself keeps its own default report" is internal/cli's
+	// decision to make at the point it resolves this against p.Source, not
+	// project's to bake in during detection.
+	//
+	// --jsonReporter.fileName does not exist as a CLI flag, so a project that
+	// customised it can only be respected by reading it from the same JSON
+	// Stryker config testRunner already comes from.
+	ReportPath string
 }
 
 // StrykerRunnerError reports a runner selection that cannot be translated into
@@ -363,6 +377,9 @@ func (p Project) StrykerRunner() (StrykerSelection, error) {
 		var configured struct {
 			TestRunner    string   `json:"testRunner"`
 			AppendPlugins []string `json:"appendPlugins"`
+			JSONReporter  struct {
+				FileName string `json:"fileName"`
+			} `json:"jsonReporter"`
 		}
 		if err := json.Unmarshal(raw, &configured); err != nil {
 			return StrykerSelection{}, &StrykerRunnerError{message: fmt.Sprintf("Stryker cannot read testRunner from %s: %v; fix the JSON config and retry", config, err)}
@@ -373,7 +390,12 @@ func (p Project) StrykerRunner() (StrykerSelection, error) {
 		if !supportedStrykerRunner(configured.TestRunner) {
 			return StrykerSelection{}, &StrykerRunnerError{message: fmt.Sprintf("Stryker config %s selects unsupported testRunner %q; dharness supports vitest or jest", config, configured.TestRunner)}
 		}
-		return StrykerSelection{TestRunner: configured.TestRunner, Configured: true, AppendPlugins: configured.AppendPlugins}, nil
+		return StrykerSelection{
+			TestRunner:    configured.TestRunner,
+			Configured:    true,
+			AppendPlugins: configured.AppendPlugins,
+			ReportPath:    filepath.FromSlash(configured.JSONReporter.FileName),
+		}, nil
 	}
 
 	runners := detectTestRunners(p.Source)

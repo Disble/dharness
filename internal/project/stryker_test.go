@@ -58,6 +58,45 @@ func TestStrykerRunnerTreatsJSONConfigAsAuthoritative(t *testing.T) {
 	}
 }
 
+// TestStrykerRunnerReadsTheConfiguredReportPath pins the report path.
+// --jsonReporter.fileName does not exist as a CLI flag, so a project that
+// customised where Stryker's json reporter writes can only be respected by
+// reading it from the same JSON Stryker config testRunner already comes
+// from.
+func TestStrykerRunnerReadsTheConfiguredReportPath(t *testing.T) {
+	root := testRunnerProject(t, `{"devDependencies":{"vitest":"^4.0.0"}}`)
+	write(t, filepath.Join(root, "stryker.config.json"), `{"testRunner":"vitest","jsonReporter":{"fileName":"custom/report.json"}}`)
+
+	selection, err := Describe(root).StrykerRunner()
+
+	if err != nil {
+		t.Fatalf("StrykerRunner() = %v", err)
+	}
+	want := filepath.Join("custom", "report.json")
+	if selection.ReportPath != want {
+		t.Errorf("StrykerRunner().ReportPath = %q, want %q", selection.ReportPath, want)
+	}
+}
+
+// An unconfigured project leaves ReportPath empty rather than defaulting it
+// to tool.MutationReportPath here.
+//
+// project used to import internal/tool for exactly this one constant, which
+// is a layering edge: project describes what the repository declared, and
+// "where dharness itself keeps its own default report" is a decision that
+// belongs at the call site in internal/cli, not in project's detection. The
+// default is still applied — just not here.
+func TestStrykerRunnerLeavesTheReportPathEmptyWithoutConfiguration(t *testing.T) {
+	selection, err := Describe(testRunnerProject(t, `{"devDependencies":{"vitest":"^4.0.0"}}`)).StrykerRunner()
+
+	if err != nil {
+		t.Fatalf("StrykerRunner() = %v", err)
+	}
+	if selection.ReportPath != "" {
+		t.Errorf("StrykerRunner().ReportPath = %q, want empty: the default belongs at the internal/cli use site", selection.ReportPath)
+	}
+}
+
 func TestStrykerRunnerRecognizesEveryDefaultConfigFile(t *testing.T) {
 	configFiles := []string{
 		"stryker.conf.json",

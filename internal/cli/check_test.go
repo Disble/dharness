@@ -22,6 +22,16 @@ type record struct {
 	commands []runner.Command
 	fail     map[string]error
 	emit     string
+
+	// writeReport and reportPath mimic Stryker's own side effect: writing its
+	// json report the moment a real mutation run actually executes, never on
+	// a dry run. RunMutate deletes whatever report sat at that path before Stryker
+	// runs, so a report seeded on disk before RunMutate is called (the old
+	// writeReport-then-call pattern) would already be gone by the time
+	// reportSurvivors opens the file — a test that wants RunMutate to judge
+	// a report now has to make the stub produce it at run time.
+	writeReport string
+	reportPath  string
 }
 
 func (r *record) run(cmd runner.Command, stdout, _ io.Writer) error {
@@ -29,7 +39,29 @@ func (r *record) run(cmd runner.Command, stdout, _ io.Writer) error {
 	if r.emit != "" {
 		_, _ = io.WriteString(stdout, r.emit)
 	}
+	if r.writeReport != "" && cmd.Label == "stryker" && !slices.Contains(cmd.Args, "--dryRunOnly") {
+		if err := writeMutationReport(r.reportPath, r.writeReport); err != nil {
+			return err
+		}
+	}
 	return r.fail[toolOf(cmd)]
+}
+
+// writeMutationReport creates the report file the same way Stryker's own
+// json reporter would, directories included.
+func writeMutationReport(path, contents string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(contents), 0o600)
+}
+
+// stubWritesReportOnRun arranges for the stub Stryker invocation to write
+// contents to root's default mutation report the moment it actually runs a
+// real mutation.
+func stubWritesReportOnRun(captured *record, root, contents string) {
+	captured.writeReport = contents
+	captured.reportPath = filepath.Join(root, "reports", "mutation", "mutation.json")
 }
 
 func toolOf(cmd runner.Command) string { return cmd.String() }
@@ -435,9 +467,9 @@ func writeReport(t *testing.T, root, contents string) {
 // it is reading from live — a location dharness chose, under .git/, which is
 // the last place anybody looks.
 func TestMutateNamesTheRowsItDidNotAskFor(t *testing.T) {
-	_, root := stub(t, "")
+	captured, root := stub(t, "")
 	mutable(t, root)
-	writeReport(t, root, `{"files":{
+	stubWritesReportOnRun(captured, root, `{"files":{
 		"src/a.ts":{"mutants":[{"status":"Killed","mutatorName":"BooleanLiteral","location":{"start":{"line":1}}}]},
 		"src/old.ts":{"mutants":[{"status":"Survived","mutatorName":"EqualityOperator","location":{"start":{"line":3}}}]}}}`)
 
@@ -465,9 +497,9 @@ func TestMutateNamesTheRowsItDidNotAskFor(t *testing.T) {
 // with nothing to explain — the common case, and the one that would turn the
 // explanation into noise.
 func TestMutateSaysNothingWhenTheReportMatchesTheRun(t *testing.T) {
-	_, root := stub(t, "")
+	captured, root := stub(t, "")
 	mutable(t, root)
-	writeReport(t, root, `{"files":{"src/a.ts":{"mutants":[
+	stubWritesReportOnRun(captured, root, `{"files":{"src/a.ts":{"mutants":[
 		{"status":"Killed","mutatorName":"BooleanLiteral","location":{"start":{"line":1}}}]}}}`)
 
 	var out bytes.Buffer
@@ -481,9 +513,9 @@ func TestMutateSaysNothingWhenTheReportMatchesTheRun(t *testing.T) {
 
 // notice the code breaking.
 func TestMutateFailsOnSurvivors(t *testing.T) {
-	_, root := stub(t, "")
+	captured, root := stub(t, "")
 	mutable(t, root)
-	writeReport(t, root, `{"files":{"src/a.ts":{"mutants":[
+	stubWritesReportOnRun(captured, root, `{"files":{"src/a.ts":{"mutants":[
 		{"status":"Killed","mutatorName":"BooleanLiteral","location":{"start":{"line":1}}},
 		{"status":"Survived","mutatorName":"EqualityOperator","location":{"start":{"line":7}}},
 		{"status":"Timeout","mutatorName":"ArithmeticOperator","location":{"start":{"line":9}}},
@@ -514,6 +546,126 @@ func TestMutateFailsWhenThereIsNoReportToRead(t *testing.T) {
 
 	if err := RunMutate([]string{"src/a.ts"}, io.Discard); err == nil {
 		t.Fatal("RunMutate() = nil with no report; a missing verdict is not a pass")
+	}
+}
+
+// TestMutateDoesNotJudgeAReportLeftByAnEarlierRun pins the removal. A run
+// with allowEmpty and a scope no test imports exits 0 and writes no report,
+// yet mutation.json still holds whatever the PREVIOUS run left there — and
+// reading that file would judge this run by a verdict it never produced. The
+// report has to be removed before Stryker runs, so a run that writes nothing
+// leaves nothing to read.
+func TestMutateDoesNotJudgeAReportLeftByAnEarlierRun(t *testing.T) {
+	_, root := stub(t, "")
+	mutable(t, root)
+	// A leftover report from an earlier, unrelated run: every mutant Killed,
+	// which would read as a clean pass if dharness judged it.
+	writeReport(t, root, `{"files":{"src/old.ts":{"mutants":[
+		{"status":"Killed","mutatorName":"BooleanLiteral","location":{"start":{"line":1}}}]}}}`)
+
+	// The stub does not write anything when Stryker "runs" this time.
+
+	if err := RunMutate([]string{"src/a.ts"}, io.Discard); err == nil {
+		t.Fatal("RunMutate() = nil, want an error: a leftover report from an earlier run must not be read as this run's verdict")
+	}
+}
+
+// TestMutateRemovesAStaleReportBeforeRunning proves the removal itself does
+// not misfire when there is something on disk to remove: a stale report left
+// at the default path must not block a run that goes on to write and judge
+// its own fresh report.
+func TestMutateRemovesAStaleReportBeforeRunning(t *testing.T) {
+	captured, root := stub(t, "")
+	mutable(t, root)
+	writeReport(t, root, `{"files":{"src/old.ts":{"mutants":[
+		{"status":"Survived","mutatorName":"BooleanLiteral","location":{"start":{"line":1}}}]}}}`)
+	stubWritesReportOnRun(captured, root, `{"files":{"src/a.ts":{"mutants":[
+		{"status":"Killed","mutatorName":"BooleanLiteral","location":{"start":{"line":1}}}]}}}`)
+
+	if err := RunMutate([]string{"src/a.ts"}, io.Discard); err != nil {
+		t.Fatalf("RunMutate() = %v, want nil: removing a stale report must not itself fail the run", err)
+	}
+}
+
+// TestMutateReadsTheReportWhereTheConfigSendsIt pins WU2's second half.
+// --jsonReporter.fileName does not exist as a CLI flag, so a project that
+// customised where Stryker's json reporter writes can only be respected by
+// reading its own JSON config, exactly like testRunner already is.
+func TestMutateReadsTheReportWhereTheConfigSendsIt(t *testing.T) {
+	captured, root := stub(t, "")
+	mutable(t, root)
+	writeFile(t, filepath.Join(root, "stryker.config.json"), `{"testRunner":"vitest","jsonReporter":{"fileName":"custom/report.json"}}`)
+	captured.writeReport = `{"files":{"src/a.ts":{"mutants":[
+		{"status":"Survived","mutatorName":"EqualityOperator","location":{"start":{"line":7}}}]}}}`
+	captured.reportPath = filepath.Join(root, "custom", "report.json")
+
+	var out bytes.Buffer
+	err := RunMutate([]string{"src/a.ts"}, &out)
+
+	var survivors *SurvivorsError
+	if !errors.As(err, &survivors) {
+		t.Fatalf("RunMutate() = %v, want SurvivorsError read from the configured report path", err)
+	}
+	if !strings.Contains(out.String(), "src/a.ts:7 EqualityOperator") {
+		t.Errorf("output does not locate the survivor from the configured report path:\n%s", out.String())
+	}
+}
+
+// TestResolveReportPathNeverResolvesToSourceItself pins the default path
+// directly. project leaves ReportPath empty rather than defaulting it to
+// tool.MutationReportPath itself, so resolveReportPath is the only place left
+// that applies the default — and filepath.Join(source, "") is Source itself,
+// which the caller then passes to os.Remove.
+func TestResolveReportPathNeverResolvesToSourceItself(t *testing.T) {
+	source := filepath.Join("some", "project")
+
+	got := resolveReportPath(source, "")
+
+	if got == source {
+		t.Fatalf("resolveReportPath(%q, \"\") = %q, must not equal Source itself", source, got)
+	}
+	if !strings.Contains(got, "mutation") {
+		t.Errorf("resolveReportPath(%q, \"\") = %q, want the default mutation report path", source, got)
+	}
+}
+
+// TestResolveReportPathUsesAnAbsoluteConfiguredPathAsIs pins the second half:
+// filepath.Join does not special-case an absolute second argument, so an
+// absolute jsonReporter.fileName has to be recognised and returned unchanged
+// rather than nested under Source into a path neither side meant.
+func TestResolveReportPathUsesAnAbsoluteConfiguredPathAsIs(t *testing.T) {
+	abs := filepath.Join(t.TempDir(), "custom-report.json")
+
+	got := resolveReportPath(filepath.Join("some", "source"), abs)
+
+	if got != abs {
+		t.Errorf("resolveReportPath() = %q, want the absolute path unchanged: %q", got, abs)
+	}
+}
+
+// TestMutateResolvesAnAbsoluteConfiguredReportPathAsIs exercises the same fix
+// end to end: a project whose stryker config points jsonReporter.fileName at
+// an absolute path must have its report read from exactly that path, not one
+// nested under the project source.
+func TestMutateResolvesAnAbsoluteConfiguredReportPathAsIs(t *testing.T) {
+	captured, root := stub(t, "")
+	mutable(t, root)
+	elsewhere := filepath.Join(t.TempDir(), "report.json")
+	writeFile(t, filepath.Join(root, "stryker.config.json"),
+		fmt.Sprintf(`{"testRunner":"vitest","jsonReporter":{"fileName":%q}}`, filepath.ToSlash(elsewhere)))
+	captured.writeReport = `{"files":{"src/a.ts":{"mutants":[
+		{"status":"Survived","mutatorName":"EqualityOperator","location":{"start":{"line":7}}}]}}}`
+	captured.reportPath = elsewhere
+
+	var out bytes.Buffer
+	err := RunMutate([]string{"src/a.ts"}, &out)
+
+	var survivors *SurvivorsError
+	if !errors.As(err, &survivors) {
+		t.Fatalf("RunMutate() = %v, want SurvivorsError read from the absolute report path", err)
+	}
+	if !strings.Contains(out.String(), "src/a.ts:7 EqualityOperator") {
+		t.Errorf("output does not locate the survivor from the absolute report path:\n%s", out.String())
 	}
 }
 
