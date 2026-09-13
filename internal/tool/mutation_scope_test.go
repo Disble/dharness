@@ -212,6 +212,99 @@ func TestFilesOutsideScopeNamesWhatTheRunDidNotAsk(t *testing.T) {
 	}
 }
 
+// TestIgnoredInScopeReadsTheReasonForAnInScopeDirective pins the reason.
+// Measured: `// Stryker disable next-line all: reason` does not reach a
+// dependency-array argument at all (the mutant still Survived), while the range
+// form `// Stryker disable ArrayDeclaration: reason` … `// Stryker restore
+// ArrayDeclaration` gives Ignored plus statusReason — so the reader
+// needs the reason a report actually carries, not an assumption that
+// next-line always worked.
+//
+// src/a.ts's own Ignored mutant sits at a higher line (20) than src/b.ts's
+// (3), so file order and line order disagree — proving file is the primary
+// sort key rather than a coincidence of the data. The Survived mutant sits
+// before the Ignored one in src/a.ts's own list, proving a non-Ignored
+// mutant does not stop the scan before it reaches an Ignored one later in
+// the same file.
+func TestIgnoredInScopeReadsTheReasonForAnInScopeDirective(t *testing.T) {
+	report := `{"files":{
+		"src/b.ts":{"mutants":[
+			{"status":"Ignored","mutatorName":"BooleanLiteral","statusReason":"b reason","location":{"start":{"line":3}}}
+		]},
+		"src/a.ts":{"mutants":[
+			{"status":"Survived","mutatorName":"EqualityOperator","location":{"start":{"line":7}}},
+			{"status":"Ignored","mutatorName":"ArrayDeclaration","statusReason":"equivalent: order does not matter here","location":{"start":{"line":20}}}
+		]}
+	}}`
+
+	ignored, err := IgnoredInScope(strings.NewReader(report), []MutationScope{{Path: "src/a.ts"}, {Path: "src/b.ts"}})
+	if err != nil {
+		t.Fatalf("IgnoredInScope() = %v", err)
+	}
+
+	want := []string{
+		"src/a.ts:20 ArrayDeclaration — equivalent: order does not matter here",
+		"src/b.ts:3 BooleanLiteral — b reason",
+	}
+	got := make([]string, 0, len(ignored))
+	for _, entry := range ignored {
+		got = append(got, entry.String())
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("IgnoredInScope() = %v, want %v", got, want)
+	}
+}
+
+// TestIgnoredInScopeSortsByLineWithinAFileAndCountsOverlapOnce covers what
+// the file-level test above cannot reach: two Ignored mutants in the SAME
+// file, which is the only way to exercise the line-based tiebreaker, and an
+// Ignored mutant matched by two overlapping scope arguments, which must
+// still be named once — the same discipline SurvivorsInScope already holds
+// for an overlapping survivor.
+func TestIgnoredInScopeSortsByLineWithinAFileAndCountsOverlapOnce(t *testing.T) {
+	report := `{"files":{"src/a.ts":{"mutants":[
+		{"status":"Ignored","mutatorName":"BooleanLiteral","statusReason":"later","location":{"start":{"line":9}}},
+		{"status":"Ignored","mutatorName":"ArrayDeclaration","statusReason":"earlier","location":{"start":{"line":6}}}
+	]}}}`
+
+	// Line 6 sits in both scopes and must still be named once; line 9 sits
+	// in only the second.
+	ignored, err := IgnoredInScope(strings.NewReader(report), []MutationScope{
+		{Path: "src/a.ts", Start: 5, End: 7},
+		{Path: "src/a.ts", Start: 6, End: 10},
+	})
+	if err != nil {
+		t.Fatalf("IgnoredInScope() = %v", err)
+	}
+
+	want := []string{
+		"src/a.ts:6 ArrayDeclaration — earlier",
+		"src/a.ts:9 BooleanLiteral — later",
+	}
+	got := make([]string, 0, len(ignored))
+	for _, entry := range ignored {
+		got = append(got, entry.String())
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("IgnoredInScope() = %v, want %v", got, want)
+	}
+}
+
+// A report with nothing Ignored in scope answers with nothing to print.
+func TestIgnoredInScopeIsEmptyWithNoDirectives(t *testing.T) {
+	report := `{"files":{"src/a.ts":{"mutants":[
+		{"status":"Survived","mutatorName":"EqualityOperator","location":{"start":{"line":7}}}
+	]}}}`
+
+	ignored, err := IgnoredInScope(strings.NewReader(report), []MutationScope{{Path: "src/a.ts"}})
+	if err != nil {
+		t.Fatalf("IgnoredInScope() = %v", err)
+	}
+	if len(ignored) != 0 {
+		t.Errorf("IgnoredInScope() = %v, want none", ignored)
+	}
+}
+
 // TestFilesOutsideScopeIsEmptyWhenTheReportMatchesTheRun keeps the note it
 // feeds from printing on a run that has nothing to explain.
 func TestFilesOutsideScopeIsEmptyWhenTheReportMatchesTheRun(t *testing.T) {

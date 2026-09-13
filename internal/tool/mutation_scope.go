@@ -169,6 +169,61 @@ func SurvivorsInScope(r io.Reader, scopes []MutationScope) ([]Survivor, error) {
 	return scoped, nil
 }
 
+// IgnoredInScope reads a Stryker report and returns the in-scope mutants a
+// `// Stryker disable` directive marked, together with the reason each
+// directive gave.
+//
+// Scoped the same way SurvivorsInScope is, and for the same reason: the
+// report is cumulative, and a directive covering code outside this run is
+// not this run's business to relay.
+func IgnoredInScope(r io.Reader, scopes []MutationScope) ([]Ignored, error) {
+	var report mutationReport
+	if err := json.NewDecoder(r).Decode(&report); err != nil {
+		return nil, fmt.Errorf("read the mutation report: %w", err)
+	}
+
+	var ignored []Ignored
+	for path, file := range report.Files {
+		for _, mutant := range file.Mutants {
+			if mutant.Status != "Ignored" {
+				continue
+			}
+			line := mutant.Location.Start.Line
+			for _, scope := range scopes {
+				if scope.covers(path, line) {
+					ignored = append(ignored, Ignored{
+						File:        path,
+						Line:        line,
+						Description: mutant.MutatorName,
+						Reason:      mutant.StatusReason,
+					})
+					break
+				}
+			}
+		}
+	}
+
+	// Sorted, so a run over several files reads the same way twice — this one
+	// has to sort where SurvivorsInScope does not, because it reads and
+	// filters the report itself rather than layering on Survivors' own
+	// already-sorted output.
+	//
+	// Two equivalent mutants live here, each a `<` widened to `<=` inside a
+	// branch where the two operands are already known to disagree, which
+	// makes the two operators return the same result by construction: the
+	// File comparison only runs once `!=` has excluded equality, and the
+	// Line comparison would only differ from `<=` for two mutants sharing
+	// one exact file and line, whose relative display order is not a
+	// distinction this type promises to make.
+	sort.Slice(ignored, func(i, j int) bool {
+		if ignored[i].File != ignored[j].File {
+			return ignored[i].File < ignored[j].File
+		}
+		return ignored[i].Line < ignored[j].Line
+	})
+	return ignored, nil
+}
+
 // FilesOutsideScope names the files the report carries that this run never
 // asked about, in path order.
 //

@@ -628,7 +628,316 @@ func TestMutateRemovesAStaleReportBeforeRunning(t *testing.T) {
 	}
 }
 
-// TestMutateReadsTheReportWhereTheConfigSendsIt pins WU2's second half.
+// TestMutatePrintsIgnoredMutantsAndStillPasses pins the ignored listing.
+// Measured: `// Stryker disable next-line all: reason` produces
+// "status":"Ignored","statusReason":"reason" in the JSON report, and
+// Stryker's own clear-text reporter never prints either one — an author who
+// marked a mutant equivalent otherwise has no way to see dharness agrees.
+func TestMutatePrintsIgnoredMutantsAndStillPasses(t *testing.T) {
+	captured, root := stub(t, "")
+	mutable(t, root)
+	stubWritesReportOnRun(captured, root, `{"files":{"src/a.ts":{"mutants":[
+		{"status":"Killed","mutatorName":"BooleanLiteral","location":{"start":{"line":1}}},
+		{"status":"Ignored","mutatorName":"ArrayDeclaration","statusReason":"equivalent: order does not matter here","location":{"start":{"line":5}}}
+	]}}}`)
+
+	var out bytes.Buffer
+	if err := RunMutate([]string{"src/a.ts"}, &out); err != nil {
+		t.Fatalf("RunMutate() = %v; an ignored mutant does not fail the run", err)
+	}
+
+	got := out.String()
+	if !strings.Contains(got, "src/a.ts:5 ArrayDeclaration — equivalent: order does not matter here") {
+		t.Errorf("output does not name the ignored mutant and its reason:\n%s", got)
+	}
+}
+
+// TestMutateIgnoredHeadingDoesNotClaimEquivalence pins the heading's claim:
+// Stryker also emits Ignored with statusReason "Static mutant (and
+// "ignoreStatic" was enabled)" (core mutant-test-planner.js:84-86), which is
+// not an author marking anything equivalent. The heading says only that
+// Stryker skipped it, and leaves the reason to explain why.
+func TestMutateIgnoredHeadingDoesNotClaimEquivalence(t *testing.T) {
+	captured, root := stub(t, "")
+	mutable(t, root)
+	stubWritesReportOnRun(captured, root, `{"files":{"src/a.ts":{"mutants":[
+		{"status":"Killed","mutatorName":"BooleanLiteral","location":{"start":{"line":1}}},
+		{"status":"Ignored","mutatorName":"ArrayDeclaration","statusReason":"Static mutant (and \"ignoreStatic\" was enabled)","location":{"start":{"line":5}}}
+	]}}}`)
+
+	var out bytes.Buffer
+	if err := RunMutate([]string{"src/a.ts"}, &out); err != nil {
+		t.Fatalf("RunMutate() = %v; an ignored mutant does not fail the run", err)
+	}
+
+	got := out.String()
+	if !strings.Contains(got, "1 mutant(s) were skipped by Stryker:") {
+		t.Errorf("output does not carry the accurate heading:\n%s", got)
+	}
+	if strings.Contains(got, "marked equivalent") {
+		t.Errorf("a static-mutant skip is not an equivalence claim:\n%s", got)
+	}
+}
+
+// TestMutateSaysNothingAboutIgnoredMutantsWhenThereAreNone keeps the note
+// off the common case: a report with nothing Ignored in scope must not print
+// a note claiming mutants were marked equivalent and skipped.
+func TestMutateSaysNothingAboutIgnoredMutantsWhenThereAreNone(t *testing.T) {
+	captured, root := stub(t, "")
+	mutable(t, root)
+	stubWritesReportOnRun(captured, root, `{"files":{"src/a.ts":{"mutants":[
+		{"status":"Killed","mutatorName":"BooleanLiteral","location":{"start":{"line":1}}}
+	]}}}`)
+
+	var out bytes.Buffer
+	if err := RunMutate([]string{"src/a.ts"}, &out); err != nil {
+		t.Fatalf("RunMutate() = %v", err)
+	}
+	if strings.Contains(out.String(), "marked equivalent") {
+		t.Errorf("explained an ignored mutant that does not exist:\n%s", out.String())
+	}
+}
+
+// TestMutateFailureHintsAtTheDisableDirective pins the survivor hint: a
+// survivor's own mutator name goes straight into the directive that would
+// mark it equivalent, so nobody has to look up Stryker's own syntax by hand.
+// Measured: next-line does not reach a dependency-array argument at all (the
+// mutant still Survived), while the range form — disable before, restore
+// after, both naming the mutator — does (Ignored), so the hint has to show that
+// form rather than next-line.
+func TestMutateFailureHintsAtTheDisableDirective(t *testing.T) {
+	captured, root := stub(t, "")
+	mutable(t, root)
+	stubWritesReportOnRun(captured, root, `{"files":{"src/a.ts":{"mutants":[
+		{"status":"Survived","mutatorName":"EqualityOperator","location":{"start":{"line":7}}}
+	]}}}`)
+
+	var out bytes.Buffer
+	err := RunMutate([]string{"src/a.ts"}, &out)
+
+	var survivors *SurvivorsError
+	if !errors.As(err, &survivors) {
+		t.Fatalf("RunMutate() = %v, want SurvivorsError", err)
+	}
+
+	got := out.String()
+	if !strings.Contains(got, "// Stryker disable EqualityOperator:") {
+		t.Errorf("output does not hint at the disable directive:\n%s", got)
+	}
+	if !strings.Contains(got, "// Stryker restore EqualityOperator") {
+		t.Errorf("output does not hint at the restore line:\n%s", got)
+	}
+}
+
+// TestMutateNoCoverageHintNamesTheMissingTestNotADisableDirective pins the
+// NoCoverage hint: a NoCoverage mutant was never run by any test, so wrapping it in
+// `// Stryker disable` cannot be the fix — the fix is a test that calls the
+// line at all.
+func TestMutateNoCoverageHintNamesTheMissingTestNotADisableDirective(t *testing.T) {
+	captured, root := stub(t, "")
+	mutable(t, root)
+	stubWritesReportOnRun(captured, root, `{"files":{"src/a.ts":{"mutants":[
+		{"status":"NoCoverage","mutatorName":"StringLiteral","location":{"start":{"line":11}}}
+	]}}}`)
+
+	var out bytes.Buffer
+	err := RunMutate([]string{"src/a.ts"}, &out)
+
+	var survivors *SurvivorsError
+	if !errors.As(err, &survivors) {
+		t.Fatalf("RunMutate() = %v, want SurvivorsError", err)
+	}
+
+	got := out.String()
+	if strings.Contains(got, "Stryker disable") {
+		t.Errorf("a NoCoverage mutant was never run, so the disable-directive hint does not apply:\n%s", got)
+	}
+	if !strings.Contains(got, "test") {
+		t.Errorf("output does not name a missing test as the fix:\n%s", got)
+	}
+}
+
+// TestMutateDisableHintOnlyUnderSurvivedEntries pins the mixed-shape half of
+// the same fix: a report holding both a Survived and a NoCoverage mutant must
+// print the disable-directive hint only under the entry a test actually ran
+// and missed.
+func TestMutateDisableHintOnlyUnderSurvivedEntries(t *testing.T) {
+	captured, root := stub(t, "")
+	mutable(t, root)
+	stubWritesReportOnRun(captured, root, `{"files":{"src/a.ts":{"mutants":[
+		{"status":"Survived","mutatorName":"EqualityOperator","location":{"start":{"line":7}}},
+		{"status":"NoCoverage","mutatorName":"StringLiteral","location":{"start":{"line":11}}}
+	]}}}`)
+
+	var out bytes.Buffer
+	err := RunMutate([]string{"src/a.ts"}, &out)
+
+	var survivors *SurvivorsError
+	if !errors.As(err, &survivors) {
+		t.Fatalf("RunMutate() = %v, want SurvivorsError", err)
+	}
+
+	got := out.String()
+	if strings.Count(got, "Stryker disable") != 1 {
+		t.Errorf("want exactly one disable hint, for the Survived entry only:\n%s", got)
+	}
+	survivedIdx := strings.Index(got, "src/a.ts:7 EqualityOperator")
+	hintIdx := strings.Index(got, "Stryker disable")
+	noCoverageIdx := strings.Index(got, "src/a.ts:11 StringLiteral")
+	if survivedIdx == -1 || hintIdx == -1 || noCoverageIdx == -1 || !(survivedIdx < hintIdx && hintIdx < noCoverageIdx) {
+		t.Errorf("the disable hint is not positioned under the Survived entry:\n%s", got)
+	}
+}
+
+// TestMutateHeadingIsAccurateForPureAndMixedShapes pins the survivor heading:
+// "N mutant(s) survived" was measured wrong when every mutant was
+// NoCoverage — none of them survived a test, they were never run under one.
+func TestMutateHeadingIsAccurateForPureAndMixedShapes(t *testing.T) {
+	cases := []struct {
+		name   string
+		report string
+		want   string
+		avoid  []string
+	}{
+		{
+			name: "pure NoCoverage",
+			report: `{"files":{"src/a.ts":{"mutants":[
+				{"status":"NoCoverage","mutatorName":"StringLiteral","location":{"start":{"line":11}}},
+				{"status":"NoCoverage","mutatorName":"StringLiteral","location":{"start":{"line":12}}}
+			]}}}`,
+			want:  "2 mutant(s) never ran under a test",
+			avoid: []string{"survived"},
+		},
+		{
+			name: "mixed",
+			report: `{"files":{"src/a.ts":{"mutants":[
+				{"status":"Survived","mutatorName":"EqualityOperator","location":{"start":{"line":7}}},
+				{"status":"NoCoverage","mutatorName":"StringLiteral","location":{"start":{"line":11}}}
+			]}}}`,
+			want: "2 mutant(s) not caught: 1 survived, 1 never ran under a test",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			captured, root := stub(t, "")
+			mutable(t, root)
+			stubWritesReportOnRun(captured, root, tc.report)
+
+			var out bytes.Buffer
+			err := RunMutate([]string{"src/a.ts"}, &out)
+
+			var survivors *SurvivorsError
+			if !errors.As(err, &survivors) {
+				t.Fatalf("RunMutate() = %v, want SurvivorsError", err)
+			}
+
+			got := out.String()
+			if !strings.Contains(got, tc.want) {
+				t.Errorf("heading %q not found in:\n%s", tc.want, got)
+			}
+			for _, avoid := range tc.avoid {
+				if strings.Contains(strings.ToLower(got), avoid) {
+					t.Errorf("output should not contain %q for this shape:\n%s", avoid, got)
+				}
+			}
+		})
+	}
+}
+
+// TestSurvivorsErrorMessageNamesWhichShapeFailed pins SurvivorsError.Error()
+// directly: nothing else in this suite calls Error() rather than just
+// asserting errors.As, so the three branches it switches on had no coverage
+// of their own text.
+func TestSurvivorsErrorMessageNamesWhichShapeFailed(t *testing.T) {
+	cases := []struct {
+		name      string
+		survivors []tool.Survivor
+		want      string
+	}{
+		{
+			name:      "pure Survived",
+			survivors: []tool.Survivor{{Status: "Survived"}, {Status: "Survived"}},
+			want:      "2 mutant(s) survived: a test would not have noticed this code breaking",
+		},
+		{
+			name:      "pure NoCoverage",
+			survivors: []tool.Survivor{{Status: "NoCoverage"}, {Status: "NoCoverage"}, {Status: "NoCoverage"}},
+			want:      "3 mutant(s) never ran under a test: nothing would have noticed this code breaking",
+		},
+		{
+			name:      "mixed",
+			survivors: []tool.Survivor{{Status: "Survived"}, {Status: "NoCoverage"}},
+			want:      "2 mutant(s) not caught: 1 survived, 1 never ran under a test",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := &SurvivorsError{Survivors: tc.survivors}
+			if got := err.Error(); got != tc.want {
+				t.Errorf("Error() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestMutateHeadingExactTextForPureSurvived pins the pure-Survived shape of
+// survivorsHeading with an exact match rather than a substring: a mutant that
+// forces the "not caught: N survived, 0 never ran" branch instead of the
+// plain "survived" one still contains the word "survived" anywhere in the
+// output, so only an exact match on the heading line catches it.
+func TestMutateHeadingExactTextForPureSurvived(t *testing.T) {
+	captured, root := stub(t, "")
+	mutable(t, root)
+	stubWritesReportOnRun(captured, root, `{"files":{"src/a.ts":{"mutants":[
+		{"status":"Survived","mutatorName":"EqualityOperator","location":{"start":{"line":7}}},
+		{"status":"Survived","mutatorName":"BooleanLiteral","location":{"start":{"line":9}}}
+	]}}}`)
+
+	var out bytes.Buffer
+	err := RunMutate([]string{"src/a.ts"}, &out)
+
+	var survivors *SurvivorsError
+	if !errors.As(err, &survivors) {
+		t.Fatalf("RunMutate() = %v, want SurvivorsError", err)
+	}
+	if !strings.Contains(out.String(), "2 mutant(s) survived — a test would not have noticed:") {
+		t.Errorf("exact heading text missing for a pure-Survived report:\n%s", out.String())
+	}
+}
+
+// TestMutatePrintsEveryEntryEvenAfterANoCoverageOne pins the NoCoverage
+// branch's `continue`: a report with a NoCoverage mutant sorted before a
+// Survived one must still print the Survived entry and its disable hint. A
+// `break` in that branch's place would look identical whenever the NoCoverage
+// entry happens to be last, which every other test in this file has it be.
+func TestMutatePrintsEveryEntryEvenAfterANoCoverageOne(t *testing.T) {
+	captured, root := stub(t, "")
+	mutable(t, root)
+	stubWritesReportOnRun(captured, root, `{"files":{"src/a.ts":{"mutants":[
+		{"status":"NoCoverage","mutatorName":"StringLiteral","location":{"start":{"line":5}}},
+		{"status":"Survived","mutatorName":"EqualityOperator","location":{"start":{"line":10}}}
+	]}}}`)
+
+	var out bytes.Buffer
+	err := RunMutate([]string{"src/a.ts"}, &out)
+
+	var survivors *SurvivorsError
+	if !errors.As(err, &survivors) {
+		t.Fatalf("RunMutate() = %v, want SurvivorsError", err)
+	}
+
+	got := out.String()
+	if !strings.Contains(got, "src/a.ts:10 EqualityOperator") {
+		t.Errorf("printing stopped after the earlier NoCoverage entry instead of continuing to the next one:\n%s", got)
+	}
+	if !strings.Contains(got, "Stryker disable EqualityOperator") {
+		t.Errorf("the Survived entry after a NoCoverage one lost its disable hint:\n%s", got)
+	}
+}
+
+// TestMutateReadsTheReportWhereTheConfigSendsIt pins the configured path.
 // --jsonReporter.fileName does not exist as a CLI flag, so a project that
 // customised where Stryker's json reporter writes can only be respected by
 // reading its own JSON config, exactly like testRunner already is.

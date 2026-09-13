@@ -36,7 +36,30 @@ type SurvivorsError struct {
 }
 
 func (e *SurvivorsError) Error() string {
-	return fmt.Sprintf("%d mutant(s) survived: a test would not have noticed this code breaking", len(e.Survivors))
+	survived, noCoverage := countByStatus(e.Survivors)
+	switch {
+	case noCoverage == 0:
+		return fmt.Sprintf("%d mutant(s) survived: a test would not have noticed this code breaking", survived)
+	case survived == 0:
+		return fmt.Sprintf("%d mutant(s) never ran under a test: nothing would have noticed this code breaking", noCoverage)
+	default:
+		return fmt.Sprintf("%d mutant(s) not caught: %d survived, %d never ran under a test", len(e.Survivors), survived, noCoverage)
+	}
+}
+
+// countByStatus splits survivors into the two ways a mutant goes uncaught: a
+// test ran the line and missed it (Survived), or no test ever ran the line at
+// all (NoCoverage). The two fail for different reasons, so the message that
+// reports them has to say which happened rather than calling both "survived".
+func countByStatus(survivors []tool.Survivor) (survived, noCoverage int) {
+	for _, s := range survivors {
+		if s.Status == "NoCoverage" {
+			noCoverage++
+		} else {
+			survived++
+		}
+	}
+	return survived, noCoverage
 }
 
 // RunMutate runs mutation testing over exactly the paths it is given.
@@ -426,16 +449,59 @@ func reportSurvivors(dir, path string, scopes []tool.MutationScope, incremental 
 			printCumulativeNote(stdout, dir, outside, incremental)
 		}
 	}
+
+	// A third read, for the same reason as the second: which mutants a
+	// `// Stryker disable` directive marked is a different question from the
+	// verdict, and Stryker's own clear-text reporter never prints either the
+	// Ignored status or its statusReason (measured) — an author who
+	// marked a mutant equivalent otherwise cannot see dharness agrees.
+	if _, err := file.Seek(0, io.SeekStart); err == nil {
+		if ignored, err := tool.IgnoredInScope(file, scopes); err == nil && len(ignored) > 0 {
+			// "were marked equivalent" would be wrong here: Stryker also emits
+			// Ignored with statusReason "Static mutant (and \"ignoreStatic\"
+			// was enabled)" (core mutant-test-planner.js:84-86), which nobody
+			// marked anything about. Stryker is the one that skipped it either
+			// way, and the reason on each line says why.
+			fmt.Fprintf(stdout, "\n%d mutant(s) were skipped by Stryker:\n\n", len(ignored))
+			for _, entry := range ignored {
+				fmt.Fprintf(stdout, "  %s\n", entry)
+			}
+		}
+	}
+
 	if len(survivors) == 0 {
 		fmt.Fprintln(stdout, "\nEvery mutant was caught: these tests notice this code breaking.")
 		return nil
 	}
 
-	fmt.Fprintf(stdout, "\n%d mutant(s) survived — a test would not have noticed:\n\n", len(survivors))
+	fmt.Fprintf(stdout, "\n%s\n\n", survivorsHeading(survivors))
 	for _, survivor := range survivors {
 		fmt.Fprintf(stdout, "  %s\n", survivor)
+		if survivor.Status == "NoCoverage" {
+			fmt.Fprintln(stdout, "    No test executes this line at all; the fix is a test that calls it, not a disable directive.")
+			continue
+		}
+		fmt.Fprintf(stdout, "    If equivalent, wrap the statement in `// Stryker disable %s: <reason>` … `// Stryker restore %s`; next-line does not reach call arguments such as dependency arrays.\n",
+			survivor.Description, survivor.Description)
 	}
 	return &SurvivorsError{Survivors: survivors}
+}
+
+// survivorsHeading names what actually failed, which is not always "survived":
+// a NoCoverage mutant was never run by a test at all, so it did not survive
+// one — measured against the real binary's output, where 8 NoCoverage entries
+// were each reported under a heading that claimed a test had missed them.
+func survivorsHeading(survivors []tool.Survivor) string {
+	survived, noCoverage := countByStatus(survivors)
+	total := survived + noCoverage
+	switch {
+	case noCoverage == 0:
+		return fmt.Sprintf("%d mutant(s) survived — a test would not have noticed:", total)
+	case survived == 0:
+		return fmt.Sprintf("%d mutant(s) never ran under a test — nothing would have noticed:", total)
+	default:
+		return fmt.Sprintf("%d mutant(s) not caught: %d survived, %d never ran under a test:", total, survived, noCoverage)
+	}
 }
 
 // printCumulativeNote says what the table above the verdict actually is.
