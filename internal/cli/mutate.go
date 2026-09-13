@@ -146,10 +146,21 @@ func RunMutate(args []string, stdout io.Writer) error {
 	}
 	defer func() { _ = runner.RemoveSandbox(sandbox) }()
 
+	// A report left by an earlier run must not be read as this run's verdict.
+	// Measured: a run with allowEmpty and a scope no test imports exits 0 and
+	// writes no report at all, so mutation.json keeps whatever the previous
+	// run left there — and reading it back would judge this run by a verdict
+	// it never produced. Removing it first means a run that writes nothing
+	// leaves nothing to read.
+	reportPath := resolveReportPath(p.Source, selection.ReportPath)
+	if err := os.Remove(reportPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("clear the previous mutation report: %w", err)
+	}
+
 	if err := runStryker(binary, p, selection, tool.StrykerMutate(arguments, testRunnerArg, incremental, sandbox, *concurrency), stdout); err != nil {
 		return err
 	}
-	return reportSurvivors(p.Source, scopes, incremental, stdout)
+	return reportSurvivors(p.Source, reportPath, scopes, incremental, stdout)
 }
 
 // PathOutsideSourceError reports a path Stryker could never have mutated.
@@ -360,14 +371,43 @@ func recordMeasurement(p project.Project, transcript, path string, stdout io.Wri
 	return nil
 }
 
+// resolveReportPath turns a project's ReportPath into the absolute location
+// this run's own report is expected at.
+//
+// ReportPath is empty whenever the project never set jsonReporter.fileName —
+// project leaves that default to its caller rather than baking dharness's own
+// tool.MutationReportPath into project's detection. Joining Source with an
+// empty ReportPath would resolve to Source itself, and the caller then runs
+// os.Remove against it: harmless the day Source happens to be non-empty (the
+// removal simply fails), but silent data loss the day it is not, so the
+// default is applied here rather than trusted to every caller of ReportPath.
+//
+// A configured jsonReporter.fileName can also be absolute — Stryker accepts
+// one — and filepath.Join does not special-case an absolute second argument:
+// it would nest the absolute path under Source into something neither path
+// ever meant. An absolute ReportPath is therefore used exactly as configured.
+func resolveReportPath(source, reportPath string) string {
+	if reportPath == "" {
+		reportPath = tool.MutationReportPath
+	}
+	if filepath.IsAbs(reportPath) {
+		return reportPath
+	}
+	return filepath.Join(source, reportPath)
+}
+
 // reportSurvivors turns Stryker's report into the exit code it does not
 // produce. A missing report is not a pass: it means the run said nothing.
-func reportSurvivors(dir string, scopes []tool.MutationScope, incremental string, stdout io.Writer) error {
-	path := filepath.Join(dir, tool.MutationReportPath)
-
+//
+// path is exactly where this run's own report was expected to land —
+// selection.ReportPath resolved against the project — never a constant,
+// because a project can move it with jsonReporter.fileName the same way it
+// can move testRunner. dir is the project source, used only to shorten the
+// incremental cache path named in the cumulative note.
+func reportSurvivors(dir, path string, scopes []tool.MutationScope, incremental string, stdout io.Writer) error {
 	file, err := os.Open(path)
 	if err != nil {
-		return fmt.Errorf("mutation ran but wrote no report at %s, so its verdict cannot be read: %w", tool.MutationReportPath, err)
+		return fmt.Errorf("mutation ran but wrote no report at %s, so its verdict cannot be read: %w", path, err)
 	}
 	defer func() { _ = file.Close() }()
 
