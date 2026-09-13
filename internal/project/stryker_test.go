@@ -97,6 +97,40 @@ func TestStrykerRunnerLeavesTheReportPathEmptyWithoutConfiguration(t *testing.T)
 	}
 }
 
+// TestStrykerRunnerReadsTheConfiguredVitestConfigFile pins the vitest guard's
+// detection: Stryker's vitest-runner reads a project-chosen vitest config
+// from vitest.configFile in the JSON Stryker config, and the guard
+// (internal/staged) has to point `vitest list` at that same file, or it
+// could resolve a different vitest config than the one Stryker itself will
+// load.
+func TestStrykerRunnerReadsTheConfiguredVitestConfigFile(t *testing.T) {
+	root := testRunnerProject(t, `{"devDependencies":{"vitest":"^4.0.0"}}`)
+	write(t, filepath.Join(root, "stryker.config.json"), `{"testRunner":"vitest","vitest":{"configFile":"vitest.unit.config.ts"}}`)
+
+	selection, err := Describe(root).StrykerRunner()
+
+	if err != nil {
+		t.Fatalf("StrykerRunner() = %v", err)
+	}
+	want := filepath.FromSlash("vitest.unit.config.ts")
+	if selection.VitestConfigFile != want {
+		t.Errorf("StrykerRunner().VitestConfigFile = %q, want %q", selection.VitestConfigFile, want)
+	}
+}
+
+// An unconfigured project, or one whose config never sets
+// vitest.configFile, leaves VitestConfigFile empty.
+func TestStrykerRunnerLeavesVitestConfigFileEmptyWithoutConfiguration(t *testing.T) {
+	selection, err := Describe(testRunnerProject(t, `{"devDependencies":{"vitest":"^4.0.0"}}`)).StrykerRunner()
+
+	if err != nil {
+		t.Fatalf("StrykerRunner() = %v", err)
+	}
+	if selection.VitestConfigFile != "" {
+		t.Errorf("StrykerRunner().VitestConfigFile = %q, want empty", selection.VitestConfigFile)
+	}
+}
+
 func TestStrykerRunnerRecognizesEveryDefaultConfigFile(t *testing.T) {
 	configFiles := []string{
 		"stryker.conf.json",
