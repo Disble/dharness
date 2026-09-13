@@ -41,6 +41,14 @@ COMMANDS
                               // undefined either way
                             Those mutants report as ignored and stop failing the
                             run, which is what keeps the verdict worth reading.
+                            --staged mutates exactly the line ranges a staged
+                            change added, instead of named paths: it never
+                            installs Stryker, and a file whose compiled output
+                            is empty — types-only, tsc erases it entirely — is
+                            skipped rather than mutated. It also runs Stryker
+                            over every scoped file, dropped ones included, and
+                            fails loudly if one believed empty turns up
+                            carrying a mutant anyway.
   version                   Print version
 
 FLAGS
@@ -54,6 +62,13 @@ FLAGS
                             they are kept in .git/dharness/, they make the run
                             faster, and they are why the table Stryker prints
                             can cover more files than you asked about.
+  --staged                  mutate only: mutate what a staged change added,
+                            instead of named paths. Refuses a path, --dry-run
+                            and --upgrade; --fresh is accepted but changes
+                            nothing, since a staged run never reads or writes
+                            an incremental file.
+  --exclude-prefix <p>      mutate --staged only: exclude staged files under
+                            this prefix from scope (repeatable)
   --help, -h                Show this message; every command also accepts help
 
 dharness owns invocation only. Each wrapped tool keeps its own configuration,

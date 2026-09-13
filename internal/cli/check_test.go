@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -346,8 +347,7 @@ func TestStrykerRunsTheBinaryTheProjectInstalled(t *testing.T) {
 	binary := filepath.Join(binDir, binaryName("stryker"))
 	writeFile(t, binary, "")
 
-	p := project.Project{Root: root, Source: root, PackageManager: "npm"}
-	if err := runStryker(binary, p, project.StrykerSelection{TestRunner: "vitest"}, []string{"run"}, io.Discard); err != nil {
+	if err := runStryker(context.Background(), binary, root, project.StrykerSelection{TestRunner: "vitest"}, []string{"run"}, io.Discard); err != nil {
 		t.Fatalf("runStryker() = %v", err)
 	}
 
@@ -577,6 +577,72 @@ func TestMutateFailsWhenOnlyNoCoverageMutantsRemainInScope(t *testing.T) {
 	}
 	if strings.Contains(out.String(), "Every mutant was caught") {
 		t.Errorf("output claims every mutant was caught while 8 were never even run:\n%s", out.String())
+	}
+}
+
+// TestMutatePlainSaysSoWhenEveryMutantWasIgnored pins the plain-command side
+// of the same defect --staged measured against a real consumer: a scope
+// whose only mutants are Ignored — Stryker's own "ignoreStatic" skipping
+// every one of them — has no survivors either, and reportSurvivors never
+// counted what was actually tested, so it printed "Every mutant was caught"
+// over a report where nothing ever ran under a test.
+func TestMutatePlainSaysSoWhenEveryMutantWasIgnored(t *testing.T) {
+	captured, root := stub(t, "")
+	mutable(t, root)
+	stubWritesReportOnRun(captured, root, `{"files":{"src/a.ts":{"mutants":[
+		{"status":"Ignored","mutatorName":"StringLiteral","statusReason":"Static mutant (and \"ignoreStatic\" was enabled)","location":{"start":{"line":1}}}
+	]}}}`)
+
+	var out bytes.Buffer
+	if err := RunMutate([]string{"src/a.ts"}, &out); err != nil {
+		t.Fatalf("RunMutate() = %v, want nil", err)
+	}
+	if strings.Contains(out.String(), "Every mutant was caught") {
+		t.Errorf("output claims every mutant was caught while none was ever tested:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "no mutant was tested: every in-scope mutant was skipped by Stryker (see the reasons above)") {
+		t.Errorf("output does not say nothing was tested:\n%s", out.String())
+	}
+}
+
+// TestMutatePlainPassesWithAKilledAndIgnoredMutant pins the other side: one
+// mutant actually tested and killed is still a pass, even alongside one
+// Stryker skipped.
+func TestMutatePlainPassesWithAKilledAndIgnoredMutant(t *testing.T) {
+	captured, root := stub(t, "")
+	mutable(t, root)
+	stubWritesReportOnRun(captured, root, `{"files":{"src/a.ts":{"mutants":[
+		{"status":"Killed","mutatorName":"BooleanLiteral","location":{"start":{"line":1}}},
+		{"status":"Ignored","mutatorName":"StringLiteral","location":{"start":{"line":2}}}
+	]}}}`)
+
+	var out bytes.Buffer
+	if err := RunMutate([]string{"src/a.ts"}, &out); err != nil {
+		t.Fatalf("RunMutate() = %v, want nil", err)
+	}
+	if !strings.Contains(out.String(), "Every mutant was caught") {
+		t.Errorf("output = %q, want the pass verdict: one mutant was actually tested and killed", out.String())
+	}
+}
+
+// TestMutatePlainPassesWithEqualKilledAndTimeoutCounts pins the exact
+// condition that decides the verdict above — Killed plus Timeout, not Killed
+// minus Timeout, which reads the same everywhere the two counts differ but
+// agrees with it whenever they are equal.
+func TestMutatePlainPassesWithEqualKilledAndTimeoutCounts(t *testing.T) {
+	captured, root := stub(t, "")
+	mutable(t, root)
+	stubWritesReportOnRun(captured, root, `{"files":{"src/a.ts":{"mutants":[
+		{"status":"Killed","mutatorName":"BooleanLiteral","location":{"start":{"line":1}}},
+		{"status":"Timeout","mutatorName":"ArithmeticOperator","location":{"start":{"line":2}}}
+	]}}}`)
+
+	var out bytes.Buffer
+	if err := RunMutate([]string{"src/a.ts"}, &out); err != nil {
+		t.Fatalf("RunMutate() = %v, want nil", err)
+	}
+	if !strings.Contains(out.String(), "Every mutant was caught") {
+		t.Errorf("output = %q, want the pass verdict: one killed and one timeout both mean a test ran", out.String())
 	}
 }
 

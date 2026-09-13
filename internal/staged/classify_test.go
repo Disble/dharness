@@ -1,6 +1,7 @@
 package staged
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -86,7 +87,7 @@ func TestClassifyDropsAnEmptyOutput(t *testing.T) {
 	source := t.TempDir()
 	defer fakeTsc(t, source, map[string]string{"src/types.ts": ""})()
 
-	result, err := Classify("tsc", source, []string{"src/types.ts"})
+	result, err := Classify(context.Background(), "tsc", source, []string{"src/types.ts"})
 	if err != nil {
 		t.Fatalf("Classify() = %v", err)
 	}
@@ -108,7 +109,7 @@ func TestClassifyDropsTheBareModuleMarker(t *testing.T) {
 	source := t.TempDir()
 	defer fakeTsc(t, source, map[string]string{"src/types.ts": "export {};\n"})()
 
-	result, err := Classify("tsc", source, []string{"src/types.ts"})
+	result, err := Classify(context.Background(), "tsc", source, []string{"src/types.ts"})
 	if err != nil {
 		t.Fatalf("Classify() = %v", err)
 	}
@@ -123,7 +124,7 @@ func TestClassifyKeepsNonEmptyOutput(t *testing.T) {
 	source := t.TempDir()
 	defer fakeTsc(t, source, map[string]string{"src/a.ts": "export const a = 1;\n"})()
 
-	result, err := Classify("tsc", source, []string{"src/a.ts"})
+	result, err := Classify(context.Background(), "tsc", source, []string{"src/a.ts"})
 	if err != nil {
 		t.Fatalf("Classify() = %v", err)
 	}
@@ -145,7 +146,7 @@ func TestClassifyMixesKeptAndDroppedInTheGivenFiles(t *testing.T) {
 		"src/types.ts": "export {};\n",
 	})()
 
-	result, err := Classify("tsc", source, []string{"src/a.ts", "src/types.ts"})
+	result, err := Classify(context.Background(), "tsc", source, []string{"src/a.ts", "src/types.ts"})
 	if err != nil {
 		t.Fatalf("Classify() = %v", err)
 	}
@@ -165,7 +166,7 @@ func TestClassifyContinuesPastAnExcludedFileToLaterCandidates(t *testing.T) {
 	source := t.TempDir()
 	defer fakeTsc(t, source, map[string]string{"src/b.ts": "export const b = 1;\n"})()
 
-	result, err := Classify("tsc", source, []string{"src/a.js", "src/b.ts"})
+	result, err := Classify(context.Background(), "tsc", source, []string{"src/a.js", "src/b.ts"})
 	if err != nil {
 		t.Fatalf("Classify() = %v", err)
 	}
@@ -184,7 +185,7 @@ func TestClassifyContinuesPastADroppedFileToLaterKeptFiles(t *testing.T) {
 		"src/a.ts":     "export const a = 1;\n",
 	})()
 
-	result, err := Classify("tsc", source, []string{"src/types.ts", "src/a.ts"})
+	result, err := Classify(context.Background(), "tsc", source, []string{"src/types.ts", "src/a.ts"})
 	if err != nil {
 		t.Fatalf("Classify() = %v", err)
 	}
@@ -207,7 +208,7 @@ func TestClassifyDropsNothingWhenTscCannotStart(t *testing.T) {
 		return &runner.StartError{Command: cmd.String(), Cause: os.ErrNotExist}
 	})()
 
-	result, err := Classify("tsc", source, []string{"src/a.ts"})
+	result, err := Classify(context.Background(), "tsc", source, []string{"src/a.ts"})
 	if err != nil {
 		t.Fatalf("Classify() = %v", err)
 	}
@@ -226,7 +227,7 @@ func TestClassifyDropsNothingOnANonZeroExit(t *testing.T) {
 	source := t.TempDir()
 	defer fakeTscExitCode(1)()
 
-	result, err := Classify("tsc", source, []string{"src/a.ts", "src/types.ts"})
+	result, err := Classify(context.Background(), "tsc", source, []string{"src/a.ts", "src/types.ts"})
 	if err != nil {
 		t.Fatalf("Classify() = %v", err)
 	}
@@ -251,7 +252,7 @@ func TestClassifyDropsNothingOnAMissingOutput(t *testing.T) {
 	// Only src/a.ts gets an output; src/types.ts's is never written.
 	defer fakeTsc(t, source, map[string]string{"src/a.ts": "export const a = 1;\n"})()
 
-	result, err := Classify("tsc", source, []string{"src/a.ts", "src/types.ts"})
+	result, err := Classify(context.Background(), "tsc", source, []string{"src/a.ts", "src/types.ts"})
 	if err != nil {
 		t.Fatalf("Classify() = %v", err)
 	}
@@ -272,7 +273,7 @@ func TestClassifyDropsNothingOnAMissingOutput(t *testing.T) {
 func TestClassifyNeverClassifiesANonTSFile(t *testing.T) {
 	defer fakeTscNeverCalled(t)()
 
-	result, err := Classify("tsc", t.TempDir(), []string{"src/a.js"})
+	result, err := Classify(context.Background(), "tsc", t.TempDir(), []string{"src/a.js"})
 	if err != nil {
 		t.Fatalf("Classify() = %v", err)
 	}
@@ -290,7 +291,7 @@ func TestClassifyNeverClassifiesANonTSFile(t *testing.T) {
 func TestClassifyNeverClassifiesADeclarationFile(t *testing.T) {
 	defer fakeTscNeverCalled(t)()
 
-	result, err := Classify("tsc", t.TempDir(), []string{"src/env.d.ts"})
+	result, err := Classify(context.Background(), "tsc", t.TempDir(), []string{"src/env.d.ts"})
 	if err != nil {
 		t.Fatalf("Classify() = %v", err)
 	}
@@ -305,7 +306,7 @@ func TestClassifyNeverClassifiesADeclarationFile(t *testing.T) {
 func TestClassifyUnavailableWithNoLocalBinary(t *testing.T) {
 	defer fakeTscNeverCalled(t)()
 
-	result, err := Classify("", t.TempDir(), []string{"src/a.ts"})
+	result, err := Classify(context.Background(), "", t.TempDir(), []string{"src/a.ts"})
 	if err != nil {
 		t.Fatalf("Classify() = %v", err)
 	}
@@ -329,7 +330,7 @@ func TestClassifyBuildsTheDocumentedFlagSequence(t *testing.T) {
 		return nil
 	})()
 
-	if _, err := Classify("tsc", source, []string{"src/a.ts", "src/b.ts"}); err != nil {
+	if _, err := Classify(context.Background(), "tsc", source, []string{"src/a.ts", "src/b.ts"}); err != nil {
 		t.Fatalf("Classify() = %v", err)
 	}
 
@@ -386,7 +387,7 @@ func TestClassifyRunsFromAFreshCwdOutsideTheProjectOrSnapshot(t *testing.T) {
 		return nil
 	})()
 
-	if _, err := Classify("tsc", source, []string{"src/a.ts"}); err != nil {
+	if _, err := Classify(context.Background(), "tsc", source, []string{"src/a.ts"}); err != nil {
 		t.Fatalf("Classify() = %v", err)
 	}
 
@@ -447,7 +448,7 @@ func TestClassifySplitsALargeChangeAcrossInvocationsTheShellAccepts(t *testing.T
 		return writeOutputs(cmd, stdout, stderr)
 	})()
 
-	result, err := Classify("tsc", source, files)
+	result, err := Classify(context.Background(), "tsc", source, files)
 	if err != nil {
 		t.Fatalf("Classify() = %v", err)
 	}
@@ -497,7 +498,7 @@ func TestClassifyDropsNothingWhenALaterInvocationFails(t *testing.T) {
 		return writeOutputs(cmd, stdout, stderr)
 	})()
 
-	result, err := Classify("tsc", source, files)
+	result, err := Classify(context.Background(), "tsc", source, files)
 	if err != nil {
 		t.Fatalf("Classify() = %v", err)
 	}

@@ -12,6 +12,13 @@ import (
 	"testing"
 )
 
+// endAsAConsoleInterruptWould exits with the status Windows' default console
+// control handler gives a process it ends: STATUS_CONTROL_C_EXIT, 0xC000013A.
+func endAsAConsoleInterruptWould() {
+	var status uint32 = 0xC000013A
+	os.Exit(int(int32(status)))
+}
+
 // cmdShimTemplate is the shape cmd-shim writes into node_modules/.bin, copied
 // from a yarn 4.9.1 install of eslint 9 and reduced to the part that matters.
 //

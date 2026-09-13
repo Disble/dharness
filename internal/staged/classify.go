@@ -2,6 +2,7 @@ package staged
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -50,7 +51,11 @@ type Classification struct {
 //
 // tscBinary is the project's own local tsc, resolved by the caller — an
 // empty string means there is none, and the classifier is unavailable.
-func Classify(tscBinary, snapshotSource string, files []string) (Classification, error) {
+//
+// ctx reaches every tsc invocation, so cancelling it kills the one running.
+// A killed tsc reads here as an unavailable classifier like any other
+// failure; telling an interrupt apart is the caller's, which holds ctx.
+func Classify(ctx context.Context, tscBinary, snapshotSource string, files []string) (Classification, error) {
 	var kept, candidates []string
 	for _, f := range files {
 		if isDeclarationFile(f) || !isTypeScriptFile(f) {
@@ -101,7 +106,7 @@ func Classify(tscBinary, snapshotSource string, files []string) (Classification,
 	// whole change unclassified, never the files it happened to carry.
 	for _, batch := range tscBatches(paths) {
 		args := append(append([]string{}, flags...), batch...)
-		cmd := runner.Command{Label: "tsc", Name: tscBinary, Args: args, Dir: cwd}
+		cmd := runner.Command{Label: "tsc", Name: tscBinary, Args: args, Dir: cwd, Context: ctx}
 		var transcript bytes.Buffer
 		if err := runner.Run(cmd, &transcript, &transcript); err != nil {
 			code := -1

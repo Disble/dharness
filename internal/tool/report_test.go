@@ -1,6 +1,7 @@
 package tool
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -81,6 +82,92 @@ func TestIgnoredStringWithNoReason(t *testing.T) {
 func TestSurvivorsRejectsAReportItCannotRead(t *testing.T) {
 	if _, err := Survivors(newReader("not json")); err == nil {
 		t.Fatal("Survivors() = nil error on a malformed report; silence would read as a pass")
+	}
+}
+
+// TestFileMutantCountsCountsRegardlessOfStatus pins the self-check's own
+// question, which is not the verdict's: a staged mutate run's classifier
+// disagreement check asks whether a file believed to compile to nothing
+// carries ANY mutant at all, killed ones included — Survivors would report
+// zero for a file whose only mutant was Killed, and that silence is exactly
+// what would let a wrong classification through unnoticed.
+func TestFileMutantCountsCountsRegardlessOfStatus(t *testing.T) {
+	report := `{"files":{
+		"src/a.ts":{"mutants":[
+			{"status":"Killed","mutatorName":"EqualityOperator","location":{"start":{"line":1}}},
+			{"status":"Survived","mutatorName":"BooleanLiteral","location":{"start":{"line":2}}}
+		]},
+		"src/types.ts":{"mutants":[]}
+	}}`
+
+	counts, err := FileMutantCounts(newReader(report))
+	if err != nil {
+		t.Fatalf("FileMutantCounts() = %v", err)
+	}
+	if counts["src/a.ts"] != 2 {
+		t.Errorf(`counts["src/a.ts"] = %d, want 2`, counts["src/a.ts"])
+	}
+	if counts["src/types.ts"] != 0 {
+		t.Errorf(`counts["src/types.ts"] = %d, want 0`, counts["src/types.ts"])
+	}
+}
+
+// TestFileMutantCountsIsEmptyForAFileTheReportNeverNames pins the missing
+// case directly: a lookup by zero value must not be mistaken for "present
+// with none", so a caller doing that lookup gets the same zero either way —
+// which is fine for the self-check specifically, since both mean "no
+// disagreement here", but must not panic or misbehave on an absent key.
+func TestFileMutantCountsIsEmptyForAFileTheReportNeverNames(t *testing.T) {
+	counts, err := FileMutantCounts(newReader(`{"files":{}}`))
+	if err != nil {
+		t.Fatalf("FileMutantCounts() = %v", err)
+	}
+	if counts["src/never-named.ts"] != 0 {
+		t.Errorf("counts for an absent file = %d, want 0", counts["src/never-named.ts"])
+	}
+}
+
+func TestFileMutantCountsRejectsAReportItCannotRead(t *testing.T) {
+	if _, err := FileMutantCounts(newReader("not json")); err == nil {
+		t.Fatal("FileMutantCounts() = nil error on a malformed report; silence would read as no disagreement")
+	}
+}
+
+// TestMutantTallyInScopeCountsEveryStatusOnlyInsideTheRanges pins the numbers
+// a staged verdict prints. Each status lands in its own count, both error
+// statuses in one, mutants before and after the range and a file outside the
+// scope count nowhere, and the total is what the five kinds and the errors add up
+// to — so a run that generated nothing reads as zero, not as a pass.
+func TestMutantTallyInScopeCountsEveryStatusOnlyInsideTheRanges(t *testing.T) {
+	mutant := func(status string, line int) string {
+		return `{"status":"` + status + `","mutatorName":"M","location":{"start":{"line":` + strconv.Itoa(line) + `}}}`
+	}
+	report := `{"files":{
+		"src/a.ts":{"mutants":[` + strings.Join([]string{
+		mutant("Survived", 1), mutant("Killed", 2), mutant("Killed", 3), mutant("Survived", 3), mutant("NoCoverage", 4),
+		mutant("Timeout", 4), mutant("CompileError", 5), mutant("RuntimeError", 5), mutant("Ignored", 5),
+		mutant("Killed", 9),
+	}, ",") + `]},
+		"src/b.ts":{"mutants":[` + mutant("Survived", 2) + `]}
+	}}`
+
+	tally, err := MutantTallyInScope(newReader(report), []MutationScope{ParseMutationScope("src/a.ts:2-5")})
+	if err != nil {
+		t.Fatalf("MutantTallyInScope() = %v", err)
+	}
+
+	want := MutantTally{Killed: 2, Survived: 1, NoCoverage: 1, Timeout: 1, Errors: 2, Ignored: 1}
+	if tally != want {
+		t.Errorf("MutantTallyInScope() = %+v, want %+v", tally, want)
+	}
+	if tally.Total() != 8 {
+		t.Errorf("Total() = %d, want 8", tally.Total())
+	}
+}
+
+func TestMutantTallyInScopeRejectsAReportItCannotRead(t *testing.T) {
+	if _, err := MutantTallyInScope(newReader("not json"), nil); err == nil {
+		t.Fatal("MutantTallyInScope() = nil error on a malformed report; zero would read as a run that generated nothing")
 	}
 }
 

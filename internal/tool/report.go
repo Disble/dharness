@@ -165,6 +165,28 @@ func Survivors(r io.Reader) ([]Survivor, error) {
 	return survivors, nil
 }
 
+// FileMutantCounts reports how many mutants Stryker's report instrumented
+// for each file it names, regardless of status.
+//
+// This is a different question from Survivors: a staged mutation run checks
+// its types-only classifier against Stryker by asking whether a file the
+// classifier believed compiled to nothing carries ANY mutant at all, killed
+// ones included. Survivors would report zero mutants for a file whose only
+// mutant was Killed, which is exactly the silence that would let a wrong
+// classification through unnoticed.
+func FileMutantCounts(r io.Reader) (map[string]int, error) {
+	var report mutationReport
+	if err := json.NewDecoder(r).Decode(&report); err != nil {
+		return nil, fmt.Errorf("read the mutation report: %w", err)
+	}
+
+	counts := make(map[string]int, len(report.Files))
+	for path, file := range report.Files {
+		counts[path] = len(file.Mutants)
+	}
+	return counts, nil
+}
+
 // initialTestRun matches the one line where a dry run says what it cost.
 //
 // The count is read from prose because there is nowhere else to read it:
@@ -189,4 +211,66 @@ func RelatedTests(output string) (int, error) {
 		return 0, fmt.Errorf("read the test count %q: %w", match[1], err)
 	}
 	return count, nil
+}
+
+// MutantTally counts the mutants a run generated inside its scope, by the
+// status Stryker gave each. CompileError and RuntimeError share Errors, the
+// column Stryker's own clear-text table gives them.
+type MutantTally struct {
+	Killed, Survived, NoCoverage, Timeout, Errors, Ignored int
+}
+
+// Total is every mutant the tally counted.
+func (t MutantTally) Total() int {
+	return t.Killed + t.Survived + t.NoCoverage + t.Timeout + t.Errors + t.Ignored
+}
+
+// MutantTallyInScope reads a Stryker report and counts the mutants inside
+// scopes, status by status.
+//
+// It exists because a verdict computed from survivors alone cannot tell a
+// clean run from an empty one. No survivor is what a range with eleven killed
+// mutants reports, and also what a range Stryker generated nothing in
+// reports — a staged enum, a side-effect import, a --mutate that matched no
+// line — and both printed "Every mutant was caught". Counting what was
+// generated is what separates them.
+func MutantTallyInScope(r io.Reader, scopes []MutationScope) (MutantTally, error) {
+	var report mutationReport
+	if err := json.NewDecoder(r).Decode(&report); err != nil {
+		return MutantTally{}, fmt.Errorf("read the mutation report: %w", err)
+	}
+
+	var tally MutantTally
+	for path, file := range report.Files {
+		for _, mutant := range file.Mutants {
+			if !anyCovers(scopes, path, mutant.Location.Start.Line) {
+				continue
+			}
+			switch mutant.Status {
+			case "Killed":
+				tally.Killed++
+			case "Survived":
+				tally.Survived++
+			case "NoCoverage":
+				tally.NoCoverage++
+			case "Timeout":
+				tally.Timeout++
+			case "CompileError", "RuntimeError":
+				tally.Errors++
+			case "Ignored":
+				tally.Ignored++
+			}
+		}
+	}
+	return tally, nil
+}
+
+// anyCovers reports whether one of scopes asked about this line of path.
+func anyCovers(scopes []MutationScope, path string, line int) bool {
+	for _, scope := range scopes {
+		if scope.covers(path, line) {
+			return true
+		}
+	}
+	return false
 }

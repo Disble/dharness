@@ -4,6 +4,7 @@ package runner
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -127,3 +128,15 @@ func beforeStart(process *exec.Cmd) {
 
 // afterStart is a no-op here: Windows takes the priority at creation time.
 func afterStart(int) {}
+
+// statusControlCExit is the exit status Windows' default console control
+// handler ends a process with, for Ctrl-C, Ctrl-Break and the console closing
+// alike: STATUS_CONTROL_C_EXIT.
+const statusControlCExit = 0xC000013A
+
+// endedByConsoleInterrupt reports whether the default console control handler
+// ended the process. Through a .cmd shim the status is cmd.exe's, which it
+// takes from the same handler.
+func endedByConsoleInterrupt(state *os.ProcessState) bool {
+	return uint32(state.ExitCode()) == statusControlCExit
+}
