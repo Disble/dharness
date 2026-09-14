@@ -143,3 +143,48 @@ func TestRestoreDeclaredInstallsTheManifestWithoutNamingAVersion(t *testing.T) {
 		})
 	}
 }
+
+// TestStrykerServeBuildsServeStdio pins the MSP discovery invocation: the
+// local binary, no CLI options, snapshot source dir, low priority.
+func TestStrykerServeBuildsServeStdio(t *testing.T) {
+	command := StrykerServe(`C:\proj\node_modules\.bin\stryker.cmd`, `C:\proj\src`)
+
+	if command.Label != Stryker || command.Name != `C:\proj\node_modules\.bin\stryker.cmd` || command.Dir != `C:\proj\src` {
+		t.Errorf("StrykerServe() = %+v, want the local binary in the snapshot source", command)
+	}
+	if want := []string{"serve", "stdio"}; !slices.Equal(command.Args, want) {
+		t.Errorf("StrykerServe().Args = %v, want exactly %v: configuration travels in the payload", command.Args, want)
+	}
+	if !command.LowPriority {
+		t.Error("StrykerServe().LowPriority = false, want the server to yield the machine")
+	}
+}
+
+// TestVitestRelatedBuildsExactlyOneAggregateCommand pins the token order,
+// including the optional snapshot config.
+func TestVitestRelatedBuildsExactlyOneAggregateCommand(t *testing.T) {
+	files := []string{"src/a.ts", "src/b.ts"}
+
+	plain := VitestRelated(`C:\proj\node_modules\.bin\vitest.cmd`, `C:\proj`, files, `C:\tmp\out.json`, "")
+	wantPlain := []string{"related", "src/a.ts", "src/b.ts", "--run", "--passWithNoTests", "--reporter=json", "--outputFile", `C:\tmp\out.json`}
+	if plain.Label != "vitest" || !slices.Equal(plain.Args, wantPlain) || plain.Dir != `C:\proj` {
+		t.Errorf("VitestRelated() = %+v, want %v", plain, wantPlain)
+	}
+
+	withConfig := VitestRelated(`C:\proj\node_modules\.bin\vitest.cmd`, `C:\proj`, files, `C:\tmp\out.json`, "vitest.config.ts")
+	wantConfig := append(append([]string{}, wantPlain...), "--config", "vitest.config.ts")
+	if !slices.Equal(withConfig.Args, wantConfig) {
+		t.Errorf("VitestRelated() with config = %v, want %v", withConfig.Args, wantConfig)
+	}
+}
+
+// TestJestRelatedBuildsTheListOnlyCommand pins the J2-confirmed form: related
+// tests listed as a JSON array, nothing executed. No fallback command exists.
+func TestJestRelatedBuildsTheListOnlyCommand(t *testing.T) {
+	command := JestRelated(`C:\proj\node_modules\.bin\jest.cmd`, `C:\proj`, []string{"src/a.js"})
+
+	want := []string{"--findRelatedTests", "src/a.js", "--listTests", "--json"}
+	if command.Label != "jest" || !slices.Equal(command.Args, want) || command.Dir != `C:\proj` {
+		t.Errorf("JestRelated() = %+v, want %v", command, want)
+	}
+}
