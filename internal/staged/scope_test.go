@@ -381,10 +381,12 @@ func TestSplitNULDropsEmptyFieldsAndKeepsScanning(t *testing.T) {
 	}
 }
 
-// TestIncludedFiltersByExtensionTestNameAndExcludePrefix pins the filtering
-// contract directly: project.IsSourceFile, the three test-file conventions,
-// and a caller-supplied exclude prefix.
-func TestIncludedFiltersByExtensionTestNameAndExcludePrefix(t *testing.T) {
+// TestIncludedAdmitsTestShapedPathsForDiscovery pins the filtering contract
+// directly: project.IsSourceFile, declaration suffixes, and a caller-supplied
+// exclude prefix. Test-shaped paths are admitted since mutate-staged-v1.9 —
+// membership is Stryker's configured decision, not a filename guess — so the
+// retired convention cases now expect true.
+func TestIncludedAdmitsTestShapedPathsForDiscovery(t *testing.T) {
 	cases := []struct {
 		path            string
 		excludePrefixes []string
@@ -392,9 +394,9 @@ func TestIncludedFiltersByExtensionTestNameAndExcludePrefix(t *testing.T) {
 	}{
 		{"src/a.ts", nil, true},
 		{"src/a.md", nil, false},
-		{"src/a.test.ts", nil, false},
-		{"src/a.spec.ts", nil, false},
-		{"src/__tests__/a.ts", nil, false},
+		{"src/a.test.ts", nil, true},
+		{"src/a.spec.ts", nil, true},
+		{"src/__tests__/a.ts", nil, true},
 		{"tools/generated/a.ts", []string{"tools/"}, false},
 		{"src/a.ts", []string{"tools/"}, true},
 		// project.IsSourceFile does not distinguish a declaration file
