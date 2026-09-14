@@ -67,6 +67,17 @@ Medido: el mismo subconjunto de 30 archivos instrumentó 458 mutantes tanto por
 `--mutate` en la CLI como por la config JSON, y 194 archivos por config
 instrumentaron 2246 mutantes sin ningún rechazo.
 
+*Enmendado el 14 de septiembre de 2026.* La premisa «toda opción suya es un
+flag» queda invalidada del todo: el `discover` de Stryker MSP es el propio
+mecanismo de Stryker para la pertenencia efectiva al `mutate` — globs
+ordenados, negaciones, defaults de archivos ocultos y resolución de config —
+y dharness lo interroga en vez de reimplementarlo. Parsear los patrones
+`mutate` en local violaría este principio por partida doble: duplicaría la
+autoridad sobre un conjunto (la herramienta configurada y el gate decidirían
+lo mismo por separado) y quedaría obsoleto ante cada cambio futuro de
+Stryker. El principio NO dice que cada opción de Stryker sea un flag: dice
+que donde Stryker ya decide, dharness pregunta en vez de adivinar.
+
 ### 02. La frontera de la delegación es «¿existe un comando?»
 
 No es configuración contra código, ni preparación contra hallazgos. Todo lo que
