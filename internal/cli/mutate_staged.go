@@ -40,7 +40,18 @@ func (e *ClassifierDisagreementError) Error() string {
 
 // runMutateStaged implements `dharness mutate --staged`: mutate exactly the
 // line ranges a staged change added, rather than named paths.
-func runMutateStaged(paths []string, dryRun, upgrade bool, concurrency int, excludePrefixes []string, stdout io.Writer) error {
+func runMutateStaged(paths []string, dryRun, upgrade bool, concurrency int, excludePrefixes []string, stdout io.Writer) (retErr error) {
+	// Slice A (mutate-staged-v1.9): the record is created before any refusal
+	// can return, so even a refusal prints the all-not-started record exactly
+	// once. A running phase at return means the command died mid-phase and is
+	// recorded as failed with the command's own error.
+	rec := newPhaseRecord()
+	defer func() {
+		if retErr != nil {
+			rec.failRunning(retErr)
+		}
+		rec.renderOnce(stdout)
+	}()
 	if len(paths) > 0 {
 		return fmt.Errorf("--staged mutates exactly what the staged change justifies and does not accept a path; got %q", paths[0])
 	}
@@ -61,7 +72,7 @@ func runMutateStaged(paths []string, dryRun, upgrade bool, concurrency int, excl
 	// Go delivers that as SIGTERM, not as an interrupt.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	return mutateStaged(ctx, concurrency, excludePrefixes, stdout)
+	return mutateStaged(ctx, concurrency, excludePrefixes, stdout, rec)
 }
 
 // mutateStaged is a staged run past its refusals, under a context an
@@ -76,7 +87,7 @@ func runMutateStaged(paths []string, dryRun, upgrade bool, concurrency int, excl
 // Scope's and Snapshot's git probes take no context. Each is one short git
 // command bounded by the size of the index, and a console interrupt reaches
 // git directly, so the run is checked around them instead of cancelling them.
-func mutateStaged(ctx context.Context, concurrency int, excludePrefixes []string, stdout io.Writer) error {
+func mutateStaged(ctx context.Context, concurrency int, excludePrefixes []string, stdout io.Writer, rec *phaseRecord) error {
 	dir, err := workingDirectory()
 	if err != nil {
 		return err
@@ -112,10 +123,13 @@ func mutateStaged(ctx context.Context, concurrency int, excludePrefixes []string
 	if err := interrupted(ctx, nil); err != nil {
 		return err
 	}
+	rec.start(phaseSnapshot)
 	snapshotRoot, snapshotSource, cleanup, err := staged.Snapshot(p.Root, p.Source)
 	if err != nil {
+		rec.fail(phaseSnapshot, err)
 		return err
 	}
+	rec.complete(phaseSnapshot)
 	defer func() { _ = cleanup() }()
 	if err := interrupted(ctx, nil); err != nil {
 		return err
@@ -137,10 +151,13 @@ func mutateStaged(ctx context.Context, concurrency int, excludePrefixes []string
 	}
 
 	files := uniqueScopedFiles(scopes)
+	rec.start(phaseClassify)
 	classification, err := staged.Classify(ctx, p.LocalBinary("tsc"), snapshotSource, files)
 	if err != nil {
+		rec.fail(phaseClassify, err)
 		return err
 	}
+	rec.complete(phaseClassify)
 	if err := interrupted(ctx, nil); err != nil {
 		return err
 	}

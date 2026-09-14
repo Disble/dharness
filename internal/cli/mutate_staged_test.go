@@ -967,7 +967,7 @@ func TestMutateStagedInterruptedDuringTheGuardCleansUpOnlyOnceItsChildReturned(t
 		return &runner.ExitError{Command: "vitest", Code: 1}
 	}))
 
-	err := mutateStaged(ctx, 2, nil, io.Discard)
+	err := mutateStaged(ctx, 2, nil, io.Discard, newPhaseRecord())
 
 	if !errors.Is(err, ErrInterrupted) {
 		t.Fatalf("mutateStaged() = %v, want it to report the interruption rather than a suite that failed to load", err)
@@ -1006,7 +1006,7 @@ func TestMutateStagedInterruptedDuringTheClassifierRunsNothingAfterIt(t *testing
 		return captured.run(cmd, stdout, stderr)
 	}))
 
-	err := mutateStaged(ctx, 2, nil, io.Discard)
+	err := mutateStaged(ctx, 2, nil, io.Discard, newPhaseRecord())
 
 	if !errors.Is(err, ErrInterrupted) {
 		t.Fatalf("mutateStaged() = %v, want the interruption", err)
@@ -1034,7 +1034,7 @@ func TestMutateStagedInterruptedBeforeTheSnapshotNeverMaterialisesOne(t *testing
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	err := mutateStaged(ctx, 2, nil, io.Discard)
+	err := mutateStaged(ctx, 2, nil, io.Discard, newPhaseRecord())
 
 	if !errors.Is(err, ErrInterrupted) {
 		t.Fatalf("mutateStaged() = %v, want the interruption", err)
@@ -1067,7 +1067,7 @@ func TestMutateStagedInterruptedDuringTheSnapshotStartsNoChild(t *testing.T) {
 		return project.GitOutput(dir, args...)
 	}))
 
-	err := mutateStaged(ctx, 2, nil, io.Discard)
+	err := mutateStaged(ctx, 2, nil, io.Discard, newPhaseRecord())
 
 	if !errors.Is(err, ErrInterrupted) {
 		t.Fatalf("mutateStaged() = %v, want the interruption", err)
@@ -1097,7 +1097,7 @@ func TestMutateStagedInterruptedDuringStrykerReportsTheInterruptNotAVerdict(t *t
 	}))
 
 	var out strings.Builder
-	err := mutateStaged(ctx, 2, nil, &out)
+	err := mutateStaged(ctx, 2, nil, &out, newPhaseRecord())
 
 	if !errors.Is(err, ErrInterrupted) {
 		t.Fatalf("mutateStaged() = %v, want the interruption", err)
@@ -1136,7 +1136,7 @@ func TestMutateStagedReportsAChildTheConsoleInterruptEndedBeforeItsOwnHandler(t 
 			t.Cleanup(runner.SetForTest(captured.run))
 
 			var out strings.Builder
-			err := mutateStaged(context.Background(), 2, nil, &out)
+			err := mutateStaged(context.Background(), 2, nil, &out, newPhaseRecord())
 
 			if !errors.Is(err, ErrInterrupted) {
 				t.Fatalf("mutateStaged() = %v, want the interruption, not %s's failure", err, tc.endedBy)
