@@ -225,16 +225,21 @@ func numstatFields(out []byte) []string {
 }
 
 // included reports whether a staged path belongs in dharness's own mutation
-// scope: a JS/TS source file, not a test, and not under a caller-excluded
-// prefix.
+// scope: a JS/TS source file, not a declaration, and not under a
+// caller-excluded prefix.
+//
+// Test-shaped paths are admitted on purpose since mutate-staged-v1.9: whether
+// a test-like or configuration-like source path belongs to mutation is
+// Stryker's configured effective `mutate` decision, not dharness's filename
+// guess. A project can explicitly include a test-shaped path, and dropping it
+// before discovery would override that decision. MSP discovery owns membership
+// after this point; --exclude-prefix stays because it is an explicit dharness
+// input rather than an inferred project choice.
 func included(path string, excludePrefixes []string) bool {
 	if !project.IsSourceFile(path) {
 		return false
 	}
 	if isDeclarationFile(path) {
-		return false
-	}
-	if isTestFile(path) {
 		return false
 	}
 	for _, prefix := range excludePrefixes {
@@ -261,13 +266,4 @@ func isDeclarationFile(path string) bool {
 	return strings.HasSuffix(lower, ".d.ts") ||
 		strings.HasSuffix(lower, ".d.mts") ||
 		strings.HasSuffix(lower, ".d.cts")
-}
-
-// isTestFile reports whether path is a test file by dharness's own
-// convention, matched against the full repository-relative path: git always
-// reports it slash-separated, on every platform.
-func isTestFile(path string) bool {
-	return strings.Contains(path, ".test.") ||
-		strings.Contains(path, ".spec.") ||
-		strings.Contains(path, "__tests__/")
 }
