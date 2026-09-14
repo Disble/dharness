@@ -196,12 +196,26 @@ func mutateStaged(ctx context.Context, concurrency int, excludePrefixes []string
 	finalScopes := append(append([]tool.MutationScope{}, membership.Retained...), scopesForFiles(scopes, classification.Dropped)...)
 	retainedFiles := uniqueScopedFiles(membership.Retained)
 
-	guard := staged.GuardVitestSuite(ctx, p.LocalBinary("vitest"), selection.TestRunner, snapshotSource, selection.VitestConfigFile)
-	if err := interrupted(ctx, guard); err != nil {
+	// Slice D (mutate-staged-v1.9): one aggregate related-test command over
+	// the retained files replaces the repository-wide `vitest list` guard.
+	// The related run subsumes the guard's load refusal for the selected set
+	// at a fraction of the measured cost, and Jest's list-only form executes
+	// no tests at all. A zero aggregate is a computed verdict — the phase
+	// completes and the run exits 1 naming every retained file — while a
+	// command that never produced a result fails the phase.
+	rec.start(phaseRelated)
+	relatedTotal, err := runRelatedTests(ctx, p, selection, snapshotSource, retainedFiles)
+	if err != nil {
+		if ierr := interrupted(ctx, err); ierr != nil {
+			return ierr
+		}
+		rec.fail(phaseRelated, err)
 		return err
 	}
-	if guard != nil {
-		return guard
+	rec.complete(phaseRelated)
+	if relatedTotal == 0 {
+		fmt.Fprintln(stdout, staged.NoTestReachesLine(retainedFiles))
+		return ErrNoRelatedTests
 	}
 
 	// A staged run never trusts resolveReportPath (selection.ReportPath, or
@@ -275,6 +289,51 @@ func mutateStaged(ctx context.Context, concurrency int, excludePrefixes []string
 	}
 	rec.complete(phaseStryker)
 	return nil
+}
+
+// ErrNoRelatedTests reports a retained scope no test reaches: a computed
+// zero-aggregate verdict, printed beside the action that fixes it, exiting 1.
+var ErrNoRelatedTests = errors.New("no test reaches the retained staged scope")
+
+// runRelatedTests runs the single aggregate related-test command the snapshot
+// selection names and returns its count. Vitest loads and runs the related
+// set into a run-owned JSON file; Jest lists without executing. A command
+// that never produced a result is a suite failure, never a zero.
+func runRelatedTests(ctx context.Context, p project.Project, selection project.StrykerSelection, snapshotSource string, files []string) (int, error) {
+	if selection.TestRunner == "jest" {
+		cmd := tool.JestRelated(p.LocalBinary("jest"), snapshotSource, files)
+		cmd.Context = ctx
+		var out bytes.Buffer
+		if err := runner.Run(cmd, &out, &out); err != nil {
+			return 0, staged.RelatedSuiteFailure(err)
+		}
+		n, err := staged.ParseJestRelated(out.Bytes())
+		if err != nil {
+			return 0, staged.RelatedJSONFailure(err.Error())
+		}
+		return n, nil
+	}
+	relatedDir, err := os.MkdirTemp("", "dh-related-")
+	if err != nil {
+		return 0, fmt.Errorf("create the related-test report directory: %w", err)
+	}
+	defer func() { _ = runner.RemoveSandbox(relatedDir) }()
+	outPath := filepath.Join(relatedDir, "related.json")
+	cmd := tool.VitestRelated(p.LocalBinary("vitest"), snapshotSource, files, outPath, selection.VitestConfigFile)
+	cmd.Context = ctx
+	var transcript bytes.Buffer
+	if err := runner.Run(cmd, io.Discard, &transcript); err != nil {
+		return 0, staged.RelatedSuiteFailure(err)
+	}
+	data, err := os.ReadFile(outPath)
+	if err != nil {
+		return 0, staged.RelatedJSONFailure(err.Error())
+	}
+	n, err := staged.ParseVitestRelated(data)
+	if err != nil {
+		return 0, staged.RelatedJSONFailure(err.Error())
+	}
+	return n, nil
 }
 
 // discoverMembership runs MSP discovery and classifies the raw outcome. It is
