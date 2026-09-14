@@ -172,6 +172,30 @@ func mutateStaged(ctx context.Context, concurrency int, excludePrefixes []string
 		return nil
 	}
 
+	// Slice C3 (mutate-staged-v1.9): MSP discovery owns membership from here.
+	// Only classification-kept files are candidates; the retained original
+	// ranges plus the dropped-file self-check ranges form the final scope.
+	// No retained range ends the run here: discovery completed, related and
+	// Stryker never start.
+	rec.start(phaseDiscover)
+	membership, err := discoverMembership(ctx, binary, snapshotSource, selection.ConfigFile, scopesForFiles(scopes, classification.Kept))
+	if err != nil {
+		rec.fail(phaseDiscover, err)
+		return err
+	}
+	rec.complete(phaseDiscover)
+	for _, path := range membership.InSetZero {
+		fmt.Fprintln(stdout, staged.InSetZeroLine(path))
+	}
+	for _, path := range membership.BothOmitted {
+		fmt.Fprintln(stdout, staged.OutsideSetLine(path))
+	}
+	if len(membership.Retained) == 0 {
+		return nil
+	}
+	finalScopes := append(append([]tool.MutationScope{}, membership.Retained...), scopesForFiles(scopes, classification.Dropped)...)
+	retainedFiles := uniqueScopedFiles(membership.Retained)
+
 	guard := staged.GuardVitestSuite(ctx, p.LocalBinary("vitest"), selection.TestRunner, snapshotSource, selection.VitestConfigFile)
 	if err := interrupted(ctx, guard); err != nil {
 		return err
@@ -209,8 +233,8 @@ func mutateStaged(ctx context.Context, concurrency int, excludePrefixes []string
 	}
 	defer func() { _ = runner.RemoveSandbox(sandbox) }()
 
-	entries := make([]string, 0, len(scopes))
-	for _, scope := range scopes {
+	entries := make([]string, 0, len(finalScopes))
+	for _, scope := range finalScopes {
 		entries = append(entries, scope.Argument())
 	}
 	// The scope goes in a config file rather than on the command line, which
@@ -227,15 +251,45 @@ func mutateStaged(ctx context.Context, concurrency int, excludePrefixes []string
 	// originals up in sandbox instead (Stryker's own documented behaviour).
 	args = append(args, "--inPlace")
 
+	// The Stryker phase covers the run and the verdict read together: a
+	// computed survivor verdict completes the phase with a non-zero exit,
+	// because mutation and report interpretation succeeded and found a
+	// blocking status. Only a run that never produced a verdict fails it.
+	rec.start(phaseStryker)
 	mutation := runStryker(ctx, binary, snapshotSource, selection, args, stdout)
 	if err := interrupted(ctx, mutation); err != nil {
 		return err
 	}
 	if mutation != nil {
+		rec.fail(phaseStryker, mutation)
 		return mutation
 	}
+	if err := reportStagedVerdict(reportPath, finalScopes, retainedFiles, classification.Dropped, stdout); err != nil {
+		var survivors *SurvivorsError
+		if errors.As(err, &survivors) {
+			rec.complete(phaseStryker)
+			return err
+		}
+		rec.fail(phaseStryker, err)
+		return err
+	}
+	rec.complete(phaseStryker)
+	return nil
+}
 
-	return reportStagedVerdict(reportPath, scopes, classification.Kept, classification.Dropped, stdout)
+// discoverMembership runs MSP discovery and classifies the raw outcome. It is
+// a package variable so tests can script membership without a Stryker server;
+// production always runs the real sequence against the snapshot.
+var discoverMembership = func(ctx context.Context, binary, snapshotSource, configFile string, scopes []tool.MutationScope) (staged.Membership, error) {
+	var candidates []staged.CandidateRange
+	for _, s := range scopes {
+		candidates = append(candidates, staged.CandidateRange{Path: s.Path, StartLine: s.Start, EndLine: s.End})
+	}
+	outcome, err := staged.Discover(ctx, tool.StrykerServe(binary, snapshotSource), configFile, candidates)
+	if err != nil {
+		return staged.Membership{}, err
+	}
+	return staged.ClassifyMembership(scopes, outcome), nil
 }
 
 // ErrInterrupted reports a staged run an interrupt stopped before it reached a
