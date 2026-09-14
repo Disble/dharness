@@ -87,6 +87,21 @@ func StrykerPackages(packageManager string, yarnPnP bool, testRunner string) ([]
 	return []string{strykerCoreLatest, runnerPackage + "@latest"}, nil
 }
 
+// StrykerServe builds the `stryker serve stdio` invocation for MSP discovery:
+// the project-local binary in the snapshot source, low priority, and no extra
+// CLI options at all. Configuration travels through the MSP configure payload
+// (or Stryker's own default resolution), never through argv, so discovery
+// observes the project's effective `mutate` decision before dharness narrows it.
+func StrykerServe(binaryPath, dir string) runner.Command {
+	return runner.Command{
+		Label:       Stryker,
+		Name:        binaryPath,
+		Args:        []string{"serve", "stdio"},
+		Dir:         dir,
+		LowPriority: true,
+	}
+}
+
 // StrykerLocal invokes the copy of Stryker the project has installed. The path
 // is the command name, never an argument to a remote executor.
 func StrykerLocal(binaryPath, dir, testRunner string, configuredAppendPlugins []string, args ...string) runner.Command {
