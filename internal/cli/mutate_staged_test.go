@@ -128,6 +128,23 @@ func stagedRunner(captured *record, tscOutputs map[string]string, report string)
 				}
 			}
 		}
+		// The retired `vitest list` guard needed no output file, but the
+		// related command it became writes its aggregate count to one. The
+		// shared fake produces a positive default, which is exactly the v1.8
+		// semantic (the guard passed, the run proceeded); tests about
+		// related behavior script their own vitest answers instead. A
+		// failing vitest writes nothing, like the real command.
+		if cmd.Label == "vitest" {
+			if err := captured.run(cmd, stdout, stderr); err != nil {
+				return err
+			}
+			if outPath := flagValueCLI(cmd.Args, "--outputFile"); outPath != "" {
+				if err := os.WriteFile(outPath, []byte(`{"numTotalTests":1}`), 0o600); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
 		if report != "" && cmd.Label == "stryker" && !argsContain(cmd.Args, "--dryRunOnly") {
 			fileName, err := jsonReporterFileNameIn(cmd.Dir)
 			if err != nil {
@@ -331,23 +348,27 @@ func commandExists(captured *record, label string) bool {
 }
 
 // TestMutateStagedRefusesWhenTheVitestGuardFails pins the guard: a suite that
-// cannot load must refuse before Stryker ever runs, exactly as it would for
-// a missing Stryker.
-func TestMutateStagedRefusesWhenTheVitestGuardFails(t *testing.T) {
+// A related-test command that never produces a result must refuse before
+// Stryker ever runs, exactly as the retired repository-wide guard did: a
+// suite that cannot load is unknown reachability, never zero reachability.
+func TestMutateStagedRefusesWhenTheRelatedSuiteFails(t *testing.T) {
 	root, captured := newStagedRepo(t)
 	writeFile(t, filepath.Join(root, "node_modules", ".bin", binaryName("vitest")), "")
 	stageFile(t, root, "src/a.js", "export const a = 1;\n")
 	captured.fail["vitest"] = &runner.ExitError{Command: "vitest", Code: 1}
 	t.Cleanup(runner.SetForTest(captured.run))
 
-	err := RunMutate([]string{"--staged"}, io.Discard)
+	var out strings.Builder
+	err := RunMutate([]string{"--staged"}, &out)
 
-	var suite *staged.VitestSuiteError
-	if !errors.As(err, &suite) {
-		t.Fatalf("RunMutate() = %v, want VitestSuiteError", err)
+	if err == nil || !strings.Contains(err.Error(), "related-test suite load/run failure") {
+		t.Fatalf("RunMutate() = %v, want the related suite failure", err)
+	}
+	if !strings.Contains(out.String(), "related failed: related-test suite load/run failure") {
+		t.Errorf("output = %q, want the failed related phase named", out.String())
 	}
 	if commandExists(captured, "stryker") {
-		t.Errorf("commands = %+v, want no stryker command: the guard must refuse first", captured.commands)
+		t.Errorf("commands = %+v, want no stryker command: the related failure must refuse first", captured.commands)
 	}
 }
 
@@ -875,7 +896,7 @@ func TestMutateStagedJudgesOnlyItsOwnPerRunReportPath(t *testing.T) {
 				return err
 			}
 		}
-		return captured.run(cmd, stdout, stderr)
+		return stagedRunner(captured, nil, "")(cmd, stdout, stderr)
 	}))
 
 	var out strings.Builder
@@ -943,7 +964,7 @@ func entriesIn(t *testing.T, dir string) []string {
 // interrupt arrives the child is still exiting, and until it has, the snapshot
 // is its working directory: removing it then fails on Windows, and a cleanup
 // that had already spent itself on that failure left the whole copy behind.
-func TestMutateStagedInterruptedDuringTheGuardCleansUpOnlyOnceItsChildReturned(t *testing.T) {
+func TestMutateStagedInterruptedDuringRelatedCleansUpOnlyOnceItsChildReturned(t *testing.T) {
 	root, captured := newStagedRepo(t)
 	writeFile(t, filepath.Join(root, "node_modules", ".bin", binaryName("vitest")), "")
 	stageFile(t, root, "src/a.js", "export const a = 1;\n")
@@ -1093,7 +1114,7 @@ func TestMutateStagedInterruptedDuringStrykerReportsTheInterruptNotAVerdict(t *t
 			cancel()
 			return &runner.ExitError{Command: "stryker", Code: 1}
 		}
-		return nil
+		return stagedRunner(captured, nil, "")(cmd, stdout, stderr)
 	}))
 
 	var out strings.Builder
@@ -1133,7 +1154,7 @@ func TestMutateStagedReportsAChildTheConsoleInterruptEndedBeforeItsOwnHandler(t 
 			writeFile(t, filepath.Join(root, "node_modules", ".bin", binaryName("vitest")), "")
 			stageFile(t, root, "src/a.js", "export const a = 1;\n")
 			captured.fail[tc.endedBy] = interruptedExit(tc.endedBy)
-			t.Cleanup(runner.SetForTest(captured.run))
+			t.Cleanup(runner.SetForTest(stagedRunner(captured, nil, "")))
 
 			var out strings.Builder
 			err := mutateStaged(context.Background(), 2, nil, &out, newPhaseRecord())
