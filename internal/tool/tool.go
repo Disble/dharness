@@ -102,6 +102,27 @@ func StrykerServe(binaryPath, dir string) runner.Command {
 	}
 }
 
+// VitestRelated builds the one aggregate related-test command: every retained
+// file in a single `vitest related` run writing JSON to a run-owned file. The
+// optional config travels only when the snapshot selection names one.
+func VitestRelated(binaryPath, dir string, files []string, output, config string) runner.Command {
+	args := append([]string{"related"}, files...)
+	args = append(args, "--run", "--passWithNoTests", "--reporter=json", "--outputFile", output)
+	if config != "" {
+		args = append(args, "--config", config)
+	}
+	return runner.Command{Label: "vitest", Name: binaryPath, Args: args, Dir: dir, LowPriority: true}
+}
+
+// JestRelated builds the J2-confirmed list-only command: related tests as a
+// JSON array on stdout, nothing executed. The executing fallback does not
+// exist because J2's kill condition was never met.
+func JestRelated(binaryPath, dir string, files []string) runner.Command {
+	args := append([]string{"--findRelatedTests"}, files...)
+	args = append(args, "--listTests", "--json")
+	return runner.Command{Label: "jest", Name: binaryPath, Args: args, Dir: dir, LowPriority: true}
+}
+
 // StrykerLocal invokes the copy of Stryker the project has installed. The path
 // is the command name, never an argument to a remote executor.
 func StrykerLocal(binaryPath, dir, testRunner string, configuredAppendPlugins []string, args ...string) runner.Command {
