@@ -10,3 +10,6 @@
 # Editors and agents
 .atl/
 .mcp.json
+
+# Session-local Pi/agent state (model routing, preflight); never committed.
+.pi/
