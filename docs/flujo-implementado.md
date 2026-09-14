@@ -531,11 +531,14 @@ flowchart TD
     CFG --> CL["clasificar cada archivo con el tsc local, en tandas bajo el tope de cmd.exe, cwd vacío fuera del proyecto"]
     CL --> AllDrop{"¿todo compiló a nada?"}
     AllDrop -->|"sí"| N1["imprime 'types-only: ...' por archivo, salida 0 — Stryker nunca corre"]
-    AllDrop -->|"no"| G{"¿el runner es vitest?"}
-    G -->|"sí"| GV["'vitest list', mismo config que Stryker; falla si un archivo no carga"]
-    G -->|"no"| RUN
-    GV -->|"falla"| ERef["rehúsa antes de correr Stryker"]
-    GV -->|"pasa"| RUN["correr Stryker sobre TODO el scope — mantenidos y descartados juntos — con --inPlace, el scope en una config JSON generada y no en --mutate"]
+    AllDrop -->|"no"| DC["discover MSP: configure con la config del snapshot, un ranged sobre todos los rangos candidatos y —solo para archivos sin rango retenido— un path-only"]
+    DC -->|"falla"| EDC["'discover failed: ...', sin mutación"]
+    DC -->|"pasa"| MB{"¿algún rango retenido?"}
+    MB -->|"no"| NMB["imprime por archivo 'outside Stryker's mutate set' o 'in the set, 0 mutants in the staged lines', salida 0 — related y Stryker nunca arrancan"]
+    MB -->|"sí"| RL["un solo comando agregado de tests relacionados — 'vitest related' o Jest list-only — sobre los archivos retenidos"]
+    RL -->|"falla"| ERL["'related failed: ...', sin mutación"]
+    RL -->|"cero"| NRL["'no test reaches: ...; the fix is a test that imports them', salida 1 — Stryker nunca corre"]
+    RL -->|"positivo"| RUN["correr Stryker sobre el scope retenido — rangos mantenidos más el autochequeo de descartados — con --inPlace, el scope en una config JSON generada y no en --mutate"]
     RUN --> SC{"¿algún archivo descartado aparece con mutantes?"}
     SC -->|"sí"| ECD["ClassifierDisagreementError: el clasificador se equivocó sobre bytes reales"]
     SC -->|"no"| M["imprime archivos, rangos y mutantes en scope por estado"]
@@ -558,8 +561,10 @@ sesión, potencialmente detrás de un Ctrl-C, y ese es exactamente el momento en
 que `internal/cli/check.go` ya se niega a instalar por la misma razón.
 
 Un Ctrl-C —o un `taskkill` sin `/F`, que cierra la consola y Go entrega como
-SIGTERM, no como interrupción— cancela el contexto que reciben tsc,
-`vitest list` y Stryker. El hijo en curso muere, el paso que lo lanzó vuelve,
+SIGTERM, no como interrupción— cancela el contexto que reciben tsc, el comando
+agregado de tests relacionados y Stryker (`vitest related` remplazó al guard
+repositorio-amplio `vitest list`: el related cubre la carga del set elegido a
+una fracción del costo medido, y el list-only de Jest no ejecuta nada). El hijo en curso muere, el paso que lo lanzó vuelve,
 la corrida se detiene en el chequeo que sigue a ese paso, y la limpieza del
 snapshot corre una sola vez, al final, cuando ya no queda ningún proceso
 trabajando adentro. Nada corre en paralelo con un hijo: en Windows `RemoveAll`

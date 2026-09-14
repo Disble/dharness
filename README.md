@@ -50,6 +50,19 @@ fix it — and it mutates every scoped file, dropped ones included, so a file
 the classifier believed empty but Stryker still instruments a mutant for
 fails the run as a classifier disagreement rather than passing silently.
 
+Every run prints exactly one phase record — `phases: snapshot <duration>s ·
+classify <duration>s · discover <duration>s · related <duration>s · stryker
+<duration>s` — with `not started` for phases it never entered and `failed:
+<reason>` for the one that stopped it. Membership comes from Stryker's own
+MSP `discover`: a file both discovery forms omit prints `outside Stryker's
+mutate set: <path>` (a configured exclusion and whole-file zero mutants look
+identical, so the line names the observation, never the cause), and a file in
+the set with no mutant in the staged lines prints `in the set, 0 mutants in
+the staged lines: <path>`. One aggregate related-test command follows —
+`vitest related` or Jest's list-only form — and a zero aggregate exits 1 with
+`no test reaches: <files>; the fix is a test that imports them` before Stryker
+ever runs.
+
 Stryker's JSON config must select `vitest` or `jest`; dharness preserves that
 selection and any `appendPlugins` while adding the remote runner it provisions.
 Executable `.js`, `.mjs` and `.cjs` configs stop with a clear error because
