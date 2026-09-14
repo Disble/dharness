@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.9.0](https://github.com/Disble/dharness/compare/v1.8.0...v1.9.0) (2026-09-14)
+
+
+### Features
+
+* **mutate:** aggregate related gate, retire vitest-list guard ([0b8b5e8](https://github.com/Disble/dharness/commit/0b8b5e8e81a5e1f8d41e1390d1163bb963efe176))
+* **mutate:** aggregate related-test command constructors ([df70c43](https://github.com/Disble/dharness/commit/df70c435fa6023db7f638125241687102e06f772))
+* **mutate:** discovery wiring and retained final scope ([8cb8261](https://github.com/Disble/dharness/commit/8cb8261dc6d152329db92bce8be44cd8e2ea2a46))
+* **mutate:** managed MSP process with whole-tree ownership ([18f2b00](https://github.com/Disble/dharness/commit/18f2b00020bf1a2a6bc91310ff3105de7ba63c2c))
+* **mutate:** per-range membership, retire test-name heuristic ([e8e1980](https://github.com/Disble/dharness/commit/e8e19805640b2b77197cdc04d7138e558b4b4298))
+* **mutate:** related-test result parsing and outcome lines ([f03d0ee](https://github.com/Disble/dharness/commit/f03d0eec086be1acd76f3752ef9ed65ba3df4db1))
+* **mutate:** sequential MSP configure/discover client ([d92e91a](https://github.com/Disble/dharness/commit/d92e91a3373ce176f62358c38dd8e17e211ed4a7))
+* **mutate:** staged five-phase record and renderer ([ffcf93c](https://github.com/Disble/dharness/commit/ffcf93c6412257d508c27f8b0a0e30a1269f7572))
+* **mutate:** strict MSP Content-Length JSON-RPC codec ([1a1aff0](https://github.com/Disble/dharness/commit/1a1aff03da123e586d50b6e69324521876b8a744))
+
 ## [1.8.0](https://github.com/Disble/dharness/compare/v1.7.6...v1.8.0) (2026-09-13)
 
 
