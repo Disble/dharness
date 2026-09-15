@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.9.1](https://github.com/Disble/dharness/compare/v1.9.0...v1.9.1) (2026-09-15)
+
+
+### Bug Fixes
+
+* **mutate:** decode Stryker string mutant ids in staged discover ([#56](https://github.com/Disble/dharness/issues/56)) ([2b16462](https://github.com/Disble/dharness/commit/2b1646296a5df0a4fb19787e7a705b5d2a58e777))
+
 ## [1.9.0](https://github.com/Disble/dharness/compare/v1.8.0...v1.9.0) (2026-09-14)
 
 
