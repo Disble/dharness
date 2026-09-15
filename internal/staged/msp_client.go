@@ -45,7 +45,7 @@ type CandidateRange struct {
 // Classification against the requested ranges belongs to membership, not to
 // this transport.
 type RawMutant struct {
-	ID                  int
+	ID                  string
 	StartLine, StartCol int
 	EndLine, EndCol     int
 }
@@ -76,7 +76,7 @@ type mspDiscoverFile struct {
 }
 
 type mspRawMutant struct {
-	ID       int `json:"id"`
+	ID       string `json:"id"`
 	Location *struct {
 		Start mspPosition `json:"start"`
 		End   mspPosition `json:"end"`
@@ -223,7 +223,7 @@ func decodeDiscoverResult(result json.RawMessage, allowed map[string]bool) (map[
 		}
 		for _, m := range file.Mutants {
 			if m.Location == nil {
-				return nil, fmt.Errorf("discovery reported mutant %d in %q without a usable location", m.ID, path)
+				return nil, fmt.Errorf("discovery reported mutant %q in %q without a usable location", m.ID, path)
 			}
 			kept[path] = append(kept[path], RawMutant{
 				ID:        m.ID,

@@ -20,7 +20,7 @@ func scopesForMembership(path string, ranges ...[2]int) []tool.MutationScope {
 	return out
 }
 
-func rawMutant(id, startLine, endLine int) RawMutant {
+func rawMutant(id string, startLine, endLine int) RawMutant {
 	return RawMutant{ID: id, StartLine: startLine, StartCol: 1, EndLine: endLine, EndCol: 5}
 }
 
@@ -31,8 +31,8 @@ func TestMembershipRetainsOnlyRepresentedRanges(t *testing.T) {
 	)
 	outcome := DiscoveryOutcome{
 		Ranged: map[string][]RawMutant{
-			"src/a.ts": {rawMutant(0, 2, 2)},
-			"src/b.ts": {rawMutant(1, 40, 41)},
+			"src/a.ts": {rawMutant("0", 2, 2)},
+			"src/b.ts": {rawMutant("1", 40, 41)},
 		},
 		PathOnly: map[string][]RawMutant{},
 	}
@@ -53,7 +53,7 @@ func TestMembershipPathOnlyHitIsInSetZero(t *testing.T) {
 	scopes := scopesForMembership("src/c.ts", [2]int{1, 4})
 	outcome := DiscoveryOutcome{
 		Ranged:   map[string][]RawMutant{},
-		PathOnly: map[string][]RawMutant{"src/c.ts": {rawMutant(0, 30, 30)}},
+		PathOnly: map[string][]RawMutant{"src/c.ts": {rawMutant("0", 30, 30)}},
 	}
 	got := ClassifyMembership(scopes, outcome)
 	if len(got.Retained) != 0 {
@@ -95,7 +95,7 @@ func TestMembershipOutputsAreSortedAndStable(t *testing.T) {
 	)
 	outcome := DiscoveryOutcome{
 		Ranged: map[string][]RawMutant{
-			"src/a.ts": {rawMutant(0, 5, 5)},
+			"src/a.ts": {rawMutant("0", 5, 5)},
 		},
 		PathOnly: map[string][]RawMutant{},
 	}

@@ -82,7 +82,7 @@ func filesResult(files map[string][]map[string]any) map[string]any {
 	return map[string]any{"files": out}
 }
 
-func mutantAt(id, startLine, startCol, endLine, endCol int) map[string]any {
+func mutantAt(id string, startLine, startCol, endLine, endCol int) map[string]any {
 	return map[string]any{
 		"id": id,
 		"location": map[string]any{
@@ -111,7 +111,7 @@ func TestMSPDiscoverRunsConfigureThenRangedThenPathOnly(t *testing.T) {
 			if len(pathOnlyFiles) == 0 && len(rangedFiles) == 0 {
 				rangedFiles = p.Files
 				return filesResult(map[string][]map[string]any{
-					"src/a.ts": {mutantAt(0, 2, 3, 2, 9)},
+					"src/a.ts": {mutantAt("0", 2, 3, 2, 9)},
 				}), nil
 			}
 			pathOnlyFiles = p.Files
@@ -153,6 +153,8 @@ func TestMSPDiscoverRunsConfigureThenRangedThenPathOnly(t *testing.T) {
 	}
 	if len(outcome.Ranged["src/a.ts"]) != 1 {
 		t.Errorf("ranged mutants for src/a.ts = %v, want the reported mutant", outcome.Ranged)
+	} else if outcome.Ranged["src/a.ts"][0].ID != "0" {
+		t.Errorf("ranged mutant id = %q, want \"0\": Stryker reports string ids per the mutation-testing-report-schema", outcome.Ranged["src/a.ts"][0].ID)
 	}
 }
 
@@ -162,7 +164,7 @@ func TestMSPDiscoverSkipsPathOnlyWhenRangedCoversAll(t *testing.T) {
 			return map[string]any{}, nil
 		}
 		return filesResult(map[string][]map[string]any{
-			"src/a.ts": {mutantAt(0, 1, 1, 1, 5)},
+			"src/a.ts": {mutantAt("0", 1, 1, 1, 5)},
 		}), nil
 	})
 	outcome, err := discoverOver(context.Background(), client, bufio.NewReader(client), "",
@@ -227,7 +229,7 @@ func TestMSPDiscoverFailsClosedAndClosesTree(t *testing.T) {
 				return map[string]any{}, nil
 			}
 			return filesResult(map[string][]map[string]any{
-				"src/elsewhere.ts": {mutantAt(0, 1, 1, 1, 2)},
+				"src/elsewhere.ts": {mutantAt("2", 1, 1, 1, 2)},
 			}), nil
 		})
 		_, err := discoverOver(context.Background(), client, bufio.NewReader(client), "",
