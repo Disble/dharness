@@ -29,9 +29,9 @@ The repository has release automation but no repository-local skill. The availab
   - Evidence: the skill now requires `git fetch origin main --tags`, a `HEAD`/`origin/main` equality check, and a safe-reconciliation stop gate. An independent verifier confirmed frontmatter, references, and whitespace checks remain valid.
 - [x] R5 Move the skill out of ignored session state.
   - Evidence: `skills/dharness-release/SKILL.md` now contains the validated skill with rebased local references; `AGENTS.md` points to it; the ignored `.pi/` copy was removed without changing `.gitignore`.
-- [ ] R6 Commit and push the isolated skill work unit.
-  - Acceptance: stage only the tracked skill, its AGENTS.md registration, and the ODD task record; run the repository gate; create one conventional commit and push `main` without creating a release.
+- [x] R6 Commit and push the isolated skill work unit.
+  - Evidence: staged only `AGENTS.md`, `skills/dharness-release/SKILL.md`, and this record; `.githooks/pre-commit` passed with no staged Go files; committed `9d55025` as `docs(release): add release workflow skill` and pushed it to `origin/main`. No release, tag, or publishing command was invoked.
 
 ## Progress
-- Current task: R6.
-- Next step: stage the isolated work unit, run the repository gate, then commit and push it without starting a release.
+- Completed: R1–R6.
+- Next step: await the user's review or a new request.
