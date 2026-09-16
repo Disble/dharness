@@ -17,6 +17,10 @@ decision that produced it, and a change is accepted or rejected by citing them.
     ditto staged --dry --exclude-prefix tools/
     bash scripts/verify-gate.sh           # proves the gate still refuses
 
+## Project skills
+
+- `skills/dharness-release/SKILL.md` — safe release-please release workflow.
+
 The local gate is `.githooks/pre-commit` and runs what CI runs. There is no hook
 manager, and not because of dependencies — lefthook is written in Go and `go
 install` would fetch it. The reason is enablement cost: this is one git command
