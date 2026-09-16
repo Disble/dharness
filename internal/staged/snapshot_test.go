@@ -206,6 +206,58 @@ func TestSnapshotLinksMultipleIgnoredDirectories(t *testing.T) {
 	}
 }
 
+// TestSnapshotLinksAnIgnoredDirectoryNestedInAnotherOnlyOnce pins the shape a
+// real consumer hit: an untracked directory whose only content is an ignored
+// node_modules/ is listed by git 2.51 as both `stryker/` and
+// `stryker/node_modules/`. Linking the parent already brings the child in, so
+// linking the child as well failed the whole snapshot with "Cannot create a
+// file when that file already exists".
+func TestSnapshotLinksAnIgnoredDirectoryNestedInAnotherOnlyOnce(t *testing.T) {
+	root := newRepo(t)
+	writeStagedFixture(t, filepath.Join(root, ".gitignore"), "node_modules/\n")
+	writeStagedFixture(t, filepath.Join(root, "src", "a.ts"), "export const a = 1;\n")
+	gitRun(t, root, "add", "-A")
+	gitRun(t, root, "commit", "--quiet", "-m", "init")
+
+	writeStagedFixture(t, filepath.Join(root, "stryker", "node_modules", "pkg", "index.js"), "module.exports = 1;\n")
+
+	dir, _, cleanup, err := Snapshot(root, root)
+	if err != nil {
+		t.Fatalf("Snapshot() = %v, want the nested ignored directory covered by its parent's link", err)
+	}
+	defer func() { _ = cleanup() }()
+
+	if _, err := os.Stat(filepath.Join(dir, "stryker", "node_modules", "pkg", "index.js")); err != nil {
+		t.Errorf("Stat(snapshot/stryker/node_modules/pkg/index.js) = %v, want it reachable through the parent link", err)
+	}
+}
+
+// TestLinkIgnoredSkipsEntriesUnderALinkedDirectoryWhateverTheOrder pins the
+// ancestor check independently of git's own listing order: a child listed
+// before its parent must still be covered by the parent, not linked first and
+// then collided with — and skipping one must not end the scan before a later
+// sibling, `wailsjs/`, is reached.
+func TestLinkIgnoredSkipsEntriesUnderALinkedDirectoryWhateverTheOrder(t *testing.T) {
+	source := t.TempDir()
+	writeStagedFixture(t, filepath.Join(source, "stryker", "node_modules", "pkg", "index.js"), "module.exports = 1;\n")
+	writeStagedFixture(t, filepath.Join(source, "stryker", "notes.txt"), "x\n")
+	writeStagedFixture(t, filepath.Join(source, "wailsjs", "go.js"), "x\n")
+	defer SetGitOutputForTest(func(string, ...string) ([]byte, error) {
+		return []byte("wailsjs/\x00stryker/notes.txt\x00stryker/node_modules/\x00stryker/\x00"), nil
+	})()
+
+	dir := t.TempDir()
+	links, err := linkIgnored(source, source, dir)
+	defer func() { _ = cleanupLinks(links) }()
+	if err != nil {
+		t.Fatalf("linkIgnored() = %v, want every entry under stryker/ covered by its link", err)
+	}
+	want := []string{filepath.Join(dir, "stryker"), filepath.Join(dir, "wailsjs")}
+	if len(links) != len(want) || links[0] != want[0] || links[1] != want[1] {
+		t.Errorf("links = %v, want exactly %v", links, want)
+	}
+}
+
 // TestLinkIgnoredPropagatesACopyFailure pins the copy-error branch directly:
 // an ignored file that cannot be read must fail linkIgnored rather than be
 // silently skipped.
