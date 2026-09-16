@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -138,8 +139,21 @@ func linkIgnored(root, source, dir string) ([]string, error) {
 	}
 	snapshotSource := filepath.Join(dir, sourceRel)
 
+	// git 2.51 lists an untracked directory holding only ignored content
+	// alongside the ignored directory nested in it — `stryker/` and
+	// `stryker/node_modules/` both. Linking the parent already brings every
+	// descendant in, and linking one again fails on the path the first link
+	// created. Sorted, an ancestor always precedes its descendants, so one
+	// pass over the linked prefixes skips them whatever order git used.
+	entries := splitNUL(out)
+	sort.Strings(entries)
+
 	var links []string
-	for _, entry := range splitNUL(out) {
+	var linked []string
+	for _, entry := range entries {
+		if coveredBy(linked, entry) {
+			continue
+		}
 		isDir := strings.HasSuffix(entry, "/")
 		relative := filepath.FromSlash(strings.TrimSuffix(entry, "/"))
 		target := filepath.Join(source, relative)
@@ -154,6 +168,7 @@ func linkIgnored(root, source, dir string) ([]string, error) {
 				return links, fmt.Errorf("link %s: %w", entry, err)
 			}
 			links = append(links, destination)
+			linked = append(linked, entry)
 			continue
 		}
 
@@ -162,6 +177,18 @@ func linkIgnored(root, source, dir string) ([]string, error) {
 		}
 	}
 	return links, nil
+}
+
+// coveredBy reports whether entry sits under one of the linked directories,
+// each of which carries git's own trailing slash, so `stryker/` never covers
+// a sibling named `stryker-old/`.
+func coveredBy(linked []string, entry string) bool {
+	for _, directory := range linked {
+		if strings.HasPrefix(entry, directory) {
+			return true
+		}
+	}
+	return false
 }
 
 // copyFile duplicates target's bytes and mode at destination.
