@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.9.2](https://github.com/Disble/dharness/compare/v1.9.1...v1.9.2) (2026-09-16)
+
+
+### Bug Fixes
+
+* **mutate:** skip ignored entries already covered by a linked parent ([#58](https://github.com/Disble/dharness/issues/58)) ([3a7ca5f](https://github.com/Disble/dharness/commit/3a7ca5f92c77d07699abf85b7a0706f90b82b279))
+
 ## [1.9.1](https://github.com/Disble/dharness/compare/v1.9.0...v1.9.1) (2026-09-15)
 
 
