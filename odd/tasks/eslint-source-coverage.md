@@ -19,17 +19,17 @@ An owned flat-config block without `files` depends on matchers supplied by the c
 - RDD: off, clone-local and global. Ordinary risk-based independent verification applies.
 
 ## Tasks
-- [ ] **T1 — Make the owned ESLint layer match recognized source extensions.** Status: in progress (independent verifier `murjj8k7-6-ab0z` checking staged candidate).
+- [x] **T1 — Make the owned ESLint layer match recognized source extensions.** Status: done.
   - Declare explicit source matchers without adding parser/language options; retain separate global-ignore objects.
   - Verify recognized extension semantics, including TSX, consumer parser preservation, deliberate global ignores, and split layouts/config dialects where applicable.
   - Add regression scenarios and update existing golden files through their supported update path; include user-facing documentation with the behavior.
   - Checks: observed focused RED/GREEN; real ESLint in a throwaway project (rules fire with proper parser; parser gap fails rather than silently passing); focused manual mutation where applicable; staged `ditto staged`; Go format/build/vet/test; independent verification when assessment requires it.
   - Writer evidence: RED observed for omitted TSX matchers, missing API, and byte-pinned matcher; GREEN on setup/project packages and five real ESLint cases; three manual mutations killed and restored. `mutation-tdd` skill unavailable; existing protocol used.
-  - Runtime evidence: writer's five ESLint cases passed; independent checks running. Parent spot-check `go test ./internal/project -run TestIsSourceFileFoldsTheExtensionCase -count=1` passed. Commit: pending. Rollback: matcher generation and its tests/docs only.
-- [ ] **T1b — Preserve the real-ESLint regression contract as a reviewable work unit.** Status: pending.
+  - Runtime evidence: independent five-case contract and real Panel.tsx JSX passed; scratch plain sync emitted eight matchers without replacing parser/ignores. Full build/vet/tests and staged mutation passed; parent case-fold spot-check passed. Commit: `a0d904c` (`fix(eslint): match all recognized source extensions`), index-tree pre-commit gate passed. Rollback: matcher generation and its tests/docs only.
+- [ ] **T1b — Preserve the real-ESLint regression contract as a reviewable work unit.** Status: in progress (verified contract; preparing commit).
   - Commit the opt-in native regression separately (244 authored lines), after T1's production/unit/golden/docs slice (264 lines); no tests/docs are removed to meet the budget.
   - Checks: independent real-ESLint cases, offline skip contract, full suite. Staged mutation is N/A for a test-only work unit with no product branches; T1 production mutation remains mandatory.
-  - Runtime evidence: pending. Commit: pending. Rollback: opt-in regression test only.
+  - Runtime evidence: independent native five cases and offline skip passed; full suite included this test. Commit: pending. Rollback: opt-in regression test only.
 - [ ] **T2 — Surface sync integration diagnostics and corrective handoff.** Status: pending.
   - Reuse existing local ESLint resolution and bounded per-extension probes; keep process arguments in `internal/tool`.
   - Add real parsing/lint evidence distinct from configuration-load verification and actionable instructions in the existing sync report/prompt path.
@@ -51,7 +51,7 @@ An owned flat-config block without `files` depends on matchers supplied by the c
 - Starting commit: `f2a97b6`; branch created before feature writes.
 - Disposable ESLint fixture prepared and import-checked: `C:/Users/User/AppData/Local/Temp/dharness-eslint-fixture.aa3uau`; ESLint 10.11.0, typescript-eslint 8.71.0, dharness-eslint-plugin 0.3.0, TypeScript alias @typescript/typescript6 6.0.2. Set `DHARNESS_ESLINT_FIXTURE` for opt-in checks. This is dependency preparation, not behavior verification.
 - T1 independent checks: gofmt clean; build/vet/full offline tests passed; native contract five cases passed and default skip explicit. `ditto staged --dry` and `ditto staged` exit 0: 7 generated, 5 scored/killed, 0 survivors, 2 non-compiling Integer Decrement mutants excluded; score 1.00.
-- Built dharness plain sync in scratch exit 0 (5 applied, 3 delegated, 3 satisfied, 0 failed); eight owned matchers present and consumer parser/global ignores preserved. Normal TSX with actual JSX proof pending final verifier report.
+- Built dharness plain sync in scratch exit 0 (5 applied, 3 delegated, 3 satisfied, 0 failed); eight owned matchers present and consumer parser/global ignores preserved. Normal Panel.tsx with actual JSX parsed and produced a dharness JSDoc finding (fatal errors 0). Logs: `C:/Users/User/AppData/Local/Temp/dharness-eslint-fixture.aa3uau/verification-logs`.
 - Gate failure-path script not run: it writes/stages/resets checkout probes and was unsafe with pre-existing work. Gate code is unchanged; the normal commit hook will run. This is an explicit skipped check, not a passed gate proof.
 - Worker suspicion that a literal `.ts` filename falls outside the glob was refuted by actual ESLint `dot:true` resolution (.ts and .TS covered).
 - Exploration completed: owned factory and seven golden fixtures identified; sync needs a post-wiring diagnostic note, not a rollback-causing verification failure.
@@ -60,4 +60,4 @@ An owned flat-config block without `files` depends on matchers supplied by the c
 - T1 external-test decision: offline default Go suite; an opt-in real-ESLint fixture prepared outside the repository is mandatory release evidence, not an automatic network install inside tests.
 
 ## Next step
-Verify T1 independently, including full Go checks, the native regression and staged mutation; commit T1 and the separate T1b native contract, recording both identities before starting T2.
+Commit the independently verified T1b native contract and record its identity, then start the bounded T2 diagnostics writer.
