@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 )
 
@@ -437,12 +438,31 @@ func supportedStrykerRunner(testRunner string) bool {
 	return testRunner == "vitest" || testRunner == "jest"
 }
 
+// sourceExtensions is the canonical list of file extensions the wrapped
+// tools analyse, lower-case and in the order every reader presents them.
+//
+// It is one list rather than one per reader because the ESLint layer dharness
+// writes declares its own flat-config matchers from it. Two lists would drift,
+// and a matcher list that drifts from this one is the silence that layer was
+// fixed for: a `.tsx` file outside the owned block, ESLint reporting nothing
+// and exiting 0.
+var sourceExtensions = [...]string{".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs"}
+
+// SourceExtensions returns the recognised extensions, lower-case. The caller
+// gets a copy, so rendering a matcher list cannot edit what IsSourceFile
+// recognises.
+func SourceExtensions() []string {
+	out := make([]string, 0, len(sourceExtensions))
+	return append(out, sourceExtensions[:]...)
+}
+
 // IsSourceFile reports whether a repository path is something the wrapped
 // tools can analyse.
+//
+// The extension is compared lower-cased, so src/App.TSX is a source file on a
+// case-sensitive filesystem too. Every reader that has to agree with this
+// answer — the ESLint block's matchers, the probe paths, the staged scope —
+// reproduces that fold rather than re-deciding it.
 func IsSourceFile(path string) bool {
-	switch strings.ToLower(filepath.Ext(path)) {
-	case ".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs":
-		return true
-	}
-	return false
+	return slices.Contains(sourceExtensions[:], strings.ToLower(filepath.Ext(path)))
 }

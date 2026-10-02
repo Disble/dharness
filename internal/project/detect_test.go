@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strings"
@@ -234,5 +235,58 @@ func TestDeclaresFindsBothDependencyLists(t *testing.T) {
 	}
 	if (Project{}).Declares("react") {
 		t.Error("a project with no source declared something")
+	}
+}
+
+// TestSourceExtensionsAreTheSpelledOutRecognisedSet pins the list the ESLint
+// layer renders its matchers from. It is spelled out here rather than compared
+// against IsSourceFile, which now reads the same list: a test that asks the
+// implementation to confirm itself would pass through a typo that dropped an
+// extension.
+//
+// The entries are a dot and lower-case letters, which is what
+// setup.sourceMatcher's per-letter character class assumes — anything else
+// would render a glob matching something other than that extension.
+func TestSourceExtensionsAreTheSpelledOutRecognisedSet(t *testing.T) {
+	want := []string{".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs"}
+
+	got := SourceExtensions()
+	if !slices.Equal(got, want) {
+		t.Fatalf("SourceExtensions() = %v, want %v", got, want)
+	}
+
+	spelling := regexp.MustCompile(`^\.[a-z]+$`)
+	for _, extension := range got {
+		if !spelling.MatchString(extension) {
+			t.Errorf("SourceExtensions() = %v, want every entry to be a dot and lower-case letters", got)
+		}
+	}
+}
+
+// TestIsSourceFileFoldsTheExtensionCase holds the recognition semantics to
+// what the ESLint matchers have to reproduce: the extension is compared
+// lower-cased, so src/App.TSX is a source file, and it is compared as the
+// extension alone, so .vue, .json and an unrelated suffix are not.
+func TestIsSourceFileFoldsTheExtensionCase(t *testing.T) {
+	cases := []struct {
+		path string
+		want bool
+	}{
+		{"src/app.ts", true},
+		{"src/App.TS", true},
+		{"src/panel.TsX", true},
+		{"src/index.mjs", true},
+		{"src/legacy.CJS", true},
+		{"src/types.d.ts", true},
+		{"src/app.vue", false},
+		{"src/data.json", false},
+		{"src/app", false},
+		{"src/app.tsx.bak", false},
+	}
+
+	for _, tc := range cases {
+		if got := IsSourceFile(tc.path); got != tc.want {
+			t.Errorf("IsSourceFile(%q) = %t, want %t", tc.path, got, tc.want)
+		}
 	}
 }

@@ -197,6 +197,18 @@
 export default function dharnessLayer({ plugin }) {
   return [
     {
+      // dharness's own source matchers, case-folded because flat-config
+      // globs are case-sensitive and IsSourceFile's extension check is not.
+      files: [
+        "**/*.[tT][sS]",
+        "**/*.[tT][sS][xX]",
+        "**/*.[jJ][sS]",
+        "**/*.[jJ][sS][xX]",
+        "**/*.[mM][tT][sS]",
+        "**/*.[cC][tT][sS]",
+        "**/*.[mM][jJ][sS]",
+        "**/*.[cC][jJ][sS]",
+      ],
       plugins: { dharness: plugin },
       rules: {
         "dharness/folder-ownership": "off",

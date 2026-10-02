@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"unicode"
 
 	"github.com/Disble/dharness/internal/jsconfig"
 	"github.com/Disble/dharness/internal/preset"
@@ -90,6 +91,13 @@ func ownedEslintConfig(p project.Project, layers []preset.Layer, module jsconfig
 		fmt.Fprintf(&body, "    %s,\n", expression)
 	}
 	body.WriteString("    {\n")
+	body.WriteString("      // dharness's own source matchers, case-folded because flat-config\n")
+	body.WriteString("      // globs are case-sensitive and IsSourceFile's extension check is not.\n")
+	body.WriteString("      files: [\n")
+	for _, matcher := range ownedSourceMatchers() {
+		fmt.Fprintf(&body, "        %q,\n", matcher)
+	}
+	body.WriteString("      ],\n")
 	body.WriteString("      plugins: { dharness: plugin },\n")
 	body.WriteString("      rules: {\n")
 	for _, id := range sortedRuleIDs() {
@@ -100,6 +108,42 @@ func ownedEslintConfig(p project.Project, layers []preset.Layer, module jsconfig
 	body.WriteString("  ];\n")
 	body.WriteString("}\n")
 	return body.String()
+}
+
+// ownedSourceMatchers renders the flat-config `files` globs the rules block
+// declares, one per extension project.IsSourceFile recognises.
+//
+// The block needs them because a flat-config object without `files` applies
+// only where the consumer's own matchers already reach: a TypeScript-only
+// matcher left `.tsx` outside the owned rules, ESLint reported nothing and
+// exited 0. dharness owns these matchers rather than trusting the project's,
+// which is the boundary §03 draws for every other file it writes.
+func ownedSourceMatchers() []string {
+	extensions := project.SourceExtensions()
+	matchers := make([]string, 0, len(extensions))
+	for _, extension := range extensions {
+		matchers = append(matchers, sourceMatcher(extension))
+	}
+	return matchers
+}
+
+// sourceMatcher renders one extension as a case-folded glob: ".tsx" becomes
+// "**/*.[tT][sS][xX]".
+//
+// The fold is the point. Flat-config globs match case-sensitively — measured
+// against ESLint 10.11.0: `files: ["**/*.tsx"]` reports "File ignored because
+// no matching configuration was supplied" for src/Upper.TSX and exits 0 —
+// while IsSourceFile lower-cases the extension before comparing it. One
+// character class per letter is exactly as case-insensitive as that check, and
+// no broader: every glob here is built from an entry in
+// project.SourceExtensions, so nothing outside that list can match one.
+func sourceMatcher(extension string) string {
+	var matcher strings.Builder
+	matcher.WriteString("**/*.")
+	for _, letter := range strings.TrimPrefix(extension, ".") {
+		fmt.Fprintf(&matcher, "[%c%c]", letter, unicode.ToUpper(letter))
+	}
+	return matcher.String()
 }
 
 // ownedIgnorePattern is the glob that keeps ESLint out of the directory

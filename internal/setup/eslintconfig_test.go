@@ -952,3 +952,44 @@ func TestRegisteredPluginsAsksEveryProbePath(t *testing.T) {
 		t.Errorf("registeredPlugins() asked about %v, want one path per source extension", asked)
 	}
 }
+
+// TestOwnedEslintConfigScopesTheRulesBlockToRecognizedSources is the guard
+// for the silence this closes: a flat-config object with no `files` applies
+// only where the consumer's own matchers already reach, so in a project whose
+// matcher covers `.ts` and not `.tsx` the owned rules never ran on `.tsx` —
+// ESLint reported nothing and exited 0.
+//
+// The block declares dharness's own matchers instead, and they are pinned
+// here as literals rather than recomputed from project.SourceExtensions: this
+// test is the second reader of that list, and recomputing it would make the
+// assertion agree with the generator by construction.
+//
+// The per-letter character classes are what makes each glob as
+// case-insensitive as project.IsSourceFile. Flat-config globs match
+// case-sensitively — measured against ESLint 10.11.0, where
+// `files: ["**/*.tsx"]` reports "File ignored because no matching
+// configuration was supplied" for src/Upper.TSX and exits 0 — while
+// IsSourceFile lower-cases the extension before comparing it.
+func TestOwnedEslintConfigScopesTheRulesBlockToRecognizedSources(t *testing.T) {
+	p := project.At(t.TempDir(), t.TempDir())
+
+	got := ownedEslintConfig(p, nil, jsconfig.ESM)
+
+	want := "    {\n" +
+		"      // dharness's own source matchers, case-folded because flat-config\n" +
+		"      // globs are case-sensitive and IsSourceFile's extension check is not.\n" +
+		"      files: [\n" +
+		"        \"**/*.[tT][sS]\",\n" +
+		"        \"**/*.[tT][sS][xX]\",\n" +
+		"        \"**/*.[jJ][sS]\",\n" +
+		"        \"**/*.[jJ][sS][xX]\",\n" +
+		"        \"**/*.[mM][tT][sS]\",\n" +
+		"        \"**/*.[cC][tT][sS]\",\n" +
+		"        \"**/*.[mM][jJ][sS]\",\n" +
+		"        \"**/*.[cC][jJ][sS]\",\n" +
+		"      ],\n" +
+		"      plugins: { dharness: plugin },\n"
+	if !strings.Contains(got, want) {
+		t.Errorf("ownedEslintConfig() does not scope the rules block to dharness's own source matchers.\nwant:\n%s\ngot:\n%s", want, got)
+	}
+}

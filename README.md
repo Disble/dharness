@@ -79,6 +79,16 @@ the agent — because zones encode intent, and no tool can read intent off a tre
 the repository as it is right now, so re-running it after months reports drift
 rather than a stale record of what once happened.
 
+The ESLint layer dharness writes into `.dharness/` declares its own `files`
+matchers for the extensions dharness recognises — `.ts`, `.tsx`, `.js`, `.jsx`,
+`.mts`, `.cts`, `.mjs`, `.cjs`, each letter case-folded — so its rules no longer
+depend on a matcher the project happens to supply, which is how a
+TypeScript-only matcher left `.tsx` unconfigured while ESLint exited 0. Plain
+ESLint semantics decide the rest: the parser stays the project's, so a `.tsx`
+file with no parser reaches ESLint's own parsing error instead of passing
+silently; an extension outside that list is not claimed by the owned block; and
+an explicit global ignore still wins.
+
 ## What it will not do
 
 - **Wrap a command that already exists.** If a tool exposes it, dharness runs it.
