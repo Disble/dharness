@@ -95,6 +95,33 @@ func TestGenericCarriesTheDuplicationCeiling(t *testing.T) {
 			t.Errorf("Because = %q, want it to carry %q", found.Because, expected)
 		}
 	}
+
+	// Two limits, both of them ways the three values can be misread, so the
+	// comment has to carry them next to the values it explains: the occurrence
+	// floor decides which groups are reported and never the percentage the
+	// ceiling measures, and a structural match is still only a shape match, so
+	// a reported group is a candidate to read rather than a verdict.
+	for _, expected := range []string{
+		"which groups are reported",
+		"not the percentage the ceiling measures",
+		"a candidate to read rather than a verdict",
+	} {
+		if !strings.Contains(found.Because, expected) {
+			t.Errorf("Because = %q, want it to carry %q", found.Because, expected)
+		}
+	}
+
+	// The floor's own reason belongs in the comment as well, and as the
+	// floor's intent for the report: fallow documents minOccurrences as the
+	// minimum number of occurrences before a clone group is reported, so
+	// "two is coincidence, three is a pattern" says which groups are worth
+	// reading — it is not a claim about what the ceiling measures. It sits
+	// next to the two limits above for that reason.
+	const floorIntent = "two occurrences is usually coincidence where three is a pattern"
+	if !strings.Contains(found.Because, floorIntent) {
+		t.Errorf("Because = %q, want it to carry the floor's intent, %q", found.Because, floorIntent)
+	}
+
 	if err := match.Manifest.Validate(); err != nil {
 		t.Errorf("generic's manifest fails Validate(): %v", err)
 	}
