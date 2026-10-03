@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.10.0](https://github.com/Disble/dharness/compare/v1.9.2...v1.10.0) (2026-10-03)
+
+
+### Features
+
+* **check:** explain fallow's duplication ceiling when the gate fails ([b7e42d6](https://github.com/Disble/dharness/commit/b7e42d62ce51075a928511c8af4e0c933aae00ac))
+* **sync:** report sources the ESLint layer cannot parse ([3f35cba](https://github.com/Disble/dharness/commit/3f35cba19193baa3b4d6ae7b7c2d01ff8a5377df))
+
+
+### Bug Fixes
+
+* **eslint:** match all recognized source extensions ([9dd562c](https://github.com/Disble/dharness/commit/9dd562cbe7ec546fe5802767945ec8e6263ab52f))
+* **sync:** correct the extends premise and the collision verdict ([c59ef51](https://github.com/Disble/dharness/commit/c59ef51875c2b5b5cb7392a267e9ec7774bc2ded))
+
 ## [1.9.2](https://github.com/Disble/dharness/compare/v1.9.1...v1.9.2) (2026-09-16)
 
 
