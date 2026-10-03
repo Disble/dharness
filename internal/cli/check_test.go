@@ -1728,3 +1728,178 @@ func TestGateSeparatesAConfigErrorFromLintFindings(t *testing.T) {
 		t.Errorf("eslintConfigErrorNote() = %q for a stage that is not ESLint, want nothing", note)
 	}
 }
+
+// A `fallow dupes` failure is a whole-repository answer, and nothing in the raw
+// report says so. §16: the tool's output passes through uninterpreted, plus the
+// minimum to place it and a pointer to the next question — §09/§01's direct
+// signal, which is fallow's own read-only `config` subcommand rather than a
+// resolution dharness reimplements.
+func TestDupesFailureExplainsItsWholeTreeScopeAndPointsAtTheResolvedConfig(t *testing.T) {
+	captured, root := stub(t, "src/a.ts\n")
+	writeFile(t, filepath.Join(root, "bun.lock"), "")
+	captured.fail[fallowDupesStage] = &runner.ExitError{Command: fallowDupesStage, Code: 1}
+
+	var out bytes.Buffer
+	if err := RunCheck(nil, &out); err == nil {
+		t.Fatal("RunCheck() = nil, want the dupes failure")
+	}
+
+	text := normalizeSpace(out.String())
+	for _, want := range []string{
+		"whole-repository question",
+		"staged change",
+		"absolute ceiling",
+		"bunx fallow@latest config --path",
+		"bunx fallow@latest config --format json",
+		"bunx fallow@latest dupes --format json",
+		"original execution output",
+		"relayed unchanged",
+		"bunx fallow@latest --help",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the duplication failure does not say %q:\n%s", want, out.String())
+		}
+	}
+	// The output above the note is whatever the executor returned, which on a
+	// manager failure is not fallow's output at all. Attributing it to fallow
+	// would be the same invented provenance the exit-code note refuses.
+	if strings.Contains(text, "fallow's own") {
+		t.Errorf("the duplication failure attributes the execution output to fallow:\n%s", out.String())
+	}
+	if strings.Contains(text, "npx ") {
+		t.Errorf("the duplication failure points a bun project at npx:\n%s", out.String())
+	}
+	// §11/§17: a pointer is a pointer. Nothing is probed on the reader's
+	// behalf, so the gate's own three stages are all that ran.
+	if len(captured.commands) != 3 {
+		t.Errorf("ran %d commands, want the gate's 3 stages and no probe: %+v", len(captured.commands), captured.commands)
+	}
+	for _, command := range captured.commands {
+		if slices.Contains(command.Args, "config") {
+			t.Errorf("the gate ran fallow's config diagnostic on its own: %+v", command)
+		}
+	}
+}
+
+// fallow's error code is not a duplication verdict. The distinction is
+// one-sided because provenance is not observable: exit 2 is recognition-grade
+// as fallow's configuration-or-execution code (AGENTS.md: an unrecognized
+// `duplicates.mode` makes fallow exit 2), but the same code arrives when the
+// package manager's remote executor fails before fallow starts, so the note
+// says what the code is not and never which process produced it. §11 reads the
+// code, never the message; §17 leaves the verdict where it was.
+func TestDupesFailureDistinguishesAFallowErrorFromAMeasuredVerdict(t *testing.T) {
+	captured, _ := stub(t, "src/a.ts\n")
+	captured.fail[fallowDupesStage] = &runner.ExitError{Command: fallowDupesStage, Code: 2}
+
+	var out bytes.Buffer
+	err := RunCheck(nil, &out)
+
+	var exit *runner.ExitError
+	if !errors.As(err, &exit) || exit.Code != 2 {
+		t.Fatalf("RunCheck() = %v, want the tool's own code 2 propagated unchanged", err)
+	}
+
+	text := normalizeSpace(out.String())
+	for _, want := range []string{
+		"configuration or execution error",
+		"rather than a duplication verdict",
+		"package manager",
+		"cannot tell those apart",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the code-2 failure does not say %q:\n%s", want, out.String())
+		}
+	}
+	if !strings.Contains(text, "absolute ceiling") {
+		t.Errorf("the code-2 failure dropped the scope explanation:\n%s", out.String())
+	}
+}
+
+// Only the recognized error code is classified: exit 1 is both fallow's fail
+// verdict and a code a remote executor returns for a failure of its own, so
+// reading "the ceiling was exceeded" out of it is the proxy signal §09
+// forbids. An unclassifiable failure stays exactly what it was.
+func TestUnrecognizedFallowExitCodeStaysUnclassified(t *testing.T) {
+	captured, _ := stub(t, "src/a.ts\n")
+	captured.fail[fallowDupesStage] = &runner.ExitError{Command: fallowDupesStage, Code: 1}
+
+	var out bytes.Buffer
+	err := RunCheck(nil, &out)
+
+	var exit *runner.ExitError
+	if !errors.As(err, &exit) || exit.Code != 1 {
+		t.Fatalf("RunCheck() = %v, want the tool's own code 1 propagated unchanged", err)
+	}
+	text := normalizeSpace(out.String())
+	if strings.Contains(text, "configuration or execution error") {
+		t.Errorf("an exit code the gate cannot classify was classified anyway:\n%s", out.String())
+	}
+	if strings.Contains(text, "was exceeded") {
+		t.Errorf("the gate inferred a ceiling breach from a generic exit code:\n%s", out.String())
+	}
+}
+
+// A passing gate, a react-doctor failure and an audit failure each keep their
+// output: the duplication note belongs to one stage's question, and printing it
+// beside a stage that never asked it would explain something that did not happen,
+// which is the defect that once made both fallow stages say "fallow did not run".
+func TestDuplicationContextStaysOffPassingGatesAndOtherFailures(t *testing.T) {
+	cases := []struct {
+		name string
+		fail func(*record)
+	}{
+		{name: "passing gate", fail: func(*record) {}},
+		{name: "react-doctor failure", fail: func(c *record) {
+			c.fail["react-doctor"] = &runner.ExitError{Command: "react-doctor", Code: 1}
+		}},
+		{name: "audit failure", fail: func(c *record) {
+			c.fail[fallowAuditStage] = &runner.ExitError{Command: fallowAuditStage, Code: 1}
+		}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			captured, _ := stub(t, "src/a.ts\n")
+			tc.fail(captured)
+
+			var out bytes.Buffer
+			_ = RunCheck(nil, &out)
+
+			text := normalizeSpace(out.String())
+			for _, unwanted := range []string{"absolute ceiling", "config --path", "whole-repository question"} {
+				if strings.Contains(text, unwanted) {
+					t.Errorf("%s printed duplication context that belongs to the dupes stage: %q\n%s",
+						tc.name, unwanted, out.String())
+				}
+			}
+		})
+	}
+}
+
+// A stage that never started has no exit code, and the scope explanation still
+// applies — `dupes` is still the question that could not be answered. It is
+// also the branch that makes the type guard load-bearing: without it this path
+// dereferences a nil ExitError instead of printing.
+func TestDupesFailureThatNeverStartedCarriesNoClassification(t *testing.T) {
+	captured, _ := stub(t, "src/a.ts\n")
+	captured.fail[fallowDupesStage] = &runner.StartError{
+		Command: fallowDupesStage,
+		Cause:   errors.New("executable file not found in %PATH%"),
+	}
+
+	var out bytes.Buffer
+	err := RunCheck(nil, &out)
+
+	var start *runner.StartError
+	if !errors.As(err, &start) {
+		t.Fatalf("RunCheck() = %v, want the StartError propagated unchanged", err)
+	}
+	text := normalizeSpace(out.String())
+	if !strings.Contains(text, "absolute ceiling") {
+		t.Errorf("a dupes stage that never started dropped the scope explanation:\n%s", out.String())
+	}
+	if strings.Contains(text, "configuration or execution error") {
+		t.Errorf("a stage with no exit code was classified from something else:\n%s", out.String())
+	}
+}
