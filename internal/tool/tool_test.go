@@ -68,6 +68,25 @@ func TestFallowDupesStaysWholeRepository(t *testing.T) {
 	}
 }
 
+// FallowDupesReport is a pointer the gate prints and never runs, so it has to
+// name the same whole-repository command the stage runs plus the JSON form —
+// no base, no diff, nothing that would narrow the scope the reader was just
+// told about. A mutant dropping --format or folding it into FallowDupes dies
+// here, and so does one that quietly adds a scope flag to either list.
+func TestFallowDupesReportAsksTheSameQuestionInJSON(t *testing.T) {
+	got := FallowDupesReport()
+
+	if !slices.Equal(got, []string{"dupes", "--format", "json"}) {
+		t.Errorf("FallowDupesReport() = %v, want [dupes --format json]", got)
+	}
+	// The stage's own list must not have grown a format flag: the gate runs
+	// `dupes` and reads its rendered output, and a JSON stage would make
+	// dharness the interpreter of a report it currently only relays.
+	if stage := FallowDupes(); !slices.Equal(stage, []string{"dupes"}) {
+		t.Errorf("FallowDupes() = %v, want the stage to stay [dupes]", stage)
+	}
+}
+
 // TestESLintStagedSuppressesTheIgnoredFileWarning covers a warning dharness
 // causes and only dharness can answer for.
 //

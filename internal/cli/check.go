@@ -153,6 +153,7 @@ func RunCheck(args []string, stdout io.Writer) error {
 
 		if err := runner.Run(stage.command, stdout, stdout); err != nil {
 			fmt.Fprint(stdout, eslintConfigErrorNote(stage, err))
+			fmt.Fprint(stdout, fallowDupesFailureNote(stage, p, err))
 			if skipped := stages[index+1:]; len(skipped) > 0 {
 				fmt.Fprintf(stdout, "\n%s failed, so %s did not run. There may be more to fix behind it.\n",
 					stage.label, names(skipped))
@@ -205,6 +206,77 @@ The fix is in the config the report above names, not in the staged change.
 
 checks the same thing and says what it would write.
 `
+}
+
+// fallowErrorCode is fallow's exit code for a configuration or execution error,
+// as against 1 for a completed run whose own verdict is a fail. It is recorded
+// from this repository's own evidence: an unrecognized `duplicates.mode` makes
+// fallow exit 2 (AGENTS.md), and a repository at 80% duplication with a 3%
+// ceiling exits 1 from `dupes` (docs/learning-log.md, 11 August 2026).
+const fallowErrorCode = 2
+
+// fallowDupesFailureNote explains what a `fallow dupes` failure is a question
+// about, and — when the exit code is fallow's error code — what it is not a
+// finding about. Every other stage gets "", because the note describes a
+// question only `dupes` asks and printing it elsewhere would explain something
+// that did not happen.
+//
+// §16 asks for the tool's raw output uninterpreted, the minimum needed to place
+// it, and a way to the next question. Those ways are fallow's own read-only
+// `config` and `dupes --format json` invocations, reached through the argument
+// vectors and the invocation dharness already owns (§03) rather than ones
+// reimplemented here (§01) — the direct signal, from the tool that already
+// answers it (§09), and never a probe this gate runs. The ceiling stays a
+// question rather than a value: dharness writes one into the config it owns,
+// but the project can override it (§05), so the effective number is whatever
+// fallow resolves and not necessarily the one dharness wrote.
+func fallowDupesFailureNote(s stage, p project.Project, err error) string {
+	if s.label != fallowDupesStage {
+		return ""
+	}
+
+	path := invocation(tool.RemoteLatest(p.PackageManager, tool.Fallow, p.Source, tool.FallowConfigPath()...))
+	config := invocation(tool.RemoteLatest(p.PackageManager, tool.Fallow, p.Source, tool.FallowConfigJSON()...))
+	report := invocation(tool.RemoteLatest(p.PackageManager, tool.Fallow, p.Source, tool.FallowDupesReport()...))
+
+	return fmt.Sprintf(`
+%s dupes asks one whole-repository question rather than a question about the staged
+change: is this project's total duplication above the absolute ceiling in the config
+fallow resolves for it? dharness writes a ceiling into the config it owns, but a project
+can override it, so the effective value is the one fallow resolves rather than the one
+dharness wrote.
+
+The commands below read that config and print the report as JSON; the gate does not run
+them:
+
+    %s
+    %s
+    %s
+
+The output above is the original execution output, relayed unchanged.
+`, tool.Fallow, path, config, report) + fallowErrorNote(err)
+}
+
+// fallowErrorNote separates an error from a verdict, and stops short of claiming
+// which of the two it saw. The gate can say this code is fallow's error code
+// rather than a duplication verdict — without that, the report above reads like
+// measured duplication. It cannot say that fallow ran, or did not: the stage is
+// launched through the package manager's remote executor, and the same code
+// arrives when the manager fails before fallow starts. Provenance is not
+// observable from here, so §11's exit code is read for what it proves and no
+// cause is named.
+func fallowErrorNote(err error) string {
+	var exit *runner.ExitError
+	if !errors.As(err, &exit) || exit.Code != fallowErrorCode {
+		return ""
+	}
+	return fmt.Sprintf(`
+This exit code, %d, is not that answer: fallow reports it on a configuration or
+execution error rather than a duplication verdict. Because this stage runs
+through the package manager's remote executor, the same code also arrives when
+the manager fails before fallow starts — dharness cannot tell those apart from
+the exit code, and neither one says the ceiling was exceeded.
+`, exit.Code)
 }
 
 // stage is one wrapped tool, the command that runs it, and the command that

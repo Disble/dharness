@@ -94,11 +94,20 @@ var Version = "dev"
 // at their latest version, that is how they are used in practice, and an
 // exploratory question is exactly where that costs nothing.
 func pointer(command runner.Command) string {
-	invocation := strings.Join(append([]string{command.Name}, command.Args...), " ")
 	return fmt.Sprintf(
 		"\ndharness wraps the gate, not %s itself. For anything beyond pass or fail —\nwhy a finding fired, what it means, which rules exist — ask the tool:\n\n    %s\n",
-		command.String(), invocation,
+		command.String(), invocation(command),
 	)
+}
+
+// invocation renders a command the way whoever reads the gate would type it.
+//
+// The command it is handed is already resolved the way the product resolves it
+// — the detected manager's executor for a remote stage, the project's own
+// installed binary for a local one — so the spelling carries no second
+// resolution of its own to drift from the first.
+func invocation(command runner.Command) string {
+	return strings.Join(append([]string{command.Name}, command.Args...), " ")
 }
 
 // noSourceMessage explains the one state in which dharness has nothing to say.

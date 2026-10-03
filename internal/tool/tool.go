@@ -267,6 +267,21 @@ func FallowDupes() []string {
 	return []string{"dupes"}
 }
 
+// FallowDupesReport asks the same whole-repository question as FallowDupes and
+// prints the report as JSON on stdout, which is the form a reader can consult
+// without reading a rendered one. Like FallowDupes it carries no base and no
+// diff, so the scope stays the whole repository, and it stays a separate
+// argument list rather than a flag added to the stage: the gate prints this
+// invocation and never runs it, so what the reader gets is the tool's own
+// answer rather than a second analysis dharness paid for at commit time.
+//
+// The two lists are kept in step by their tests, not by one calling the other:
+// FallowDupes must stay exactly ["dupes"] because that is what the gate runs,
+// and this one is only ever a pointer.
+func FallowDupesReport() []string {
+	return []string{"dupes", "--format", "json"}
+}
+
 // FallowConfigPath prints the resolved config file path, and exits 3 when
 // the project has no fallow config at all. It is the probe: --format json
 // exits 0 even with no config file (it prints defaults), so it can never be
