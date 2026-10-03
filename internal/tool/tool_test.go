@@ -93,6 +93,22 @@ func TestESLintStagedSuppressesTheIgnoredFileWarning(t *testing.T) {
 	}
 }
 
+// TestESLintDiagnosticsPinsTheMachineVerdict pins the argv of the one lint
+// invocation sync uses to ask whether the wired config can read the
+// project's own sources: machine JSON on stdout, so dharness reads
+// ESLint's `fatal` flag instead of its prose, and --no-warn-ignored for the
+// same reason ESLintStaged passes it — a path the consumer's global ignore
+// deliberately drops must read as an empty result rather than as a warning
+// about a file list the user did not build.
+func TestESLintDiagnosticsPinsTheMachineVerdict(t *testing.T) {
+	got := ESLintDiagnostics([]string{"src/a.ts", "src/b.tsx"})
+
+	want := []string{"--no-warn-ignored", "--format", "json", "src/a.ts", "src/b.tsx"}
+	if !slices.Equal(got, want) {
+		t.Errorf("ESLintDiagnostics() = %v, want %v", got, want)
+	}
+}
+
 // TestMutateNamesEveryPathInOneArgument pins the comma join. Stryker 9.6.1's own
 // stryker-cli.js parses --mutate with a splitter that ignores the previous
 // value on a repeated flag (stryker-cli.js:11-14,114), so dharness emitting
