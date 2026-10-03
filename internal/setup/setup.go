@@ -224,6 +224,13 @@ func run(plan []Step, p project.Project) (steps []report.StepResult, notes []rep
 		})
 	}
 
+	// The post-wiring diagnostic is derived here rather than with the notes
+	// above: it is a question about the config this run just wrote, and its
+	// answer does not exist until the loop has finished. A failed run never
+	// reaches this point — retractAndReport returns first — so a rolled-back
+	// repository derives no note from bytes that were undone.
+	notes = append(notes, eslintDiagnostics(p)...)
+
 	return results, notes, nil
 }
 

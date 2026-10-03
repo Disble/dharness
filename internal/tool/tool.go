@@ -433,6 +433,29 @@ func ESLintPrintConfig(file string) []string {
 	return []string{"--print-config", file}
 }
 
+// ESLintDiagnostics lints an explicit file list and prints machine JSON,
+// which is how a sync learns whether the config it just wired can actually
+// read the project's sources.
+//
+// It is a read of a different fact than ESLintPrintConfig's. --print-config
+// proves the config array resolves; it parses nothing, so a `.tsx` file the
+// consumer's parser cannot handle resolves cleanly and this is the only
+// invocation that says so. The verdict is still ESLint's own (§11):
+// --format json puts one result per file on stdout, and each message's
+// `fatal` flag is what tells a parse or integration diagnostic apart from
+// an ordinary rule finding. dharness reads that flag and never the message.
+//
+// --no-warn-ignored is ESLintStaged's flag for the same reason: the file
+// list is dharness's, so a path the consumer's global ignore deliberately
+// drops must come back as an empty valid result rather than as a warning
+// about a list the user did not build.
+//
+// No --cache, for ESLintStaged's recorded reason: it writes into the
+// project's tree, which §03 would then have to account for.
+func ESLintDiagnostics(files []string) []string {
+	return append([]string{"--no-warn-ignored", "--format", "json"}, files...)
+}
+
 // mutate builds the single --mutate argument Stryker will actually read.
 //
 // Measured against Stryker 9.6.1's own stryker-cli.js: its splitter for

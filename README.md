@@ -89,6 +89,19 @@ file with no parser reaches ESLint's own parsing error instead of passing
 silently; an extension outside that list is not claimed by the owned block; and
 an explicit global ignore still wins.
 
+`sync` also reports when that wiring cannot read the project's sources. Once
+the plan has run, it hands its own bounded probe set — one file per source
+extension it recognises, the project's config among them — to the local ESLint
+with `--no-warn-ignored --format json`, and reads ESLint's machine verdict
+rather than its prose: a message ESLint marks `fatal` becomes an actionable
+note naming each file, ESLint's own location and message, and the parser and
+`files` matchers in the project's config to review. Ordinary rule findings
+produce no note, because sync is not a whole-tree lint gate, and a fatal
+diagnostic is evidence rather than proof that a parser is missing. Nothing is
+rolled back and no consumer source or parser is edited; the note disappears by
+itself on the next sync once ESLint parses those files. A run whose ESLint
+output cannot be read is reported as an unchecked question, never as clean.
+
 ## What it will not do
 
 - **Wrap a command that already exists.** If a tool exposes it, dharness runs it.
