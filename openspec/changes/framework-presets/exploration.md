@@ -92,26 +92,32 @@ should be framed as **the owned file stops being empty**, not as a step count.
 
 ## Orchestrator correction
 
-The exploration also concluded that the `extends` replace hazard "resolves for
-free" if presets write only into `.dharness/fallow.jsonc`. **That is wrong, and
-the counterexample is the project that motivated this change.**
+The exploration also concluded that the `extends` hazard "resolves for free" if
+presets write only into `.dharness/fallow.jsonc`. **That is wrong, and the
+counterexample is the project that motivated this change.**
 
-Measured against fallow 3.14.0: `extends` replaces a key rather than merging it.
-A parent declaring `ignoreDependencies` is honoured until the child declares its
-own, and from then on the parent's value is discarded whole, with no error. The
-same applies to `boundaries`, measured the same way.
+Measured against fallow 3.14.0: `extends` merges an object-valued key field by
+field and replaces each array and scalar whole. A parent declaring
+`ignoreDependencies` keeps every field the child does not mention; a parent
+declaring `ignorePatterns` loses the whole array the moment the child declares
+its own. The same applies to `boundaries`, measured the same way. What this note
+first recorded — that `extends` replaces a key rather than merging it — was
+over-generalised from the array case; the correction was measured on 2026-10-02
+against 3.14.0 and the current release, which behave identically, and the
+mixture can even make fallow exit 2 rather than warn.
 
 The reference project's own `.fallowrc.json` already declares
 `"ignorePatterns": ["wailsjs/**"]`. If dharness wrote that key into the file it
-owns, the project's declaration would replace it entirely and in silence — the
-preset would do nothing, in the exact repository the example came from.
+owns, the project's declaration would replace the whole array and in silence —
+the preset would do nothing, in the exact repository the example came from.
 
 Writing into the owned file is **necessary but not sufficient**. Every key a
 preset contributes needs the treatment `boundariesOwnerStep` already gives one
 key: dharness writes it in its own file *and* reports when the project's own
-config declares the same key, because only one of the two is in effect and the
-configuration does not say which. That generalises an existing step from one key
-to N, and it is design work the proposal has to carry rather than inherit.
+config declares the same key, because the merge leaves fields from both in force
+and the configuration does not say which. That generalises an existing step from
+one key to N, and it is design work the proposal has to carry rather than
+inherit.
 
 ## Risks
 

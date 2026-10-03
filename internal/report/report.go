@@ -117,13 +117,36 @@ type Collision struct {
 	// ID is the stable, addressable handle the closing block points at,
 	// in fallow's own `dup:c064407b` shape. It is derived from Key, so a
 	// key can never carry two ids.
-	ID          string   `json:"id"`
-	Key         string   `json:"key"`
-	Ours        Declared `json:"ours"`
-	Theirs      Declared `json:"theirs"`
+	ID     string   `json:"id"`
+	Key    string   `json:"key"`
+	Ours   Declared `json:"ours"`
+	Theirs Declared `json:"theirs"`
+
+	// Effective is which value a measurement says is in force, and it is a
+	// pointer so that "never measured" is an absent key rather than a
+	// guessed side (config-collision's own absent-never-fabricated rule).
+	// It carries one of three values, not two: fallow's `extends` merges an
+	// object-valued key field by field, so a project declaring only `mode`
+	// keeps dharness's `minOccurrences` and `threshold` and the resolved
+	// object equals neither side. An array or scalar is replaced whole and
+	// so is only ever EffectiveOurs or EffectiveTheirs; EffectiveMixed is
+	// reachable for objects alone.
 	Effective   *string  `json:"effective,omitempty"`
 	Resolutions []string `json:"resolutions"`
 }
+
+// The three values Collision.Effective can take. They are strings rather
+// than an enum so the JSON twin renders the spec's own words with no
+// MarshalJSON method — the same reasoning Status records. EffectiveMixed is
+// the third state the measured merge semantics make reachable; a renderer
+// that treats "not ours and not theirs" as "never measured" conflates the
+// two, which is why the human view marks a mixed collision on both sides
+// rather than leaving both bare.
+const (
+	EffectiveOurs   = "ours"
+	EffectiveTheirs = "theirs"
+	EffectiveMixed  = "mixed"
+)
 
 // Declared is one side of a collision. Value is a pointer to raw JSON so
 // that "fallow could not be asked" is an absent key rather than an empty

@@ -449,6 +449,52 @@ func TestWriteHumanCollisionValueWrapsWithinReportWidth(t *testing.T) {
 // wrapped line — rather than floating on a line of its own that a reader
 // could mistake for marking the whole side. It must also still respect
 // wrapWidth with the mark appended, not only without it.
+// TestWriteHumanCollisionExplanationSharesTheValueLinesIndent pins the mixed
+// explanation's own wrapping. It is wrapped inside the same width as the values
+// above it and indented exactly once, so a wider wrap shows up as a line over
+// the report width and an extra hanging space shows up as a continuation that
+// does not line up with the first line.
+func TestWriteHumanCollisionExplanationSharesTheValueLinesIndent(t *testing.T) {
+	ours := jsonRaw(`{"minOccurrences":3,"mode":"semantic","threshold":3}`)
+	theirs := jsonRaw(`{"minOccurrences":3,"mode":"mild","threshold":3}`)
+	effective := EffectiveMixed
+	c := Collision{
+		ID:        "sync:collision/duplicates",
+		Key:       "duplicates",
+		Ours:      Declared{Path: ".dharness/fallow.jsonc", Value: &ours},
+		Theirs:    Declared{Path: "frontend/.fallowrc.json", Value: &theirs},
+		Effective: &effective,
+	}
+	r := Report{Steps: []StepResult{{ID: "resolve", Status: Delegated, Collisions: []Collision{c}}}}
+
+	out := renderHuman(t, r)
+	lines := strings.Split(out, "\n")
+	start := -1
+	for i, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "fallow merges an object-valued key") {
+			start = i
+			break
+		}
+	}
+	if start < 0 {
+		t.Fatalf("the mixed explanation is missing from the block:\n%s", out)
+	}
+
+	indent := len(lines[start]) - len(strings.TrimLeft(lines[start], " "))
+	for i := start; i < len(lines); i++ {
+		line := lines[i]
+		if strings.TrimSpace(line) == "" || strings.HasPrefix(strings.TrimSpace(line), "Pick one owner") {
+			break
+		}
+		if n := utf8.RuneCountInString(line); n > wrapWidth {
+			t.Errorf("explanation line %d is %d runes, over the report width of %d: %q", i+1, n, wrapWidth, line)
+		}
+		if got := len(line) - len(strings.TrimLeft(line, " ")); got != indent {
+			t.Errorf("explanation line %d is indented %d spaces, want %d to line up with the first: %q", i+1, got, indent, line)
+		}
+	}
+}
+
 func TestEffectiveMarkStaysAttachedWhenTheValueWraps(t *testing.T) {
 	theirs := jsonRaw(`{"enabled":true,"mode":"weak","near":false,"minTokens":50,"minLines":5,"minOccurrences":2,"threshold":5.0,"ignore":[],"ignoredClones":[],"ignoreDefaults":true,"skipLocal":false,"crossLanguage":false,"ignoreImports":true,"normalization":{},"minCorpusSizeForShingleFilter":1024,"minCorpusSizeForTokenCache":5000}`)
 	// Left unmeasured on dharness's side on purpose, so narrowing cannot
@@ -1422,6 +1468,329 @@ func TestEffectiveMarkAppearsOnExactlyOneSide(t *testing.T) {
 	}
 	if !strings.Contains(theirsLine, "this one runs") {
 		t.Errorf("the mark is missing from the theirs side, where Effective == %q:\n%s", effective, theirsLine)
+	}
+}
+
+// TestEffectiveMixedMarksBothSides pins the third state's rendering: with
+// Effective == "mixed" the merge keeps fields from both sides, so both sides
+// carry the mixed sentence and neither carries the single-winner one. A
+// renderer that marked one side, or neither, would read as a verdict the
+// measurement did not make.
+func TestEffectiveMixedMarksBothSides(t *testing.T) {
+	ours := jsonRaw(`{"minOccurrences":3,"mode":"semantic","threshold":3}`)
+	theirs := jsonRaw(`{"minOccurrences":3,"mode":"mild","threshold":3}`)
+	effective := EffectiveMixed
+	c := Collision{
+		ID:        "sync:collision/duplicates",
+		Key:       "duplicates",
+		Ours:      Declared{Path: ".dharness/fallow.jsonc", Value: &ours},
+		Theirs:    Declared{Path: "frontend/.fallowrc.json", Value: &theirs},
+		Effective: &effective,
+	}
+	r := Report{Steps: []StepResult{{ID: "resolve", Status: Delegated, Collisions: []Collision{c}}}}
+
+	out := renderHuman(t, r)
+
+	if got := strings.Count(out, "this side's fields are in force"); got != 2 {
+		t.Fatalf(`strings.Count(output, "this side's fields are in force") = %d, want exactly 2 (one per side):%s`, got, out)
+	}
+	if got := strings.Count(out, "this one runs"); got != 0 {
+		t.Errorf(`strings.Count(output, "this one runs") = %d, want 0: mixed is not a single winner:%s`, got, out)
+	}
+
+	lines := strings.Split(out, "\n")
+	var oursLine, theirsLine string
+	for i, line := range lines {
+		// The five-space indent is writeDeclaredSide's own label column,
+		// and matching it keeps the closing "Then re-run `dharness sync`"
+		// line from being mistaken for the dharness side.
+		if strings.HasPrefix(line, "     dharness ") && i+1 < len(lines) {
+			oursLine = line + "\n" + lines[i+1]
+		}
+		if strings.HasPrefix(line, "     project ") && i+1 < len(lines) {
+			theirsLine = line + "\n" + lines[i+1]
+		}
+	}
+	if !strings.Contains(oursLine, "this side's fields are in force") {
+		t.Errorf("the mixed mark is missing from the ours side:\n%s", oursLine)
+	}
+	if !strings.Contains(theirsLine, "this side's fields are in force") {
+		t.Errorf("the mixed mark is missing from the theirs side:\n%s", theirsLine)
+	}
+}
+
+// TestEffectiveMixedIsDistinguishableFromNeverMeasured guards the conflation
+// the third state could otherwise introduce: before it existed, two bare
+// sides meant exactly one thing — never measured. The two collisions below
+// carry identical values and differ only in Effective, so any output
+// difference is the mark itself.
+func TestEffectiveMixedIsDistinguishableFromNeverMeasured(t *testing.T) {
+	collision := func(effective *string) Collision {
+		ours := jsonRaw(`{"a":1}`)
+		theirs := jsonRaw(`{"a":2}`)
+		return Collision{
+			ID:        "sync:collision/duplicates",
+			Key:       "duplicates",
+			Ours:      Declared{Path: ".dharness/fallow.jsonc", Value: &ours},
+			Theirs:    Declared{Path: "frontend/.fallowrc.json", Value: &theirs},
+			Effective: effective,
+		}
+	}
+	render := func(effective *string) string {
+		return renderHuman(t, Report{Steps: []StepResult{{
+			ID: "resolve", Status: Delegated, Collisions: []Collision{collision(effective)},
+		}}})
+	}
+
+	mixed := EffectiveMixed
+	mixedOut := render(&mixed)
+	unmeasuredOut := render(nil)
+
+	if !strings.Contains(mixedOut, effectiveMixedMark) {
+		t.Errorf("the mixed rendering carries no mark, so it reads as never measured:\n%s", mixedOut)
+	}
+	if strings.Contains(unmeasuredOut, effectiveMixedMark) || strings.Contains(unmeasuredOut, effectiveWinnerMark) {
+		t.Errorf("a never-measured collision carries a mark, which implies a side it never measured:\n%s", unmeasuredOut)
+	}
+	if mixedOut == unmeasuredOut {
+		t.Errorf("a mixed collision and a never-measured one render identically:\n%s", mixedOut)
+	}
+}
+
+// TestWriteHumanCollisionExplainsWhyBothSidesCanBeInForce pins the sentence
+// the mixed verdict needs to be actionable. The marks say both sides are in
+// force; without a line saying how, the reader has a verdict with no
+// mechanism behind it. The line states fallow's measured merge — an
+// object-valued key merges field by field, so a field the project did not
+// override keeps dharness's value, while arrays and scalars are replaced
+// whole — and it belongs to `mixed` alone: a single winner has nothing to
+// explain, and an absent verdict must not borrow an explanation for a
+// measurement that was never made.
+func TestWriteHumanCollisionExplainsWhyBothSidesCanBeInForce(t *testing.T) {
+	collision := func(effective *string) Collision {
+		ours := jsonRaw(`{"minOccurrences":3,"mode":"semantic","threshold":3}`)
+		theirs := jsonRaw(`{"minOccurrences":3,"mode":"mild","threshold":3}`)
+		return Collision{
+			ID:        "sync:collision/duplicates",
+			Key:       "duplicates",
+			Ours:      Declared{Path: ".dharness/fallow.jsonc", Value: &ours},
+			Theirs:    Declared{Path: "frontend/.fallowrc.json", Value: &theirs},
+			Effective: effective,
+		}
+	}
+	render := func(effective *string) string {
+		return renderHuman(t, Report{Steps: []StepResult{{
+			ID: "resolve", Status: Delegated, Collisions: []Collision{collision(effective)},
+		}}})
+	}
+
+	// The sentence's first clause fits inside one wrapped line, so it is
+	// the sentinel: wrap may split the rest of the words across lines, and
+	// asserting the whole constant against wrapped output could never pass.
+	const explanation = "fallow merges an object-valued key field by field:"
+
+	mixed, ours, theirs := EffectiveMixed, EffectiveOurs, EffectiveTheirs
+	cases := []struct {
+		name      string
+		effective *string
+		want      bool
+	}{
+		{"mixed", &mixed, true},
+		{"ours", &ours, false},
+		{"theirs", &theirs, false},
+		{"never measured", nil, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out := render(tc.effective)
+			if got := strings.Contains(out, explanation); got != tc.want {
+				t.Errorf("the %s block carries the merge explanation = %v, want %v:\n%s", tc.name, got, tc.want, out)
+			}
+			// Wrapping narrows a line, never drops text: on the block that
+			// carries the sentence, every word of it survives somewhere.
+			if tc.want {
+				for _, word := range strings.Fields(mixedExplanation) {
+					if !strings.Contains(out, word) {
+						t.Errorf("wrapping the merge explanation lost %q:\n%s", word, out)
+					}
+				}
+			}
+		})
+	}
+}
+
+// renderHuman is the buffer-and-WriteHuman dance the collision tests around
+// this one each repeat, so a new case states its fixture and its assertion
+// rather than its plumbing.
+func renderHuman(t *testing.T, r Report) string {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := WriteHuman(&buf, r); err != nil {
+		t.Fatalf("WriteHuman() = %v", err)
+	}
+	return buf.String()
+}
+
+// TestEffectiveComparesValuesNotSpellings pins the defect two independent
+// verifications measured with the real binary: objectFields keeps each
+// field's own text, and dharness declares `threshold: 3` while fallow's
+// resolved config answers `threshold: 3.0` — one value written two ways.
+// Comparing the spellings counted a kept field as lost and turned a fully
+// kept declaration into a false `mixed` verdict.
+//
+// Numbers compare by numeric value whatever spelling they arrived in;
+// strings, booleans and null compare by value; arrays and objects compare
+// structurally with the same rule at every depth. The mantissa row is what
+// keeps the rule exact: past float64's 53 bits these two integers are one
+// value to a float64 decoder and two values in JSON, and JSON is the
+// truth.
+func TestEffectiveComparesValuesNotSpellings(t *testing.T) {
+	cases := []struct {
+		name         string
+		ours, theirs string
+		want         string
+	}{
+		{"a field written with a fractional zero", `{"threshold":3}`, `{"threshold":3.0}`, EffectiveOurs},
+		{"a field written in exponent form", `{"threshold":100}`, `{"threshold":1e2}`, EffectiveOurs},
+		{"a nested object", `{"duplicates":{"threshold":3}}`, `{"duplicates":{"threshold":30e-1}}`, EffectiveOurs},
+		{"an array element", `{"values":[1,2.0]}`, `{"values":[1.0,2]}`, EffectiveOurs},
+		{"a string", `{"mode":"mild"}`, `{"mode":"mild"}`, EffectiveOurs},
+		{"a boolean", `{"enabled":true}`, `{"enabled":true}`, EffectiveOurs},
+		{"null", `{"extra":null}`, `{"extra":null}`, EffectiveOurs},
+		{"an array as the whole value", `[1,2.0]`, `[1.0,2]`, EffectiveOurs},
+		{"a number as the whole value", `100`, `1e2`, EffectiveOurs},
+		{"text that is not JSON, identical", `{oops`, `{oops`, EffectiveOurs},
+		{"text that is not JSON, differing only in spacing", `{oops`, `  {oops  `, EffectiveOurs},
+		{"text that is not JSON, different", `{oops`, `{other`, EffectiveTheirs},
+		{"a JSON value against text that is not JSON", `null`, `{oops`, EffectiveTheirs},
+		{"text that is not JSON against a JSON value", `{oops`, `null`, EffectiveTheirs},
+		{"two integers a float64 decoder cannot tell apart", `{"count":9007199254740993}`, `{"count":9007199254740992}`, EffectiveTheirs},
+		{"null against a number", `null`, `3`, EffectiveTheirs},
+		{"a boolean against its opposite", `{"enabled":true}`, `{"enabled":false}`, EffectiveTheirs},
+		{"a boolean against a string", `{"enabled":true}`, `{"enabled":"true"}`, EffectiveTheirs},
+		{"a string against a number", `{"mode":"3"}`, `{"mode":3}`, EffectiveTheirs},
+		{"a number against a string", `{"threshold":3}`, `{"threshold":"3"}`, EffectiveTheirs},
+		{"a string with a different value", `{"mode":"mild"}`, `{"mode":"weak"}`, EffectiveTheirs},
+		{"an array of a different length", `[1,2]`, `[1]`, EffectiveTheirs},
+		{"an array against an object", `[1]`, `{"a":1}`, EffectiveTheirs},
+		{"an array element with a different value", `[1,2]`, `[1,3]`, EffectiveTheirs},
+		{"an object against an array", `{"a":1}`, `[1]`, EffectiveTheirs},
+		{"a nested object with a different value", `{"a":{"b":1}}`, `{"a":{"b":2}}`, EffectiveTheirs},
+		{"a nested object with an extra key", `{"a":{"b":1}}`, `{"a":{"b":1,"c":2}}`, EffectiveTheirs},
+		{"a nested object with a different key", `{"a":{"b":1}}`, `{"a":{"c":1}}`, EffectiveTheirs},
+		{"a field with a different value", `{"threshold":3}`, `{"threshold":4}`, EffectiveTheirs},
+		// The second argument is the one the comparison iterates, so a
+		// declaration carrying MORE keys than the resolved value answers
+		// "equal" for every key it holds unless the length check stops it:
+		// dharness's extra field is not in force and the verdict must say so.
+		{"a nested object dharness declares more keys of", `{"a":{"b":1,"c":2}}`, `{"a":{"b":1}}`, EffectiveTheirs},
+		// Two fields of one declaration, so the loop's own bookkeeping is
+		// what decides: one kept and one lost is a mixture, and a loop that
+		// stopped after its first field would answer the single winner that
+		// first field alone implies.
+		{"a kept field and a lost field in one declaration", `{"mode":"mild","threshold":3}`, `{"mode":"semantic","threshold":3}`, EffectiveMixed},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ours, theirs := jsonRaw(tc.ours), jsonRaw(tc.theirs)
+			got, ok := Effective(&ours, &theirs)
+			if !ok {
+				t.Fatalf("Effective(%s, %s) ok = false, want true", tc.ours, tc.theirs)
+			}
+			if got != tc.want {
+				t.Errorf("Effective(%s, %s) = %q, want %q", tc.ours, tc.theirs, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestEffectiveReportsNoVerdictWhenASideWasNeverMeasured is the direct
+// contract test for the exported comparison, and it is direct for a
+// measured reason: from Collisions, Ours.Value is always populated when
+// the function is called at all, so the absent-side halves of its guard are
+// unreachable from the suite's end-to-end path. Either side absent — or
+// both — must answer "no verdict" rather than guess a winner, and must not
+// dereference the absent one.
+func TestEffectiveReportsNoVerdictWhenASideWasNeverMeasured(t *testing.T) {
+	measured := jsonRaw(`{"threshold":3}`)
+	array := jsonRaw(`[3]`)
+
+	cases := []struct {
+		name         string
+		ours, theirs *json.RawMessage
+	}{
+		{"neither side measured", nil, nil},
+		{"dharness's side absent", nil, &measured},
+		{"the project's side absent", &measured, nil},
+		{"dharness's side absent, the project's not an object", nil, &array},
+		{"the project's side absent, dharness's not an object", &array, nil},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := Effective(tc.ours, tc.theirs)
+			if ok {
+				t.Errorf("Effective(...) ok = true, want false: a side that was never measured must not be classified")
+			}
+			if got != "" {
+				t.Errorf("Effective(...) = %q, want the empty verdict", got)
+			}
+		})
+	}
+}
+
+// TestValueComparisonRejectsWhatTheDecoderNeverProduces covers the halves
+// of the comparison no value-level test can reach: sameNumber's failed
+// parse (the decoder only ever hands it valid JSON numbers) and
+// sameDecodedValue's fallthrough (the decoder yields six types, and neither
+// an int nor a []string is among them). Both must answer "not equal"
+// rather than dereference the nil *big.Rat SetString returns on failure or
+// pass an unknown shape through as equal — branches the scheduler cannot
+// reach, invoked directly (mutation-tdd).
+func TestValueComparisonRejectsWhatTheDecoderNeverProduces(t *testing.T) {
+	if sameNumber(json.Number("not a number"), json.Number("1")) {
+		t.Error("sameNumber() = true for text that is not a number, want false")
+	}
+	if sameNumber(json.Number("1"), json.Number("not a number")) {
+		t.Error("sameNumber() = true for text that is not a number, want false")
+	}
+	if sameDecodedValue(1, 1) {
+		t.Error("sameDecodedValue() = true for a type the JSON decoder never produces, want false")
+	}
+	if sameDecodedValue([]string{"a"}, []string{"a"}) {
+		t.Error("sameDecodedValue() = true for a type the JSON decoder never produces, want false")
+	}
+}
+
+// TestWriteHumanCollisionHidesFieldsEqualByValueNotSpelling pins the same
+// defect in the human view: a field whose two sides carry one value in two
+// spellings carries no decision, so narrowToDifferences must hide it as
+// identical — while the fields that do differ keep showing the raw text
+// each side wrote, which is what makes the block faithful to the two
+// declarations rather than to a normalised form of them.
+func TestWriteHumanCollisionHidesFieldsEqualByValueNotSpelling(t *testing.T) {
+	ours := jsonRaw(`{"threshold":3.0,"mode":"semantic","minOccurrences":3}`)
+	theirs := jsonRaw(`{"threshold":3,"mode":"weak","minOccurrences":3.5}`)
+	c := Collision{
+		ID:     "sync:collision/duplicates",
+		Key:    "duplicates",
+		Ours:   Declared{Path: ".dharness/fallow.jsonc", Value: &ours},
+		Theirs: Declared{Path: "frontend/.fallowrc.json", Value: &theirs},
+	}
+	out := renderHuman(t, Report{Steps: []StepResult{{ID: "resolve", Status: Delegated, Collisions: []Collision{c}}}})
+
+	if strings.Contains(out, `"threshold"`) {
+		t.Errorf("threshold is 3 on both sides and differs only in spelling, so it carries no decision:\n%s", out)
+	}
+	if !strings.Contains(out, "1 key(s) hidden") {
+		t.Errorf("the spelling-only difference was not recognised as agreement:\n%s", out)
+	}
+	for _, want := range []string{`"mode":"semantic"`, `"mode":"weak"`, `"minOccurrences":3`, `"minOccurrences":3.5`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the human view does not show %s, the raw text the side wrote:\n%s", want, out)
+		}
 	}
 }
 

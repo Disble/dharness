@@ -755,20 +755,31 @@ func sortedKeys(m map[string]string) []string {
 
 // --------------------------------------------------- boundaries owner
 //
-// fallow's `extends` replaces a key rather than merging it. Measured against
-// fallow 3.14.0: a parent declaring a key is honoured until the child
-// declares its own, and from then on the parent's value is discarded whole —
-// no error, no warning, and the `extends` line still reads as correct.
+// fallow's `extends` merges an object-valued key field by field and replaces
+// every array and scalar whole. Measured on 2026-10-02 against fallow 3.14.0
+// and against the current release, which behave identically: a child
+// declaring only `duplicates: {mode: "mild"}` over a parent declaring
+// `{mode: "semantic", minOccurrences: 3, threshold: 3}` resolves to
+// `mode: mild` with the parent's `minOccurrences` and `threshold` still in
+// force. A note here used to claim the whole key was replaced; that was
+// over-generalised from array replacement and was never true of objects.
+//
+// The mixture can enforce a combination neither side wrote, and it can be
+// invalid: a parent declaring `boundaries.zones` and `boundaries.rules`
+// with a child declaring only `boundaries.zones` makes fallow exit 2 with
+// `boundaries.rules[0].from: references undefined zone`. The `extends` line
+// still reads as correct in either case.
 //
 // That makes it the one way any key dharness (directly, for `boundaries`, or
 // through a matched preset, for whatever it contributes) writes can stop
-// taking effect while everything else still looks wired, which is why it
-// gets a step rather than a line in another step's Describe. `boundaries` is
-// a fixed member of the set checked regardless of which preset matched —
-// ownedFilesStep writes the architecture block for every project, not only
-// preset-matched ones — and every key a matched preset contributes joins it
-// (framework-presets design decision 8's second guard, generalised by
-// decision 5).
+// taking effect — in part, not necessarily whole — while everything else
+// still looks wired, and the file does not say which fields are in force.
+// That is why it gets a step rather than a line in another step's Describe.
+// `boundaries` is a fixed member of the set checked regardless of which
+// preset matched — ownedFilesStep writes the architecture block for every
+// project, not only preset-matched ones — and every key a matched preset
+// contributes joins it (framework-presets design decision 8's second guard,
+// generalised by decision 5).
 
 type boundariesOwnerStep struct{}
 
@@ -909,11 +920,15 @@ func Collisions(p project.Project) []report.Collision {
 				theirsValue := json.RawMessage(raw)
 				collision.Theirs.Value = &theirsValue
 
-				effective := "theirs"
-				if bytes.Equal(bytes.TrimSpace(raw), bytes.TrimSpace(*collision.Ours.Value)) {
-					effective = "ours"
+				// Classified from the two measured values, field by
+				// field: under `extends` an object merges, so a
+				// partially overridden value is neither side's whole
+				// value and answers "mixed" rather than defaulting to
+				// the project. A value that was never measured leaves
+				// Effective nil — this run knows nothing about it.
+				if effective, measured := report.Effective(collision.Ours.Value, collision.Theirs.Value); measured {
+					collision.Effective = &effective
 				}
-				collision.Effective = &effective
 			}
 		}
 
@@ -924,7 +939,9 @@ func Collisions(p project.Project) []report.Collision {
 
 // collisionResolutions are the two ways any config collision on a key
 // dharness also owns can be resolved. There is no third: both sides declare
-// the same key, and fallow's `extends` can only ever honour one of them.
+// the same key, and the merge leaves no way to say which side is in force —
+// that is a question about fields, not about sides — so the only answers
+// are to merge the two declarations by hand or to delete one of them.
 var collisionResolutions = []string{"delete-theirs", "move-into-ours"}
 
 // ourDeclared reports dharness's own side of a collision: the value it
@@ -972,8 +989,8 @@ func ourDeclared(p project.Project, key string, matches []preset.Match) report.D
 // byte-identity requirement no real collision ever reaches in practice,
 // since Pending only calls Describe/Delegated for a step Satisfied has
 // already reported false for.
-const boundariesFallbackDescribe = "Move the zones and rules from %s into %s, or delete the block dharness\nowns and keep the project's. Either is a valid answer; having both is not,\nbecause only one of them runs and the file gives no sign of which."
-const boundariesFallbackWhy = "%s declares its own `boundaries`, and fallow's `extends` replaces that key\nrather than merging it — the project's block replaces the one dharness owns\nentirely, without an error. Only one architecture is being enforced, and the\nconfiguration does not say which."
+const boundariesFallbackDescribe = "Move the zones and rules from %s into %s, or delete the block dharness\nowns and keep the project's. Either is a valid answer; both at once is not,\nbecause the two blocks merge field by field and a zone the other one removed\ncan still be referenced."
+const boundariesFallbackWhy = "%s declares its own `boundaries`, and fallow's `extends` merges that key\nfield by field while replacing each array in it whole — so the project's\n`zones` can be in force while dharness's `rules` still are, and neither side\nsays which combination you got."
 
 func (boundariesOwnerStep) Describe(p project.Project) string {
 	colliding, _ := boundaryCollision(p)
@@ -994,11 +1011,11 @@ func describeBoundaries(p project.Project, colliding []string) string {
 	return renderCollisions(Collisions(p))
 }
 
-// Delegated always returns ok == true where the step is unsatisfied: two
-// values for the same key cannot be merged by a rule. Which one survives is
-// a decision about intent, and dharness does not hold it. It names both
-// values per colliding key, not only the key, so the agent does not have to
-// open two files before deciding.
+// Delegated always returns ok == true where the step is unsatisfied: a key
+// both sides declare is resolved by the two declarations merging field by
+// field, and which fields ought to survive is a decision about intent that
+// dharness does not hold. It names both values per colliding key, not only
+// the key, so the agent does not have to open two files before deciding.
 func (boundariesOwnerStep) Delegated(p project.Project) (string, bool) {
 	colliding, _ := boundaryCollision(p)
 	return delegateBoundaries(p, colliding), true
@@ -1024,7 +1041,7 @@ func renderCollisions(cs []report.Collision) string {
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s declares its own value for %s, and fallow's `extends` replaces each of\nthose keys rather than merging it — the project's value replaces dharness's\nentirely, without an error. Only one value per key is being enforced, and\nthe configuration does not say which:\n", fallowConfig, quotedKeys(keys))
+	fmt.Fprintf(&b, "%s declares its own value for %s, and fallow's `extends` merges each of\nthose objects field by field — the fields the project declares win, the fields\nit omits silently keep dharness's value, and arrays and scalars are replaced\nwhole. More than one value per key is in force, and the configuration does\nnot say which:\n", fallowConfig, quotedKeys(keys))
 	for _, c := range cs {
 		theirs := declaredValueUnknown
 		if c.Theirs.Value != nil {

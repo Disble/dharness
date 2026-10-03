@@ -1585,11 +1585,13 @@ func TestArchitecturePromptSaysHowToTurnOnTheBarrelRule(t *testing.T) {
 	}
 }
 
-// fallow's `extends` replaces a key rather than merging it, so a `boundaries`
-// block in the project's own config discards the one dharness owns — with no
-// error and no warning. The wiring still looks correct, which is what makes
-// it worth a step of its own.
-func TestProjectBoundariesAreReportedBecauseTheyReplaceTheOwnedOnes(t *testing.T) {
+// fallow's `extends` merges an object-valued key field by field and replaces
+// each array in it whole, so a `boundaries` block in the project's own config
+// and the one dharness owns both stay partly in force — a zone the project
+// never named can vanish while dharness's rules keep running, and the file
+// does not say which fields won. The wiring still looks correct, which is what
+// makes it worth a step of its own.
+func TestProjectBoundariesAreReportedBecauseTheyMergeWithTheOwnedOnes(t *testing.T) {
 	root := t.TempDir()
 	p := project.Project{Root: root, Source: root}
 
@@ -1607,7 +1609,8 @@ func TestProjectBoundariesAreReportedBecauseTheyReplaceTheOwnedOnes(t *testing.T
 		t.Error("Satisfied() = false for the word 'boundaries' inside a comment")
 	}
 
-	// A real declaration: fallow keeps this one and drops the owned block.
+	// A real declaration: fallow merges the two blocks field by field while
+	// each array is replaced whole.
 	writeProjectFallow(t, root,
 		`{"extends":["./.dharness/fallow.jsonc"],"boundaries":{"zones":[]}}`)
 	if (boundariesOwnerStep{}).Satisfied(p) {
@@ -1616,10 +1619,10 @@ func TestProjectBoundariesAreReportedBecauseTheyReplaceTheOwnedOnes(t *testing.T
 
 	why, ok := (boundariesOwnerStep{}).Delegated(p)
 	if !ok {
-		t.Fatal("Delegated() = false; dharness cannot merge two architectures")
+		t.Fatal("Delegated() = false; the merge leaves a decision dharness cannot make")
 	}
-	if !strings.Contains(why, "replaces") {
-		t.Errorf("the reason does not say the owned block is replaced:\n%s", why)
+	if !strings.Contains(why, "merges") {
+		t.Errorf("the reason does not say the two blocks merge field by field:\n%s", why)
 	}
 }
 

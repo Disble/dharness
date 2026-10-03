@@ -145,8 +145,8 @@ func TestBoundariesOwnerStepIDMakesNoArchitectureClaim(t *testing.T) {
 // constants. If either changes by even one byte, the six-line figure is no
 // longer true and every golden fixture needs re-measuring, not just line 26.
 func TestBoundariesFallbackConstantsStayByteIdentical(t *testing.T) {
-	const wantDescribe = "Move the zones and rules from %s into %s, or delete the block dharness\nowns and keep the project's. Either is a valid answer; having both is not,\nbecause only one of them runs and the file gives no sign of which."
-	const wantWhy = "%s declares its own `boundaries`, and fallow's `extends` replaces that key\nrather than merging it — the project's block replaces the one dharness owns\nentirely, without an error. Only one architecture is being enforced, and the\nconfiguration does not say which."
+	const wantDescribe = "Move the zones and rules from %s into %s, or delete the block dharness\nowns and keep the project's. Either is a valid answer; both at once is not,\nbecause the two blocks merge field by field and a zone the other one removed\ncan still be referenced."
+	const wantWhy = "%s declares its own `boundaries`, and fallow's `extends` merges that key\nfield by field while replacing each array in it whole — so the project's\n`zones` can be in force while dharness's `rules` still are, and neither side\nsays which combination you got."
 
 	if boundariesFallbackDescribe != wantDescribe {
 		t.Errorf("boundariesFallbackDescribe changed:\ngot  %q\nwant %q", boundariesFallbackDescribe, wantDescribe)
@@ -354,6 +354,133 @@ func TestCollisionsComputesEachKeyOnce(t *testing.T) {
 	}
 }
 
+// TestCollisionsClassifiesEffectiveByFieldsNotWholeValue pins the measured
+// semantics of fallow's `extends` (2026-10-02, fallow 3.14.0 and the current
+// release behaving identically): an object-valued key merges field by field,
+// so a partially overridden object equals neither side. The rule this
+// replaces compared the resolved value against dharness's whole value by
+// bytes, and answered "theirs" for every non-equal case — reporting the
+// project's value as effective while dharness's fields were demonstrably
+// still in force.
+//
+// Arrays and scalars are replaced whole, so they admit no mixture and keep
+// the byte comparison; that is why the table carries one row per non-object
+// shape. The not-measured row asserts the honest absence: no local fallow
+// binary means Effective stays nil rather than guessing a side.
+func TestCollisionsClassifiesEffectiveByFieldsNotWholeValue(t *testing.T) {
+	cases := []struct {
+		name     string
+		declared string
+		resolved string // "" means fallow was never asked: no local binary
+		want     *string
+	}{
+		{
+			name:     "every dharness field kept",
+			declared: `{"duplicates":{"mode":"mild"}}`,
+			resolved: `{"duplicates":{"minOccurrences":3,"mode":"semantic","threshold":3}}`,
+			want:     stringPtr("ours"),
+		},
+		{
+			name:     "a mix of kept and lost fields",
+			declared: `{"duplicates":{"mode":"mild"}}`,
+			resolved: `{"duplicates":{"minOccurrences":3,"mode":"mild","threshold":3}}`,
+			want:     stringPtr("mixed"),
+		},
+		{
+			// The defect measured with the real binary: fallow resolves
+			// dharness's own `threshold: 3` into the same number spelled
+			// `3.0`, and comparing the two spellings read a fully kept
+			// declaration as a mixture.
+			name:     "the same number written another way",
+			declared: `{"duplicates":{"mode":"mild"}}`,
+			resolved: `{"duplicates":{"minOccurrences":3,"mode":"semantic","threshold":3.0}}`,
+			want:     stringPtr("ours"),
+		},
+		{
+			name:     "every dharness field lost",
+			declared: `{"duplicates":{"mode":"mild"}}`,
+			resolved: `{"duplicates":{"minOccurrences":1,"mode":"mild","threshold":1}}`,
+			want:     stringPtr("theirs"),
+		},
+		{
+			name:     "fallow was never asked",
+			declared: `{"duplicates":{"mode":"mild"}}`,
+			want:     nil,
+		},
+		{
+			// fallow answered and the answer does not carry the key at
+			// all — the third way a collision can end up unmeasured,
+			// distinct from never asking: Effective must stay nil here
+			// too, and this row walks Collisions' own present/missing
+			// branch rather than the no-binary branch the row above
+			// covers.
+			name:     "fallow answered without the key",
+			declared: `{"duplicates":{"mode":"mild"}}`,
+			resolved: `{"ignorePatterns":["dist/**"]}`,
+			want:     nil,
+		},
+		{
+			name:     "an array replaced by an equal array",
+			declared: `{"ignorePatterns":["frontend/wailsjs/**"]}`,
+			resolved: `{"ignorePatterns":["frontend/wailsjs/**"]}`,
+			want:     stringPtr("ours"),
+		},
+		{
+			name:     "an array replaced by a different array",
+			declared: `{"ignorePatterns":["frontend/wailsjs/**"]}`,
+			resolved: `{"ignorePatterns":["dist/**"]}`,
+			want:     stringPtr("theirs"),
+		},
+		{
+			name:     "a scalar against a resolved object",
+			declared: `{"boundaries":{"zones":[]}}`,
+			resolved: `{"boundaries":{"zones":["src"]}}`,
+			want:     stringPtr("theirs"),
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			if err := os.WriteFile(filepath.Join(root, "wails.json"), []byte("{}\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			writeProjectFallow(t, root, tc.declared)
+			p := project.Project{Root: root, Source: root}
+
+			if tc.resolved != "" {
+				writeLocalFallowBinary(t, root)
+				t.Cleanup(runner.SetForTest(func(cmd runner.Command, stdout, _ io.Writer) error {
+					if slices.Contains(cmd.Args, "--format") {
+						_, _ = io.WriteString(stdout, tc.resolved)
+					}
+					return nil
+				}))
+			}
+
+			collisions := Collisions(p)
+			if len(collisions) != 1 {
+				t.Fatalf("Collisions() = %+v, want exactly 1", collisions)
+			}
+			got := collisions[0].Effective
+
+			switch {
+			case tc.want == nil && got != nil:
+				t.Errorf("Effective = %q, want nil: a value that was never measured must not be classified", *got)
+			case tc.want != nil && got == nil:
+				t.Errorf("Effective = nil, want %q", *tc.want)
+			case tc.want != nil && *got != *tc.want:
+				t.Errorf("Effective = %q, want %q", *got, *tc.want)
+			}
+		})
+	}
+}
+
+// stringPtr is the table's own pointer literal for the *string Collision
+// carries, so a wanted "ours"/"theirs"/"mixed" and a wanted nil read the
+// same way in the source.
+func stringPtr(value string) *string { return &value }
+
 // TestCollisionsOursNamesTheOwnedFallowPath pins gap 10 from the team
 // lead's measured run: Collision.Ours.Path must name the file dharness owns
 // (.dharness/fallow.jsonc), never an empty string — a reader cannot act on
@@ -496,8 +623,8 @@ func TestBoundariesAloneStillCollidesUnchanged(t *testing.T) {
 	if !ok {
 		t.Fatal("Delegated() = false; dharness cannot merge two values for one key")
 	}
-	if !strings.Contains(why, "replaces") {
-		t.Errorf("the reason does not say the project's value replaces dharness's:\n%s", why)
+	if !strings.Contains(why, "merges") {
+		t.Errorf("the reason does not say the two declarations merge field by field:\n%s", why)
 	}
 	if !strings.Contains(why, "boundaries") {
 		t.Errorf("the reason does not name the colliding key:\n%s", why)

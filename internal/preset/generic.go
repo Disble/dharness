@@ -52,9 +52,10 @@ func (generic) Scope() Scope { return Root }
 // — a project that never asks the question gets no answer from either.
 //
 // It travels as a manifest fact rather than sitting in the owned file's
-// skeleton, and that placement is load-bearing: fallow's `extends` replaces a
-// key instead of merging it, so a project declaring its own `duplicates`
-// silently discards dharness's. Only a contributed key joins
+// skeleton, and that placement is load-bearing: fallow's `extends` merges
+// this object field by field, so a project declaring only `mode` silently
+// keeps dharness's `minOccurrences` and `threshold` — the half-override
+// survives rather than being discarded whole. Only a contributed key joins
 // boundariesOwnerStep's candidate set, and only a candidate gets reported
 // rather than vanishing.
 const (

@@ -13,12 +13,16 @@ actualización — dentro de `dharness sync`", "Qué es el plan", "3. Entregar",
 sync / ¿Detiene?"). Principles are cited by number from
 `docs/design-principles.md`.
 
-> **Known limit, measured after this shipped.** fallow's `extends` replaces a
-> key rather than merging it, so the architecture written into
-> `.dharness/fallow.jsonc` is silently discarded the moment a project declares
-> its own `boundaries`. `boundariesOwnerStep` reports that case as of v1.0.2;
-> the requirements below describe the reference mechanism, not a guarantee that
-> it is the one in effect.
+> **Known limit, measured after this shipped.** fallow's `extends` merges an
+> object-valued key field by field and replaces each array and scalar whole, so
+> the architecture written into `.dharness/fallow.jsonc` and the one a project
+> declares in its own `boundaries` are both partly in force: a zone the project
+> never named can vanish while dharness's rules keep running, the combination
+> can be one neither side wrote, and it can make fallow refuse the config
+> outright. `boundariesOwnerStep` reports that case as of v1.0.2 and classifies
+> the resolved value as `ours`, `theirs` or `mixed`; the requirements below
+> describe the reference mechanism, not a guarantee that it is the one in
+> effect.
 
 ---
 
