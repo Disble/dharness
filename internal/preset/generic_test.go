@@ -45,10 +45,11 @@ func TestGenericManifestValidates(t *testing.T) {
 // first of them.
 //
 // It goes through the manifest rather than into the owned file's skeleton for
-// one reason: fallow's `extends` replaces a key rather than merging it, so a
-// project declaring its own `duplicates` silently discards dharness's. Only a
-// contributed key reaches boundariesOwnerStep's candidate set, and only a
-// candidate gets reported instead of vanishing.
+// one reason: fallow's `extends` merges this object field by field, so a
+// project declaring only `mode` silently keeps dharness's `minOccurrences`
+// and `threshold` — the half-override survives rather than being discarded
+// whole. Only a contributed key reaches boundariesOwnerStep's candidate set,
+// and only a candidate gets reported instead of vanishing.
 func TestGenericCarriesTheDuplicationCeiling(t *testing.T) {
 	match, matched := generic{}.Detect(fixtureProject())
 	if !matched {

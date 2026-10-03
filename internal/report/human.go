@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/big"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -412,6 +413,16 @@ func writeDelegatedBlock(b *strings.Builder, r Report) {
 // for effective).
 const collisionValueUnavailable = "could not be shown"
 
+// mixedExplanation is the sentence a mixed verdict prints under its two
+// sides, and the only explanation of those marks the block carries: a
+// reader told that both sides are in force needs to know how that is
+// possible. It states fallow's measured merge (2026-10-02, 3.14.0 and the
+// current release behaving identically) and nothing beyond it — the fields
+// dharness declares that the project did not override survive, and arrays
+// and scalars are replaced whole.
+const mixedExplanation = "fallow merges an object-valued key field by field: fields dharness declares " +
+	"that the project did not override are still in force, while arrays and scalars are replaced whole."
+
 // writeCollision renders one colliding key's full structured fact (gap 1):
 // dharness's own value and where it lives, the project's value and where it
 // lives, which one a measurement says actually runs, and the lettered ways
@@ -423,6 +434,16 @@ func writeCollision(b *strings.Builder, c Collision) {
 	ours, theirs, hidden := narrowToDifferences(c.Ours.Value, c.Theirs.Value)
 	writeDeclaredSide(b, "dharness", c.Ours, ours, effectiveMark(c, "ours"), false)
 	writeDeclaredSide(b, "project", c.Theirs, theirs, effectiveMark(c, "theirs"), true)
+	if c.Effective != nil && *c.Effective == EffectiveMixed {
+		// Printed for a mixed verdict and for nothing else: a single winner
+		// has no mechanism to explain, and an absent one must not borrow
+		// an explanation for a measurement that was never made. Shares the
+		// value lines' own indentation, and the hidden-key note's wrapping.
+		indent := strings.Repeat(" ", declaredSideIndent)
+		for _, line := range wrap(mixedExplanation, wrapWidth-declaredSideIndent, 0) {
+			fmt.Fprintf(b, "%s%s\n", indent, line)
+		}
+	}
 	if hidden > 0 {
 		// Two different reasons put a key in this set — it holds the same
 		// value on both sides, or only the resolved side declares it at
@@ -523,7 +544,8 @@ func writeDeclaredSide(b *strings.Builder, label string, d Declared, value, mark
 	// mark is present — a small, uniform tightening applied to every line
 	// rather than a special case for only the last one. available is never
 	// non-positive for any real caller: wrapWidth (70) minus
-	// declaredSideIndent (15) minus the mark's own fixed length (18) still
+	// declaredSideIndent (15) minus the longest mark's own fixed length
+	// (36 for the mixed sentence, 18 for the single-winner one) still
 	// leaves room to spare.
 	available := wrapWidth - declaredSideIndent
 	if mark != "" {
@@ -587,7 +609,19 @@ func narrowToDifferences(ours, theirs *json.RawMessage) (string, string, int) {
 	for _, key := range keys {
 		ov, inOurs := o[key]
 		tv, inTheirs := t[key]
-		if inOurs && inTheirs && ov == tv {
+		// Compared by value, not by spelling: fallow resolving dharness's
+		// `threshold: 3` into `3.0` is one value and carries no decision,
+		// so it is hidden exactly like a key whose two sides agree
+		// byte for byte.
+		//
+		// Presence is deliberately not tested here, and not by oversight: a
+		// side that never declared the key has no value to compare, and
+		// sameValue never equates an absent side with a present one, so the
+		// `inOurs && inTheirs` conjunction this replaces could not change
+		// the outcome — it only handed the mutation gate three equivalent
+		// mutants on one line. A side's absence is decided by the two rules
+		// below, which is where it belongs.
+		if sameValue(ov, tv) {
 			hidden++
 			continue
 		}
@@ -619,7 +653,9 @@ func narrowToDifferences(ours, theirs *json.RawMessage) (string, string, int) {
 
 // objectFields decodes one side into its top-level keys with each value
 // left as the text it arrived as, so two sides are compared as JSON rather
-// than as Go values dharness does not own the types for.
+// than as Go values dharness does not own the types for. Equality of those
+// texts is not equality of values — sameValue, below, is where the two
+// sides' values are actually compared.
 func objectFields(raw *json.RawMessage) (map[string]string, bool) {
 	if raw == nil {
 		return nil, false
@@ -639,12 +675,200 @@ func objectFields(raw *json.RawMessage) (map[string]string, bool) {
 	return fields, true
 }
 
-// effectiveMark names which side a measurement says actually runs, or ""
-// when effective was never measured — an absent effective must never imply
-// either side (config-collision's own "absent, never fabricated" rule).
+// sameValue reports whether two pieces of JSON carry the same value rather
+// than the same spelling. It exists because objectFields keeps each field's
+// own text — the raw spellings the human view shows — and text equality is
+// not value equality: dharness declares `threshold: 3` and fallow's
+// resolved config answers `threshold: 3.0`, one value written two ways.
+// Measured with the real binary, comparing the spellings counted a kept
+// field as lost and turned a fully kept declaration into a false `mixed`
+// verdict.
+//
+// Numbers compare by numeric value whatever spelling they arrived in (3
+// equals 3.0, 1e2 equals 100), strings, booleans and null compare by value,
+// and arrays and objects compare structurally with the same rule applied at
+// every depth.
+//
+// Text this package cannot decode carries no value to compare, and the
+// whole-value rule it replaces still answers there: identical text is the
+// same text. In production that is a boundary rather than a case — both
+// values reaching it were produced by encoding/json (json.Marshal for
+// dharness's side, a successful whole-document unmarshal for fallow's) —
+// but the exported function can be handed anything, so the fallback is
+// pinned by a test like any other reachable path.
+func sameValue(a, b string) bool {
+	av, aOK := decodeValue(a)
+	bv, bOK := decodeValue(b)
+	if !aOK || !bOK {
+		return strings.TrimSpace(a) == strings.TrimSpace(b)
+	}
+	return sameDecodedValue(av, bv)
+}
+
+// decodeValue decodes one piece of JSON with numbers kept as their own text
+// (json.Number) rather than as float64, so sameNumber can compare them
+// exactly instead of by the nearest float64.
+func decodeValue(text string) (any, bool) {
+	decoder := json.NewDecoder(strings.NewReader(text))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return nil, false
+	}
+	return value, true
+}
+
+// sameDecodedValue applies sameValue's rule to values json.Decoder has
+// already produced: the six types the decoder yields compare by value, with
+// arrays element by element and objects key by key, and a type the decoder
+// never produces never equals anything.
+func sameDecodedValue(a, b any) bool {
+	switch av := a.(type) {
+	case nil:
+		return b == nil
+	case bool:
+		bv, ok := b.(bool)
+		return ok && av == bv
+	case string:
+		bv, ok := b.(string)
+		return ok && av == bv
+	case json.Number:
+		bv, ok := b.(json.Number)
+		return ok && sameNumber(av, bv)
+	case []any:
+		bv, ok := b.([]any)
+		if !ok || len(av) != len(bv) {
+			return false
+		}
+		for i, value := range av {
+			if !sameDecodedValue(value, bv[i]) {
+				return false
+			}
+		}
+		return true
+	case map[string]any:
+		bv, ok := b.(map[string]any)
+		if !ok || len(av) != len(bv) {
+			return false
+		}
+		for key, value := range av {
+			other, present := bv[key]
+			if !present || !sameDecodedValue(value, other) {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
+}
+
+// sameNumber reports whether two JSON numbers are the same number whatever
+// spelling each arrived in. big.Rat is exact where a float64 is not: two
+// integers that differ past float64's 53-bit mantissa are two values in
+// JSON and one float64, and the JSON reading is the true one
+// (9007199254740993 is not 9007199254740992).
+//
+// The failure half is unreachable for text this package's own decoder
+// accepted — every valid JSON number parses — and answers false rather than
+// dereferencing the nil *big.Rat SetString returns on failure. It is tested
+// by direct invocation, because a caller of sameValue can hand the
+// comparison any text (mutation-tdd: branches the scheduler cannot reach
+// need direct invocation of the unexported function).
+func sameNumber(a, b json.Number) bool {
+	ar, aOK := new(big.Rat).SetString(a.String())
+	br, bOK := new(big.Rat).SetString(b.String())
+	if !aOK || !bOK {
+		return false
+	}
+	return ar.Cmp(br) == 0
+}
+
+// Effective classifies, from the two measured values alone, which side of a
+// collision is in force — the honest answer Collision.Effective carries, and
+// the reason this lives beside objectFields rather than as a second decoder
+// in internal/setup.
+//
+// It returns ok == false when either value was never measured, so a caller
+// leaves Collision.Effective nil rather than fabricating a winner (§09/§17).
+//
+// For values that are not JSON objects the whole-value comparison is the
+// honest one, because fallow replaces an array or a scalar whole and there
+// is nothing to mix: equal — by value, not by spelling — is ours, anything
+// else is theirs.
+//
+// For objects it is field by field, matching fallow's own merge (measured
+// 2026-10-02 against 3.14.0 and the current release, which behave
+// identically). A field dharness declares is kept when the resolved object
+// carries the same value for it — again by value, not by spelling, because
+// fallow answers dharness's `3` as `3.0` — and lost when it is absent or
+// carries a different value. No field lost is ours, every field lost is
+// theirs, and a mixture — the case the byte comparison could not name — is
+// mixed.
+func Effective(ours, theirs *json.RawMessage) (string, bool) {
+	o, oOK := objectFields(ours)
+	t, tOK := objectFields(theirs)
+	if !oOK || !tOK {
+		if ours == nil || theirs == nil {
+			return "", false
+		}
+		if sameValue(string(*ours), string(*theirs)) {
+			return EffectiveOurs, true
+		}
+		return EffectiveTheirs, true
+	}
+
+	// The counts are arithmetic on purpose, not a continue/break pair. A
+	// `continue` here mutates into a `break`, and with Go randomising map
+	// order that mutant only changes the verdict when a kept field happens
+	// to be visited before a lost one: a test owning this outcome would fail
+	// half the runs and pass the other half, which is worse than no test.
+	// Counting the kept fields and deriving the rest from the map's length
+	// leaves no branch to mutate, and the subtraction it does have is
+	// decided by any row where at least one field is kept.
+	kept := 0
+	for key, value := range o {
+		if sameValue(t[key], value) {
+			kept++
+		}
+	}
+	lost := len(o) - kept
+	switch {
+	case lost == 0:
+		return EffectiveOurs, true
+	case kept == 0:
+		return EffectiveTheirs, true
+	default:
+		return EffectiveMixed, true
+	}
+}
+
+// effectiveWinnerMark and effectiveMixedMark are the two sentences the value
+// line's suffix can carry. Distinct on purpose: the single-winner mark means
+// exactly one side is in force, and the mixed mark means both are.
+const (
+	effectiveWinnerMark = "   ← this one runs"
+	effectiveMixedMark  = "   ← this side's fields are in force"
+)
+
+// effectiveMark names which side a measurement says is in force, or "" when
+// effective was never measured — an absent effective must never imply either
+// side (config-collision's own "absent, never fabricated" rule).
+//
+// A mixed collision marks both sides with its own sentence. Leaving both
+// bare is what the renderer did before the third state existed, and it meant
+// one thing only: never measured. Those must not be conflated, because a
+// mixed merge genuinely keeps fields from both sides — both are in force,
+// and only the sentence distinguishes that from an unmeasured collision.
 func effectiveMark(c Collision, side string) string {
-	if c.Effective != nil && *c.Effective == side {
-		return "   ← this one runs"
+	if c.Effective == nil {
+		return ""
+	}
+	if *c.Effective == EffectiveMixed {
+		return effectiveMixedMark
+	}
+	if *c.Effective == side {
+		return effectiveWinnerMark
 	}
 	return ""
 }

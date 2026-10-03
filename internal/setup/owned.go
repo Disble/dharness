@@ -26,7 +26,7 @@ const (
 // region is inserted into the first time a preset does contribute, so a
 // project that starts generic and later matches a framework gets the region
 // added rather than the file rewritten around it.
-const architectureSkeleton = "{\n  // dharness writes this file; the architecture below is decided by analysis,\n  // not by detection. Declare `boundaries` here rather than in the project's\n  // own fallow config: `extends` replaces this key, it does not merge it.\n  //\n  // See `dharness sync`.\n}\n"
+const architectureSkeleton = "{\n  // dharness writes this file; the architecture below is decided by analysis,\n  // not by detection. Declare `boundaries` here rather than in the project's\n  // own fallow config: `extends` merges this key field by field and replaces each\n  // `zones`/`rules` array whole, so a project declaring its own zones silently\n  // drops the ones here while these rules stay.\n  //\n  // See `dharness sync`.\n}\n"
 
 // presetRegion renders the union of matches' contributed facts as the JSONC
 // text that goes between the two markers, or "" when nothing is contributed

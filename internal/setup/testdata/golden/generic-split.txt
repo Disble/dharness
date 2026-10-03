@@ -26,14 +26,15 @@
 4  resolve the keys this project and dharness both declare
    satisfied=true delegated=true
    why |
-     .fallowrc.json declares its own `boundaries`, and fallow's `extends` replaces that key
-     rather than merging it — the project's block replaces the one dharness owns
-     entirely, without an error. Only one architecture is being enforced, and the
-     configuration does not say which.
+     .fallowrc.json declares its own `boundaries`, and fallow's `extends` merges that key
+     field by field while replacing each array in it whole — so the project's
+     `zones` can be in force while dharness's `rules` still are, and neither side
+     says which combination you got.
    describe |
      Move the zones and rules from .fallowrc.json into .dharness/fallow.jsonc, or delete the block dharness
-     owns and keep the project's. Either is a valid answer; having both is not,
-     because only one of them runs and the file gives no sign of which.
+     owns and keep the project's. Either is a valid answer; both at once is not,
+     because the two blocks merge field by field and a zone the other one removed
+     can still be referenced.
 5  point lefthook.yml at the file dharness owns
    satisfied=true delegated=false
    why |
@@ -232,7 +233,9 @@ export default function dharnessLayer({ plugin }) {
 
   // dharness writes this file; the architecture below is decided by analysis,
   // not by detection. Declare `boundaries` here rather than in the project's
-  // own fallow config: `extends` replaces this key, it does not merge it.
+  // own fallow config: `extends` merges this key field by field and replaces each
+  // `zones`/`rules` array whole, so a project declaring its own zones silently
+  // drops the ones here while these rules stay.
   //
   // See `dharness sync`.
 }
