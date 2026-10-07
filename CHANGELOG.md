@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.10.1](https://github.com/Disble/dharness/compare/v1.10.0...v1.10.1) (2026-10-07)
+
+
+### Bug Fixes
+
+* **mutate:** name the failed tests when the related step fails ([d4111df](https://github.com/Disble/dharness/commit/d4111dfe8fe46a5c867c468711effb4180e81810))
+* **mutate:** run the related-test step at normal priority ([a4c7c07](https://github.com/Disble/dharness/commit/a4c7c0799ca66d00d4adacbd4d044549cdf0a47c))
+
 ## [1.10.0](https://github.com/Disble/dharness/compare/v1.9.2...v1.10.0) (2026-10-03)
 
 
