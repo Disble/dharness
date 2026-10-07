@@ -105,22 +105,29 @@ func StrykerServe(binaryPath, dir string) runner.Command {
 // VitestRelated builds the one aggregate related-test command: every retained
 // file in a single `vitest related` run writing JSON to a run-owned file. The
 // optional config travels only when the snapshot selection names one.
+//
+// It runs at normal priority, unlike Stryker. These are the project's ordinary
+// tests with their ordinary timeouts: below normal priority on a loaded
+// machine, jsdom tests overran vitest's 5s default and failed for no reason in
+// the code, while the same set passed in full at normal priority. Low priority
+// is a remedy for a run that saturates the machine, and this one does not.
 func VitestRelated(binaryPath, dir string, files []string, output, config string) runner.Command {
 	args := append([]string{"related"}, files...)
 	args = append(args, "--run", "--passWithNoTests", "--reporter=json", "--outputFile", output)
 	if config != "" {
 		args = append(args, "--config", config)
 	}
-	return runner.Command{Label: "vitest", Name: binaryPath, Args: args, Dir: dir, LowPriority: true}
+	return runner.Command{Label: "vitest", Name: binaryPath, Args: args, Dir: dir}
 }
 
 // JestRelated builds the J2-confirmed list-only command: related tests as a
 // JSON array on stdout, nothing executed. The executing fallback does not
-// exist because J2's kill condition was never met.
+// exist because J2's kill condition was never met. It runs at normal priority
+// for the same reason VitestRelated does.
 func JestRelated(binaryPath, dir string, files []string) runner.Command {
 	args := append([]string{"--findRelatedTests"}, files...)
 	args = append(args, "--listTests", "--json")
-	return runner.Command{Label: "jest", Name: binaryPath, Args: args, Dir: dir, LowPriority: true}
+	return runner.Command{Label: "jest", Name: binaryPath, Args: args, Dir: dir}
 }
 
 // StrykerLocal invokes the copy of Stryker the project has installed. The path
