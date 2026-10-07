@@ -372,6 +372,75 @@ func TestMutateStagedRefusesWhenTheRelatedSuiteFails(t *testing.T) {
 	}
 }
 
+// failingVitestWriting fakes a related run that exits 1 after writing report
+// to its --outputFile, the way vitest does when the suite ran and tests
+// failed. Every other command goes to captured.
+func failingVitestWriting(t *testing.T, captured *record, report string) func(runner.Command, io.Writer, io.Writer) error {
+	return func(cmd runner.Command, stdout, stderr io.Writer) error {
+		if cmd.Label != "vitest" {
+			return captured.run(cmd, stdout, stderr)
+		}
+		writeFile(t, flagValueCLI(cmd.Args, "--outputFile"), report)
+		return &runner.ExitError{Command: "vitest", Code: 1}
+	}
+}
+
+// TestMutateStagedNamesTheFailedRelatedTests pins the message a real failure
+// needs: vitest's stderr is empty, so the failed test and its reason come
+// from the JSON report, read before the sandbox holding it is removed.
+func TestMutateStagedNamesTheFailedRelatedTests(t *testing.T) {
+	root, captured := newStagedRepo(t)
+	writeFile(t, filepath.Join(root, "node_modules", ".bin", binaryName("vitest")), "")
+	stageFile(t, root, "src/a.js", "export const a = 1;\n")
+	report := `{"numTotalTests":2,"testResults":[{"name":"src/a.test.js","assertionResults":[` +
+		`{"fullName":"slow under load","status":"failed","failureMessages":["Error: Test timed out in 50ms.\nIf this is a long-running test, pass a timeout value."]}]}]}`
+	t.Cleanup(runner.SetForTest(failingVitestWriting(t, captured, report)))
+
+	var out strings.Builder
+	err := RunMutate([]string{"--staged"}, &out)
+
+	want := `related tests failed: "slow under load": Error: Test timed out in 50ms. (vitest exited with code 1)`
+	if err == nil || err.Error() != want {
+		t.Fatalf("RunMutate() = %v, want %q", err, want)
+	}
+	var exit *runner.ExitError
+	if !errors.As(err, &exit) || exit.Code != 1 {
+		t.Errorf("RunMutate() = %v, want the vitest exit kept through errors.As", err)
+	}
+	if !strings.Contains(out.String(), "related failed: "+want) {
+		t.Errorf("output = %q, want the failed related phase to name the test", out.String())
+	}
+	if commandExists(captured, "stryker") {
+		t.Errorf("commands = %+v, want no stryker command: the related failure must refuse first", captured.commands)
+	}
+}
+
+// TestMutateStagedKeepsTheSuiteFailureWhenTheReportNamesNoFailedTest pins the
+// other half: a non-zero exit whose report names no failed test is still a
+// suite that produced no result, never a pass and never a zero.
+func TestMutateStagedKeepsTheSuiteFailureWhenTheReportNamesNoFailedTest(t *testing.T) {
+	for name, report := range map[string]string{
+		"no failed test": `{"numTotalTests":0,"testResults":[]}`,
+		"unreadable":     `{"testResults":[`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			root, captured := newStagedRepo(t)
+			writeFile(t, filepath.Join(root, "node_modules", ".bin", binaryName("vitest")), "")
+			stageFile(t, root, "src/a.js", "export const a = 1;\n")
+			t.Cleanup(runner.SetForTest(failingVitestWriting(t, captured, report)))
+
+			err := RunMutate([]string{"--staged"}, io.Discard)
+
+			if err == nil || err.Error() != "related-test suite load/run failure: vitest exited with code 1" {
+				t.Fatalf("RunMutate() = %v, want the related suite failure", err)
+			}
+			if commandExists(captured, "stryker") {
+				t.Errorf("commands = %+v, want no stryker command", captured.commands)
+			}
+		})
+	}
+}
+
 // TestMutateStagedDetectsAClassifierDisagreement pins the self-check: a file
 // the classifier believed compiled to nothing, but that Stryker's own report shows
 // carrying at least one mutant anyway, is a classifier defect on the exact

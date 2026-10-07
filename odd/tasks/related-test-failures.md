@@ -24,7 +24,7 @@ Reported by the autoreas-bridge session on 2026-10-07 (Windows 11):
 
 ## Tasks
 - [x] RT-01: normal priority for the related step, plus a test pinning it. Route: delegated writer, shared with RT-02 (2+ non-trivial files across tool/staged/cli).
-- [ ] RT-02: name the failed tests from the JSON on a non-zero exit. Test-first: parser unit test, plus CLI tests for exit≠0 with and without JSON. Route: delegated writer.
+- [x] RT-02: name the failed tests from the JSON on a non-zero exit. Test-first: parser unit test, plus CLI tests for exit≠0 with and without JSON. Route: delegated writer.
 - [ ] RT-03: learning-log line. Route: inline (one mechanical append).
 - [ ] RT-04: build the binary and run it on the scratch fixture (`scratchpad/m1`, with a test that fails on timeout). Read the actual message. Route: inline.
 
@@ -36,7 +36,8 @@ Reported by the autoreas-bridge session on 2026-10-07 (Windows 11):
 
 ## Progress
 - Created 2026-10-07.
-- RT-01 done (delegated writer). RED observed: `TestRelatedCommandsRunAtNormalPriority` failed on both constructors with `LowPriority = true`; GREEN after removing the flag. Checks: `go build ./...` ok, `go vet ./...` ok, `go test ./...` all ok, `gofmt -l .` empty. `ditto staged --dry --exclude-prefix tools/` scoped `internal/tool/tool.go` only; a scoped real run (`--test-command "go test -count=1 -json ./internal/tool/"`) produced 0 mutants: removing a boolean field leaves no mutable site.
+- RT-01 done (delegated writer). RED observed: `TestRelatedCommandsRunAtNormalPriority` failed on both constructors with `LowPriority = true`; GREEN after removing the flag. Checks: `go build ./...` ok, `go vet ./...` ok, `go test ./...` all ok, `gofmt -l .` empty. `ditto staged --dry --exclude-prefix tools/` scoped `internal/tool/tool.go` only; a scoped real run (`--test-command "go test -count=1 -json ./internal/tool/"`) produced 0 mutants: removing a boolean field leaves no mutable site. Commit `749a733`.
+- RT-02 done (delegated writer). RED observed: parser tests failed to build (undefined `ParseVitestFailures`, `FailedTest`, `RelatedTestsFailed`); `TestMutateStagedNamesTheFailedRelatedTests` failed with the old `related-test suite load/run failure: vitest exited with code 1`. The no-failed-test and unreadable-report CLI cases passed before and after (characterization of the kept path). New JSON-path message: `related tests failed: "slow under load": Error: Test timed out in 50ms. (vitest exited with code 1)`; at most 3 tests named, then `and N more`; the ExitError stays wrapped. Checks: `go build ./...` ok, `go vet ./...` ok, `go test -count=1 ./...` all ok, `gofmt -l .` empty, `ditto staged --dry --exclude-prefix tools/` scoped `internal/cli/mutate_staged.go` and `internal/staged/related.go`. Scoped mutation (`--test-command "go test -count=1 -json ./internal/staged/ ./internal/cli/"`): 27 mutants, 24 killed, 3 survived; the boundary survivor (`more > 1`) was then killed by a four-failure case (`./internal/staged/` run: 20/20 killed on related.go). Remaining 2 survivors are equivalent: `return 0` mutated to `-1`/`1` beside a non-nil error the caller never reads the count of.
 
 ## Delivery
 Strategy `ask-on-risk`. Forecast is about 150 authored lines, under the 400-line slice budget, so a single PR.
