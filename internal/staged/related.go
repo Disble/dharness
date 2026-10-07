@@ -36,6 +36,77 @@ func ParseVitestRelated(data []byte) (int, error) {
 	return *report.NumTotalTests, nil
 }
 
+// FailedTest is one failed test a related run reported: its full name and
+// the first line of its first failure message, empty when it gave none.
+type FailedTest struct {
+	Name    string
+	Message string
+}
+
+// ParseVitestFailures reads the failed tests out of a Vitest JSON report.
+// A failing related run writes nothing to stderr, so the report is the only
+// place that says which test failed and why. A report it cannot read is an
+// error; a readable one that names no failed test returns none, and the
+// caller decides what a non-zero exit without a named failure means.
+func ParseVitestFailures(data []byte) ([]FailedTest, error) {
+	var report struct {
+		TestResults []struct {
+			AssertionResults []struct {
+				FullName        string   `json:"fullName"`
+				Status          string   `json:"status"`
+				FailureMessages []string `json:"failureMessages"`
+			} `json:"assertionResults"`
+		} `json:"testResults"`
+	}
+	if err := json.Unmarshal(data, &report); err != nil {
+		return nil, fmt.Errorf("read the Vitest related-test JSON: %w", err)
+	}
+	var failed []FailedTest
+	for _, file := range report.TestResults {
+		for _, assertion := range file.AssertionResults {
+			if assertion.Status != "failed" {
+				continue
+			}
+			test := FailedTest{Name: assertion.FullName}
+			if len(assertion.FailureMessages) > 0 {
+				// The first line carries the reason ("Error: Test timed out
+				// in 50ms."); the rest is advice and stack, too long for a
+				// one-line phase result.
+				test.Message, _, _ = strings.Cut(assertion.FailureMessages[0], "\n")
+				test.Message = strings.TrimSpace(test.Message)
+			}
+			failed = append(failed, test)
+		}
+	}
+	return failed, nil
+}
+
+// maxNamedFailures bounds the failed-test line: enough to act on the first
+// failures, while a suite that fails wholesale still reads as one line.
+const maxNamedFailures = 3
+
+// RelatedTestsFailed reports a related-test run that ran and failed: it names
+// each failed test with its first failure line, up to maxNamedFailures, and
+// counts the rest. Unlike RelatedSuiteFailure the suite did produce a result,
+// so the line says what failed rather than that nothing ran. It wraps the
+// exit so an interrupt stays visible through errors.As, and states it so the
+// exit code is never lost.
+func RelatedTestsFailed(failed []FailedTest, exit error) error {
+	shown := failed[:min(len(failed), maxNamedFailures)]
+	var named []string
+	for _, test := range shown {
+		entry := fmt.Sprintf("%q", test.Name)
+		if test.Message != "" {
+			entry += ": " + test.Message
+		}
+		named = append(named, entry)
+	}
+	if more := len(failed) - len(shown); more > 0 {
+		named = append(named, fmt.Sprintf("and %d more", more))
+	}
+	return fmt.Errorf("related tests failed: %s (%w)", strings.Join(named, "; "), exit)
+}
+
 // ParseJestRelated counts the list-only JSON array. An empty array is zero
 // related tests; anything that is not an array is a JSON failure. Listing
 // proves discoverability, not that the tests load or pass.

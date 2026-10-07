@@ -323,7 +323,7 @@ func runRelatedTests(ctx context.Context, p project.Project, selection project.S
 	cmd.Context = ctx
 	var transcript bytes.Buffer
 	if err := runner.Run(cmd, io.Discard, &transcript); err != nil {
-		return 0, staged.RelatedSuiteFailure(err)
+		return 0, vitestRelatedFailure(outPath, err)
 	}
 	data, err := os.ReadFile(outPath)
 	if err != nil {
@@ -334,6 +334,23 @@ func runRelatedTests(ctx context.Context, p project.Project, selection project.S
 		return 0, staged.RelatedJSONFailure(err.Error())
 	}
 	return n, nil
+}
+
+// vitestRelatedFailure turns a non-zero vitest exit into the error the run
+// reports. It must run before the deferred sandbox removal, because vitest's
+// stderr is empty when tests fail: the failed tests and their reasons exist
+// only in the JSON report. A report that names a failed test means the suite
+// ran and failed; a missing or unreadable one, or one naming no failed test,
+// means the suite produced no result. Either way the exit stays a failure.
+func vitestRelatedFailure(outPath string, exit error) error {
+	// A report vitest never wrote reads as empty, which the parser rejects
+	// like any other unreadable one: both mean the suite gave no result.
+	data, _ := os.ReadFile(outPath)
+	failed, err := staged.ParseVitestFailures(data)
+	if err != nil || len(failed) == 0 {
+		return staged.RelatedSuiteFailure(exit)
+	}
+	return staged.RelatedTestsFailed(failed, exit)
 }
 
 // discoverMembership runs MSP discovery and classifies the raw outcome. It is
