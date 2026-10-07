@@ -188,3 +188,16 @@ func TestJestRelatedBuildsTheListOnlyCommand(t *testing.T) {
 		t.Errorf("JestRelated() = %+v, want %v", command, want)
 	}
 }
+
+// TestRelatedCommandsRunAtNormalPriority pins the related step at normal
+// priority. It runs the project's ordinary tests, and below normal priority on
+// a loaded machine jsdom tests overrun vitest's 5s default and fail falsely.
+// Only mutation testing earns low priority (runner.Command.LowPriority).
+func TestRelatedCommandsRunAtNormalPriority(t *testing.T) {
+	if VitestRelated(`C:\proj\node_modules\.bin\vitest.cmd`, `C:\proj`, []string{"src/a.ts"}, `C:\tmp\out.json`, "").LowPriority {
+		t.Error("VitestRelated().LowPriority = true, want the related tests at normal priority")
+	}
+	if JestRelated(`C:\proj\node_modules\.bin\jest.cmd`, `C:\proj`, []string{"src/a.js"}).LowPriority {
+		t.Error("JestRelated().LowPriority = true, want the related listing at normal priority")
+	}
+}
