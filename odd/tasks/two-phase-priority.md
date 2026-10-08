@@ -51,8 +51,8 @@ Design and measurements: `docs/research/prioridad-en-dos-fases.md`.
 ## Tasks
 - [x] TP-01: runner capability, test-first with platform tests. A grandchild started before the switch ends up lowered. A condition that never fires leaves priority normal. Context cancel reaches the grandchild on Unix. Route: delegated writer (runner.go, exec_windows.go, exec_other.go, managed_* reuse, tests: 2+ non-trivial files).
 - [x] TP-02: Stryker wiring plus updated pinned tests (`check_test.go`, `stryker_command_test.go`, `command_test.go`). Route: delegated writer.
-- [ ] TP-03: e2e on the built binary in the scratchpad fixture. Route: inline (bounded runs).
-- [ ] TP-04: docs plus artifacts. Route: inline or delegated depending on size.
+- [x] TP-03: e2e on the built binary in the scratchpad fixture. Route: inline (bounded runs).
+- [x] TP-04: docs plus artifacts. Route: inline or delegated depending on size.
 
 ## Acceptance and checks
 - `go build ./...`, `go vet ./...`, `go test ./...` and `gofmt -l .` are clean, on Windows locally and on the Ubuntu CI leg.
@@ -89,3 +89,17 @@ Design and measurements: `docs/research/prioridad-en-dos-fases.md`.
   - Checks: `go build ./...` ok; `go vet ./...` ok; `GOOS=linux go vet ./...` ok; `gofmt -l .` empty; `go test -count=1 ./...` all ok; `ditto staged --dry --exclude-prefix tools/` listed 3 staged files (internal/cli/mutate.go, internal/cli/mutate_staged.go, internal/tool/tool.go) with their mutation ranges, dry run only.
   - Unverified until TP-03: that Stryker accepts an absolute `eventReporter.baseDir` and writes there.
   - Next: TP-03.
+- TP-03 done inline. A binary built from `a27fc50` ran in `scratchpad/m1` (Stryker 10.0.0, vitest 5). A ~1.3s test appends its own `os.getPriority()` when it finishes.
+  - No load: the same vitest pid finished at priority 0 in the dry run and 10 in the mutant phase. Exit 0, 2 killed.
+  - 12 background CPU threads for 150s, two runs per binary:
+    - v1.10.1 stalled ~150s at runner startup, before the dry run began. The dry run then ran at priority 10.
+    - This branch began the dry run within ~5s and it ran at priority 0 (1139 and 1150 ms). The mutant phase then stalled ~150s at priority 10.
+    - Exit 0 in all four runs.
+  - The false dry-run timeout did not reproduce. At v1.10.1 the stall came before any test timer started. What the run proves is the priority each phase gets.
+  - New finding, out of scope and pre-existing (v1.10.1 shows it too): under that stall, mutants that are killed without load came out `timeout` (2 of 2 in one run). Stryker counts that as detected, so a real survivor can be masked. Recorded in the research doc (risk 7) and the learning log. Not fixed here; reported to the user.
+- TP-04 done inline:
+  - Research doc: status, a Result section, and risk 7 corrected.
+  - §14 amended. The §05 amendment from main's working tree was brought in as its own commit.
+  - `flujo-implementado.md` figure 7 and its note updated.
+  - Learning-log line added.
+  - Artifacts republished: principles v9 (§01/§03 September amendments, §05, §14) and flujo-implementado v21 (only this change; the rest of that artifact predates the September `.md` edits and is still behind).

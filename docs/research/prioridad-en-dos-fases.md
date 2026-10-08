@@ -1,6 +1,7 @@
 # Prioridad de Stryker en dos fases
 
-**Propuesta de diseño — 7 de octubre de 2026. Sin implementar.**
+**Propuesta de diseño — 7 de octubre de 2026. Implementada el mismo día
+(`odd/tasks/two-phase-priority.md`); el resultado medido está al final.**
 
 ## Veredicto
 
@@ -166,8 +167,11 @@ solo porque las alternativas sin estado nuevo están medidas y descartadas:
    Stryker lo retira.
 7. **El congelamiento de ~299 s sigue sin explicar.** El diseño lo evita en el
    dry run, pero la fase de mutantes sigue a prioridad baja. Allí un timeout es
-   una detección para Stryker, no un fallo, así que el costo sería tiempo, no un
-   veredicto falso.
+   una detección para Stryker, no un fallo. *Corregido tras medir:* eso no lo
+   vuelve inocuo. Un mutante que sobreviviría, si su test queda congelado,
+   sale como `timeout` y cuenta como detectado, así que un superviviente puede
+   quedar oculto. Es anterior a este cambio (1.10.1 lo tiene igual) y queda
+   abierto aparte; ver «Resultado».
 
 ## Siguiente paso
 
@@ -175,3 +179,31 @@ Implementar detrás de un test de extremo a extremo con el binario: un proyecto
 scratch, carga de fondo y un test de ~3 s, observando que el dry run pase y que
 la máquina responda durante los mutantes. Es la misma sonda de este documento.
 El riesgo 1 quedó medido (arriba): el reenvío de señales es parte del cambio.
+
+## Resultado
+
+Binario construido desde la rama, sobre un proyecto scratch con Stryker 10.0.0 y
+vitest 5. Un test de ~1.3 s escribe, al terminar, su propio `os.getPriority()`
+(0 normal, 10 `BELOW_NORMAL` en Windows). Misma máquina que arriba.
+
+**Sin carga.** El mismo proceso de vitest (`pid=14836`) terminó el test a
+prioridad 0 en el dry run y a 10 en la fase de mutantes. El cambio ocurre entre
+las dos, como se diseñó.
+
+**Con 12 hilos de carga de fondo, dos corridas por binario:**
+
+| | Arranque → inicio del dry run | Dry run | Fase de mutantes | Veredicto |
+|---|---|---|---|---|
+| 1.10.1 | ~150 s, parado al crear los test runners | prioridad 10 | rápida (la carga ya había terminado) | igual |
+| Esta rama | ~5 s | prioridad 0, 1.14 s | ~150 s, parada | igual |
+
+La carga dura 150 s. En 1.10.1 el congelamiento llegó antes del dry run, en el
+arranque de los runners, así que el test no llegó a medir el atraso y no
+falló: este escenario reproduce el congelamiento, no el timeout falso que
+observó autoreas-bridge. Esta rama mueve el congelamiento entero a la fase de
+mutantes, que es donde el diseño lo acepta.
+
+Lo que la tabla no dice: en la fase congelada, los mutantes que sin carga salen
+`killed` salieron `timeout` (2 de 2 en una corrida). Los dos cuentan como
+detectados, así que acá el veredicto no cambió, pero el mecanismo sí puede
+ocultar un superviviente (riesgo 7). No lo introduce este cambio.

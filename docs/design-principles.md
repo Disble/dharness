@@ -362,6 +362,15 @@ disponibles.
 microbenchmark contraintuitivo: ocho workers dejaron a Stryker más lento que el
 default. El techo no cuesta velocidad.
 
+*Enmendado el 7 de octubre de 2026.* La prioridad reducida es para la fase que
+satura la máquina, no para todo el proceso. El dry run de Stryker es un solo
+test runner sobre un núcleo: a prioridad baja, con la máquina cargada, pierde
+contra todo lo demás, y un test que no tiene la culpa supera el timeout de
+vitest y bloquea el commit. Stryker arranca ahora a prioridad normal y baja el
+árbol entero cuando escribe `onDryRunCompleted`. Se midió, y se descartó, un
+techo de CPU como sustituto: el sistema lo aplica por ventanas de tiempo, y los
+picos quedan iguales que a prioridad normal (`docs/research/prioridad-en-dos-fases.md`).
+
 ### 15. Nada es inmutable, así que todo paso debe poder reaparecer
 
 Un proyecto cambia de gestor, pierde una herramienta, reescribe un hook. No hay
