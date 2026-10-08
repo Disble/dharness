@@ -222,6 +222,17 @@ con el `install` pelado, porque `add` reescribe el spec incluso sin tag.
 `--upgrade` es la salida explícita, y su ayuda nombra la consecuencia en lugar
 de esconderla.
 
+*Enmendado el 7 de octubre de 2026.* La frase sobre `--break` y `--reporters`
+dejó de ser cierta el mismo día en que se escribió (`7120785`). `--break` no
+existe en Stryker, y el veredicto sale del reporte JSON, así que
+`--reporters clear-text,json` se pasa siempre, haya o no configuración del
+proyecto. No es una excepción a este principio: es el 03 aplicado. El reporter
+que produce el veredicto es parte del código de salida, y el código de salida es
+de dharness. La frontera es la de `--tempDirName`: dharness pasa lo que necesita
+para leer el resultado, y nada que cambie qué se mide o cómo (`testRunner`,
+`mutate`). La pérdida queda dentro de la corrida de dharness: el
+`stryker run` del propio proyecto sigue usando sus reporters.
+
 ### 06. La política de stack viaja; la topología del repositorio se queda
 
 Qué herramienta es dueña de qué diagnóstico, qué preset de arquitectura se usa:
