@@ -15,6 +15,12 @@ import (
 	"time"
 )
 
+// startAtNormalPriority is a no-op here: lowering a niceness back to 0 needs
+// privilege, so a test binary started niced stays niced. The Windows twin
+// exists because a below-normal class is inherited the same way and can be
+// raised freely.
+func startAtNormalPriority() {}
+
 // endAsAConsoleInterruptWould ends this process with SIGINT under the default
 // disposition, which is how a terminal's Ctrl-C ends a process that does not
 // handle it.
