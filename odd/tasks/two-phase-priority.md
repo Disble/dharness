@@ -1,0 +1,71 @@
+# Two-phase Stryker priority
+
+## Objective
+Stryker's dry run runs at normal priority, and the mutant phase drops to below normal. The dry run should stop failing on load-induced timeouts, while the mutant phase keeps protecting the machine (§14).
+
+## Problem and rationale
+Design and measurements: `docs/research/prioridad-en-dos-fases.md`.
+- Today the whole Stryker process tree starts below normal priority (`runner.go:44-52`, `tool.StrykerLocal`).
+- The dry run is a single test runner using about one core. At low priority on a loaded machine it loses to everything else, and vitest's 5s per-test timeout fails it. autoreas-bridge measured 2.8s jsdom tests reaching 5.5–6.3s. Locally, low priority stalled a test for ~299s with 12 background threads (2 of 2 runs).
+- Rejected alternatives, all measured or triaged:
+  - Normal priority for the whole run breaks §14.
+  - A CPU hard cap does not protect the machine: its p95 equals normal priority.
+  - Retries, worker caps and an "inconclusive" state were rejected.
+- Verified pieces:
+  - Stryker 10's `event-recorder` reporter writes `*-onDryRunCompleted.json` before the first mutant.
+  - Windows: a job's `JOB_OBJECT_LIMIT_PRIORITY_CLASS` reaches processes that already exist.
+  - Linux: `setpriority(PRIO_PGRP)` reaches existing descendants.
+  - Linux: `Setpgid` orphans the tree on Ctrl-C unless SIGINT/SIGTERM are forwarded to `-pgid`. With forwarding, measured 0 survivors.
+
+## Scope
+- TP-01, runner capability. A `runner.Command` can start at normal priority and, once a caller-supplied condition reports true, lower itself and everything it started, exactly once.
+  - Windows: `Run` puts the process in a job object (reusing the suspended-start machinery in `managed_windows.go`) and sets the job's priority class limit.
+  - Unix:
+    - `Setpgid`.
+    - SIGINT/SIGTERM forwarded to `-pgid` while the command runs.
+    - Context cancellation kills `-pgid`.
+    - The switch is `setpriority(PRIO_PGRP)`.
+  - The condition is polled about every 250ms while the process runs.
+- TP-02, Stryker wiring:
+  - `--reporters clear-text,json,event-recorder` on mutation runs.
+  - The staged config sets `eventReporter.baseDir` to a run-owned directory.
+  - The interactive route clears `<stryker cwd>/reports/mutation/events` before launch and watches it.
+  - The condition is "a `*-onDryRunCompleted.json` exists".
+  - `mutate --dry-run` runs at normal priority throughout.
+  - `stryker serve` (discovery) is unchanged.
+- TP-03: build the binary and run it on a scratch fixture under background CPU load. Observe the dry run pass and Stryker's processes move from Normal to BelowNormal.
+- TP-04, docs:
+  - Close the research doc.
+  - Amend §14 (`.md` plus artifact).
+  - Update `flujo-implementado.md` where it describes priority (`.md` plus artifact).
+  - Add a learning-log line.
+
+## Constraints and non-goals
+- Worktree `D:/dev/disble/dharness-worktrees/two-phase-priority`, branch `feat/two-phase-priority`, base `origin/main` at `1155db8`.
+- Verdict stays exit code plus JSON. The signal only moves priority and never decides pass or fail.
+- If the signal never arrives (dry run fails, Stryker exits early, the project overrides `eventReporter.baseDir`), the run ends at normal priority. That is a documented degradation, not an error.
+- No kill-on-job-close for `Run`. Today a dharness that dies leaves Stryker running, and changing that is out of scope.
+- Stdlib only, no new dependencies. Never run dharness against this checkout. Build to the scratchpad.
+- Push, PR and merge are the user's decisions.
+
+## Tasks
+- [ ] TP-01: runner capability, test-first with platform tests. A grandchild started before the switch ends up lowered. A condition that never fires leaves priority normal. Context cancel reaches the grandchild on Unix. Route: delegated writer (runner.go, exec_windows.go, exec_other.go, managed_* reuse, tests: 2+ non-trivial files).
+- [ ] TP-02: Stryker wiring plus updated pinned tests (`check_test.go`, `stryker_command_test.go`, `command_test.go`). Route: delegated writer.
+- [ ] TP-03: e2e on the built binary in the scratchpad fixture. Route: inline (bounded runs).
+- [ ] TP-04: docs plus artifacts. Route: inline or delegated depending on size.
+
+## Acceptance and checks
+- `go build ./...`, `go vet ./...`, `go test ./...` and `gofmt -l .` are clean, on Windows locally and on the Ubuntu CI leg.
+- `ditto staged --dry --exclude-prefix tools/` recorded per commit.
+- TP-03 evidence:
+  - The dry run passes under load where today it would fail.
+  - The process priority is observed as Normal before the signal and BelowNormal after it.
+
+## Delivery
+- Strategy `ask-on-risk`. Chain strategy `stacked-to-main` (chosen by the user 2026-10-07).
+- Forecast: about 750 authored lines.
+- PR 1 holds TP-01 plus the research doc: a runner capability with no caller, so no behavior change.
+- PR 2 holds TP-02 to TP-04, against main after PR 1 merges.
+
+## Progress
+- Created 2026-10-07. RDD is off (clone-local), so there is no native review.
