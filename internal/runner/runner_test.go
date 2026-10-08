@@ -99,6 +99,7 @@ func TestMain(m *testing.M) {
 		time.Sleep(2 * time.Minute)
 		os.Exit(0)
 	}
+	startAtNormalPriority()
 	os.Exit(m.Run())
 }
 

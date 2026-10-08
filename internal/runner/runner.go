@@ -51,8 +51,10 @@ type Command struct {
 	// slightly longer in wall clock and the machine stays usable throughout.
 	LowPriority bool
 
-	// LowerPriorityWhen, when non-nil, starts the process at normal priority
-	// and lowers it, with every process it has started by then, the first
+	// LowerPriorityWhen, when non-nil, starts the process at the priority
+	// dharness itself runs at — normal, unless whoever started dharness chose
+	// lower, which a child inherits and this does not overrule — and lowers
+	// it, with every process it has started by then, the first
 	// time the condition reports true.
 	//
 	// It exists for Stryker's two phases. The dry run is one test runner on

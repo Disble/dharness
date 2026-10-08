@@ -260,7 +260,25 @@ func TestPlatformizeRoutesShimsThroughCmd(t *testing.T) {
 	}
 }
 
-var procGetPriorityClass = kernel32DLL.NewProc("GetPriorityClass")
+var (
+	procGetPriorityClass = kernel32DLL.NewProc("GetPriorityClass")
+	procSetPriorityClass = kernel32DLL.NewProc("SetPriorityClass")
+)
+
+// startAtNormalPriority raises this test binary to normal priority before any
+// test runs. A child inherits a below-normal class from its parent, so a test
+// started low sees its children start low before any switch: measured, the
+// lower-priority tests passed from a normal shell and failed on the CI runner
+// and under `start /belownormal` with "runs at low priority, want normal".
+// Raising a process's own class to normal needs no privilege.
+func startAtNormalPriority() {
+	const normalPriorityClass = 0x20
+	process, err := syscall.GetCurrentProcess()
+	if err != nil {
+		return
+	}
+	_, _, _ = procSetPriorityClass.Call(uintptr(process), normalPriorityClass)
+}
 
 // priorityOf names the priority class pid runs at: "normal", "low" for
 // below normal, or the raw class for anything else.
