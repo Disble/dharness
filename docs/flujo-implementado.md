@@ -479,7 +479,7 @@ flowchart TD
     Y --> ST
     ST --> CL["limpiar el sandbox anterior, con reintentos si Windows lo tiene tomado"]
     CL --> INV["un solo --mutate separado por comas, --incremental --force, --tempDirName, --cleanTempDir always"]
-    INV --> PR["ejecutar con prioridad reducida"]
+    INV --> PR["arrancar a prioridad normal y bajarla al terminar el dry run"]
     PR --> RD["leer el reporte y listar los supervivientes"]
     RD --> V{"¿sobrevivió alguno?"}
     V -->|"sí"| F["salida 1, nombrando archivo y línea"]
@@ -513,6 +513,16 @@ el error en vez de tragarlo.
 > minutos. Aquí el proceso corre con prioridad reducida, que cede continuamente
 > y no envejece: es el mismo problema resuelto por el sistema operativo en lugar
 > de por nosotros.
+>
+> **Desde el 7 de octubre de 2026, en dos fases.** La prioridad reducida se
+> aplica a la fase de mutantes, no al dry run. El dry run es un solo test runner
+> sobre un núcleo, y a prioridad baja en una máquina cargada perdía contra todo
+> lo demás hasta que el timeout de vitest lo fallaba. Stryker arranca a prioridad
+> normal, con el reporter `event-recorder` en `--reporters`, y dharness baja el
+> árbol entero en cuanto aparece `*-onDryRunCompleted.json`: en Windows con el
+> límite de prioridad de un Job object, en Unix con `setpriority(PRIO_PGRP)`.
+> `mutate --dry-run` corre a prioridad normal de punta a punta. Las mediciones
+> están en `docs/research/prioridad-en-dos-fases.md`.
 
 ---
 
