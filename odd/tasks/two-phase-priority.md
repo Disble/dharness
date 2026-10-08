@@ -62,10 +62,18 @@ Design and measurements: `docs/research/prioridad-en-dos-fases.md`.
   - The process priority is observed as Normal before the signal and BelowNormal after it.
 
 ## Delivery
-- Strategy `ask-on-risk`. Chain strategy `stacked-to-main` (chosen by the user 2026-10-07).
-- Forecast: about 750 authored lines.
-- PR 1 holds TP-01 plus the research doc: a runner capability with no caller, so no behavior change.
-- PR 2 holds TP-02 to TP-04, against main after PR 1 merges.
+- Strategy `ask-on-risk`. The chain strategy is `stacked-to-main`, chosen by the user on 2026-10-07.
+- Measured size is about 1500 authored lines, against a forecast of 750.
+- One slicing pass, on 2026-10-08, gave three PRs:
+  1. `docs/two-phase-priority-design`: design and the §05 amendment. Commits `6040f2d` and `57f12ad`. 259 lines.
+  2. `feat/two-phase-priority`: the runner capability. Commit `acb8692`. 671 lines.
+  3. `feat/two-phase-priority-wiring`: Stryker wiring and docs. Commits `25d6257` and this doc commit. About 590 lines.
+- PRs 2 and 3 are flagged `size:exception`. The runner capability has no cohesive cut: a one-platform half would ship a capability that fails on the other platform. About 60% of each is tests.
+- The task entries above name pre-rebase hashes:
+  - `98574cc` became `acb8692`.
+  - `a27fc50` became `25d6257`.
+  - `6b8e0d2` became `4b39966`.
+  - The final tree is byte-identical to the verified one.
 
 ## Progress
 - Created 2026-10-07. RDD is off (clone-local), so there is no native review.
