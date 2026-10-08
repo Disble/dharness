@@ -129,6 +129,69 @@ func beforeStart(process *exec.Cmd) {
 // afterStart is a no-op here: Windows takes the priority at creation time.
 func afterStart(int) {}
 
+// jobLimitPriorityClass is JOB_OBJECT_LIMIT_PRIORITY_CLASS: every process in
+// the job runs at the job's PriorityClass.
+const jobLimitPriorityClass = 0x00000020
+
+// lowerableTree is a process held in a job object from creation, so that one
+// call can lower everything it ever started.
+//
+// The job is what reaches the tree. A priority class set on the leader alone
+// is inherited only by processes started after it, while the limit on a job
+// applies to the processes already in it: measured, a grandchild created
+// before the switch went from Normal to BelowNormal, and a latency probe
+// beside the tree fell from p95 460ms to 55ms. The leader starts suspended
+// and is resumed only once it is in the job — the machinery StartManaged
+// already uses — so nothing it starts can run outside the job.
+//
+// Unlike StartManaged's job, this one does not kill on close. A dharness that
+// dies today leaves Stryker running, and changing that is not what this is
+// for, so closing the handle after Wait ends nothing.
+type lowerableTree struct {
+	owner   treeOwner
+	process *exec.Cmd
+}
+
+func holdTree(process *exec.Cmd) (*lowerableTree, error) {
+	if process.SysProcAttr == nil {
+		process.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	process.SysProcAttr.CreationFlags |= createSuspendedFlag
+	job, err := createJob()
+	if err != nil {
+		return nil, err
+	}
+	return &lowerableTree{owner: treeOwner{job: job}}, nil
+}
+
+// started puts the suspended leader in the job and only then lets it run.
+func (t *lowerableTree) started(process *exec.Cmd) error {
+	t.process = process
+	return t.owner.afterStart(process)
+}
+
+// lower moves every process in the job to below normal. A failure is ignored
+// for the reason afterStart's is on Unix: the run is still correct at normal
+// priority.
+func (t *lowerableTree) lower() {
+	info := jobExtendedLimits{}
+	info.Basic.LimitFlags = jobLimitPriorityClass
+	info.Basic.PriorityClass = belowNormalPriorityClass
+	_ = setJobLimits(t.owner.job, &info)
+}
+
+// kill ends the leader only, exactly as Run does without a tree. Ending the
+// whole job on cancellation would change what a cancelled run leaves behind
+// on Windows, which is not what this tree is for.
+func (t *lowerableTree) kill() error {
+	return t.process.Process.Kill()
+}
+
+// release closes the job handle. The processes in it run on.
+func (t *lowerableTree) release() {
+	_ = t.owner.release()
+}
+
 // statusControlCExit is the exit status Windows' default console control
 // handler ends a process with, for Ctrl-C, Ctrl-Break and the console closing
 // alike: STATUS_CONTROL_C_EXIT.

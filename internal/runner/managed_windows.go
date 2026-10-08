@@ -71,21 +71,40 @@ type jobExtendedLimits struct {
 }
 
 func createKillOnCloseJob() (syscall.Handle, error) {
+	job, err := createJob()
+	if err != nil {
+		return 0, err
+	}
+	info := jobExtendedLimits{}
+	info.Basic.LimitFlags = jobLimitKillOnJobClose
+	if err := setJobLimits(job, &info); err != nil {
+		_, _, _ = procCloseHandleObject.Call(uintptr(job))
+		return 0, err
+	}
+	return job, nil
+}
+
+// createJob creates an anonymous job object with no limits at all: closing
+// its last handle ends nothing.
+func createJob() (syscall.Handle, error) {
 	handle, _, err := procCreateJobObjectW.Call(0, 0)
 	if handle == 0 {
 		return 0, fmt.Errorf("CreateJobObjectW: %v", err)
 	}
-	info := jobExtendedLimits{}
-	info.Basic.LimitFlags = jobLimitKillOnJobClose
-	ok, _, err := procSetInformationJob.Call(handle,
-		uintptr(jobInfoExtendedLimitInformation),
-		uintptr(unsafe.Pointer(&info)),
-		unsafe.Sizeof(info))
-	if ok == 0 {
-		_, _, _ = procCloseHandleObject.Call(handle)
-		return 0, fmt.Errorf("SetInformationJobObject: %v", err)
-	}
 	return syscall.Handle(handle), nil
+}
+
+// setJobLimits replaces the job's limits with info. Every limit the job had
+// before and info does not name is dropped.
+func setJobLimits(job syscall.Handle, info *jobExtendedLimits) error {
+	ok, _, err := procSetInformationJob.Call(uintptr(job),
+		uintptr(jobInfoExtendedLimitInformation),
+		uintptr(unsafe.Pointer(info)),
+		unsafe.Sizeof(*info))
+	if ok == 0 {
+		return fmt.Errorf("SetInformationJobObject: %v", err)
+	}
+	return nil
 }
 
 // treeOwner carries the job between start hooks: created before the process
