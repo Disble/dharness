@@ -111,3 +111,4 @@ Design and measurements: `docs/research/prioridad-en-dos-fases.md`.
   - `flujo-implementado.md` figure 7 and its note updated.
   - Learning-log line added.
   - Artifacts republished: principles v9 (§01/§03 September amendments, §05, §14) and flujo-implementado v21 (only this change; the rest of that artifact predates the September `.md` edits and is still behind).
+- 2026-10-08 CI: Windows leg failed on #68/#69 — the runner's tests saw children start low before any switch. Cause reproduced locally under `start /belownormal`: a child inherits a below-normal class. Product behavior kept (a deliberately lowered dharness is respected, now stated in the field's doc); the test binary raises itself to normal in TestMain (`efd9511`). Green from a below-normal parent and on the full suite.
