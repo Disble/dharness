@@ -347,16 +347,31 @@ func TestStrykerRunsTheBinaryTheProjectInstalled(t *testing.T) {
 	binary := filepath.Join(binDir, binaryName("stryker"))
 	writeFile(t, binary, "")
 
-	if err := runStryker(context.Background(), binary, root, project.StrykerSelection{TestRunner: "vitest"}, []string{"run"}, io.Discard); err != nil {
+	consulted := false
+	lowerWhen := func() bool { consulted = true; return false }
+	if err := runStryker(context.Background(), binary, root, project.StrykerSelection{TestRunner: "vitest"}, []string{"run"}, lowerWhen, io.Discard); err != nil {
 		t.Fatalf("runStryker() = %v", err)
 	}
 
 	if len(captured.commands) != 1 {
 		t.Fatalf("ran %d commands, want 1: %+v", len(captured.commands), captured.commands)
 	}
-	want := runner.Command{Label: "stryker", Name: binary, Args: []string{"run", "--appendPlugins", "@stryker-mutator/vitest-runner"}, Dir: root, LowPriority: true}
-	if got := captured.commands[0]; got.Label != want.Label || got.Name != want.Name || got.Dir != want.Dir || got.LowPriority != want.LowPriority || !slices.Equal(got.Args, want.Args) {
-		t.Errorf("runStryker command = %s %v in %s (low priority %t), want %s %v in %s (low priority %t)", got.Name, got.Args, got.Dir, got.LowPriority, want.Name, want.Args, want.Dir, want.LowPriority)
+	want := runner.Command{Label: "stryker", Name: binary, Args: []string{"run", "--appendPlugins", "@stryker-mutator/vitest-runner"}, Dir: root}
+	got := captured.commands[0]
+	if got.Label != want.Label || got.Name != want.Name || got.Dir != want.Dir || !slices.Equal(got.Args, want.Args) {
+		t.Errorf("runStryker command = %s %v in %s, want %s %v in %s", got.Name, got.Args, got.Dir, want.Name, want.Args, want.Dir)
+	}
+	// The priority is the caller's per-run choice, passed through unchanged:
+	// the run starts at normal priority and the given condition lowers it.
+	if got.LowPriority {
+		t.Error("runStryker command starts at low priority, want normal: the caller's condition decides when it drops")
+	}
+	if got.LowerPriorityWhen == nil {
+		t.Fatal("runStryker command has no LowerPriorityWhen, want the condition the caller passed")
+	}
+	got.LowerPriorityWhen()
+	if !consulted {
+		t.Error("runStryker command's LowerPriorityWhen is not the condition the caller passed")
 	}
 }
 
@@ -1221,8 +1236,10 @@ func TestMutateAcceptsFlagsAfterPaths(t *testing.T) {
 
 // Stryker exposes no way to fail on survivors from the command line: --break
 // and --thresholds.break were both rejected as unknown options. The json
-// reporter is what makes a verdict possible at all, and it runs at low
-// priority because it is the one thing here that can saturate a machine.
+// reporter is what makes a verdict possible at all. Its mutant phase runs at
+// low priority because it is the one thing here that can saturate a machine;
+// the dry run before it does not, because at low priority on a loaded machine
+// it fails on vitest's per-test timeout.
 func TestMutateAsksForTheReportItNeedsToJudge(t *testing.T) {
 	captured, root := stub(t, "")
 	mutable(t, root)
@@ -1236,8 +1253,12 @@ func TestMutateAsksForTheReportItNeedsToJudge(t *testing.T) {
 	if strings.Contains(args, "--break") {
 		t.Errorf("--break does not exist in Stryker and was rejected when tried: %s", args)
 	}
-	if !commandFor(t, captured, "stryker").LowPriority {
-		t.Error("mutation ran at normal priority; it is the one command that can freeze the machine")
+	stryker := commandFor(t, captured, "stryker")
+	if stryker.LowerPriorityWhen == nil {
+		t.Error("mutation has no LowerPriorityWhen, so its mutant phase runs at normal priority; it is the one phase that can freeze the machine")
+	}
+	if stryker.LowPriority {
+		t.Error("mutation starts at low priority, want normal until its dry run completes: a low-priority dry run fails on a loaded machine")
 	}
 }
 

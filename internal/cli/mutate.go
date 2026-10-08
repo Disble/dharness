@@ -147,8 +147,10 @@ func RunMutate(args []string, stdout io.Writer) error {
 		fmt.Fprintln(stdout, "Running the initial test run only, to count the tests the runner considers related.")
 
 		// The count only exists in the output: --dryRunOnly writes no report.
+		// No priority switch: the whole run is a dry run, the phase low
+		// priority breaks, so it stays at normal priority to the end.
 		var transcript bytes.Buffer
-		if err := runStryker(context.Background(), binary, p.Source, selection, tool.StrykerDryRun(arguments, testRunnerArg, *concurrency), io.MultiWriter(stdout, &transcript)); err != nil {
+		if err := runStryker(context.Background(), binary, p.Source, selection, tool.StrykerDryRun(arguments, testRunnerArg, *concurrency), nil, io.MultiWriter(stdout, &transcript)); err != nil {
 			return err
 		}
 		return recordMeasurement(p, transcript.String(), scopes[0].Path, stdout)
@@ -191,7 +193,27 @@ func RunMutate(args []string, stdout io.Writer) error {
 		return fmt.Errorf("clear the previous mutation report: %w", err)
 	}
 
-	if err := runStryker(context.Background(), binary, p.Source, selection, tool.StrykerMutate(arguments, testRunnerArg, incremental, sandbox, *concurrency), stdout); err != nil {
+	// The mutant phase runs low and the dry run before it does not: the run
+	// is lowered once Stryker's event-recorder writes onDryRunCompleted into
+	// its default events directory under p.Source. There is no generated
+	// config here to move that directory, and the command line cannot.
+	//
+	// It is removed first. The switch is polled from launch, and Stryker only
+	// clears the folder once its recorder starts, so an onDryRunCompleted
+	// left by an earlier run would lower this run's dry run before Stryker
+	// had removed it.
+	//
+	// A project whose own config sets eventReporter.baseDir writes the event
+	// elsewhere: the signal never appears here and the run stays at normal
+	// priority to the end. That is a degradation, not an error, since the
+	// verdict never depends on priority, and reading the project's config to
+	// follow it would make dharness interpret Stryker's configuration.
+	events := tool.StrykerDefaultEventsDir(p.Source)
+	if err := os.RemoveAll(events); err != nil {
+		return fmt.Errorf("clear the previous Stryker events: %w", err)
+	}
+
+	if err := runStryker(context.Background(), binary, p.Source, selection, tool.StrykerMutate(arguments, testRunnerArg, incremental, sandbox, *concurrency), tool.StrykerDryRunCompleted(events), stdout); err != nil {
 		return err
 	}
 	return reportSurvivors(p.Source, reportPath, scopes, incremental, stdout)
@@ -384,9 +406,15 @@ func ensureStryker(p project.Project, selection project.StrykerSelection, upgrad
 // whose cleanup is about to remove it — and a Stryker killed that way gets no
 // pointer to its help, which answers questions about findings, not about an
 // interrupt.
-func runStryker(ctx context.Context, binary, dir string, selection project.StrykerSelection, args []string, stdout io.Writer) error {
+//
+// lowerPriorityWhen is the run's priority, chosen per run by the caller: a
+// mutation run passes the dry-run-completed condition, so Stryker starts at
+// normal priority and its whole tree drops once the mutant phase begins; a
+// --dryRunOnly run passes nil and stays at normal priority throughout.
+func runStryker(ctx context.Context, binary, dir string, selection project.StrykerSelection, args []string, lowerPriorityWhen func() bool, stdout io.Writer) error {
 	command := tool.StrykerLocal(binary, dir, selection.TestRunner, selection.AppendPlugins, args...)
 	command.Context = ctx
+	command.LowerPriorityWhen = lowerPriorityWhen
 
 	if err := runner.Run(command, stdout, stdout); err != nil {
 		if ctx.Err() == nil && !runner.Interrupted(err) {

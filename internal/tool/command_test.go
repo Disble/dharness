@@ -155,8 +155,11 @@ func TestStrykerServeBuildsServeStdio(t *testing.T) {
 	if want := []string{"serve", "stdio"}; !slices.Equal(command.Args, want) {
 		t.Errorf("StrykerServe().Args = %v, want exactly %v: configuration travels in the payload", command.Args, want)
 	}
-	if !command.LowPriority {
-		t.Error("StrykerServe().LowPriority = false, want the server to yield the machine")
+	// Discovery keeps the whole-run low priority: it has no dry run for low
+	// priority to break, so the two-phase switch mutation runs use does not
+	// apply, and runner refuses both settings together.
+	if !command.LowPriority || command.LowerPriorityWhen != nil {
+		t.Errorf("StrykerServe() = LowPriority %t, LowerPriorityWhen set %t, want low priority from the start and no switch: the server yields the machine", command.LowPriority, command.LowerPriorityWhen != nil)
 	}
 }
 
@@ -192,7 +195,8 @@ func TestJestRelatedBuildsTheListOnlyCommand(t *testing.T) {
 // TestRelatedCommandsRunAtNormalPriority pins the related step at normal
 // priority. It runs the project's ordinary tests, and below normal priority on
 // a loaded machine jsdom tests overrun vitest's 5s default and fail falsely.
-// Only mutation testing earns low priority (runner.Command.LowPriority).
+// Only mutation testing earns low priority, and only its mutant phase
+// (runner.Command.LowerPriorityWhen).
 func TestRelatedCommandsRunAtNormalPriority(t *testing.T) {
 	if VitestRelated(`C:\proj\node_modules\.bin\vitest.cmd`, `C:\proj`, []string{"src/a.ts"}, `C:\tmp\out.json`, "").LowPriority {
 		t.Error("VitestRelated().LowPriority = true, want the related tests at normal priority")

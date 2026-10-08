@@ -801,14 +801,14 @@ func TestMutateStagedPassesTheInPlaceFlagAndBothScopes(t *testing.T) {
 		t.Errorf("stryker args = %v, want the generated config named", stryker.Args)
 	}
 	// Exact rather than Contains for the scope: with no project config the
-	// generated file holds only the scope and this run's own report path, in
-	// order, kept and dropped alike.
+	// generated file holds only the scope, in order, kept and dropped alike,
+	// and this run's own report path and events directory.
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(generated), &fields); err != nil {
 		t.Fatalf("generated config %q is not a JSON object: %v", generated, err)
 	}
-	if len(fields) != 2 {
-		t.Errorf("generated config = %s, want exactly mutate and jsonReporter", generated)
+	if len(fields) != 3 {
+		t.Errorf("generated config = %s, want exactly mutate, jsonReporter and eventReporter", generated)
 	}
 	wantMutate := `["src/a.js:1-1","src/types.ts:1-1"]`
 	if string(fields["mutate"]) != wantMutate {
@@ -852,10 +852,11 @@ func TestMutateStagedCarriesTheProjectConfigIntoTheGeneratedOne(t *testing.T) {
 		"plugins":    `[ "@stryker-mutator/vitest-runner", "./local-plugin.js" ]`,
 		"mutate":     `["src/[[]id[]]/a.js:1-1"]`,
 	}
-	// +1: jsonReporter, which every generated config carries, project config
-	// or not — see assertOwnAbsoluteReportPath.
-	if len(fields) != len(want)+1 {
-		t.Errorf("generated config = %s, want exactly the keys %v plus jsonReporter", generated, want)
+	// +2: jsonReporter and eventReporter, which every generated config
+	// carries, project config or not — see assertOwnAbsoluteReportPath and
+	// TestMutateStagedWatchesItsOwnEventsDirectory.
+	if len(fields) != len(want)+2 {
+		t.Errorf("generated config = %s, want exactly the keys %v plus jsonReporter and eventReporter", generated, want)
 	}
 	for key, value := range want {
 		if string(fields[key]) != value {
@@ -896,7 +897,7 @@ func TestMutateStagedOverridesJSONReporterFileNameButKeepsOtherKeys(t *testing.T
 		`{"testRunner":"vitest","jsonReporter":{"fileName":"reports/project.json","otherOption":true}}`)
 	reportPath := filepath.Join(t.TempDir(), "dh-report-x", "mutation.json")
 
-	configFile, err := writeStagedStrykerConfig(source, "stryker.config.json", []string{"src/a.js:1-1"}, reportPath)
+	configFile, err := writeStagedStrykerConfig(source, "stryker.config.json", []string{"src/a.js:1-1"}, reportPath, filepath.Join(filepath.Dir(reportPath), "events"))
 	if err != nil {
 		t.Fatalf("writeStagedStrykerConfig() = %v, want nil", err)
 	}
@@ -992,7 +993,7 @@ func TestWriteStagedStrykerConfigRefusesAConfigItCannotExtend(t *testing.T) {
 			source := t.TempDir()
 			writeFile(t, filepath.Join(source, ".stryker.conf.json"), tc.contents)
 
-			_, err := writeStagedStrykerConfig(source, ".stryker.conf.json", []string{"src/a.js:1-1"}, filepath.Join(t.TempDir(), "mutation.json"))
+			_, err := writeStagedStrykerConfig(source, ".stryker.conf.json", []string{"src/a.js:1-1"}, filepath.Join(t.TempDir(), "mutation.json"), filepath.Join(t.TempDir(), "events"))
 
 			if err == nil || !strings.Contains(err.Error(), ".stryker.conf.json") {
 				t.Fatalf("writeStagedStrykerConfig() = %v, want an error naming .stryker.conf.json", err)

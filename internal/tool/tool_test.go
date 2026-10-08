@@ -188,7 +188,7 @@ func TestStrykerMutateFromConfigNamesTheFileInsteadOfTheScope(t *testing.T) {
 		"--concurrency", "3",
 		"--tempDirName", "sandbox",
 		"--cleanTempDir", "always",
-		"--reporters", "clear-text,json",
+		"--reporters", "clear-text,json,event-recorder",
 	}
 	if !slices.Equal(args, want) {
 		t.Errorf("StrykerMutateFromConfig() = %v, want %v", args, want)
