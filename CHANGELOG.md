@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.11.0](https://github.com/Disble/dharness/compare/v1.10.1...v1.11.0) (2026-10-08)
+
+
+### Features
+
+* **mutate:** run Stryker's dry run at normal priority and its mutants low ([5518860](https://github.com/Disble/dharness/commit/5518860cd064056590f912373fdc751d40541d9a))
+* **runner:** lower a command's priority in flight when a condition fires ([93f5e29](https://github.com/Disble/dharness/commit/93f5e2910f2233d9542113b14c67a536cc5e75c4))
+
 ## [1.10.1](https://github.com/Disble/dharness/compare/v1.10.0...v1.10.1) (2026-10-07)
 
 
