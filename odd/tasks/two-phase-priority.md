@@ -49,7 +49,7 @@ Design and measurements: `docs/research/prioridad-en-dos-fases.md`.
 - Push, PR and merge are the user's decisions.
 
 ## Tasks
-- [ ] TP-01: runner capability, test-first with platform tests. A grandchild started before the switch ends up lowered. A condition that never fires leaves priority normal. Context cancel reaches the grandchild on Unix. Route: delegated writer (runner.go, exec_windows.go, exec_other.go, managed_* reuse, tests: 2+ non-trivial files).
+- [x] TP-01: runner capability, test-first with platform tests. A grandchild started before the switch ends up lowered. A condition that never fires leaves priority normal. Context cancel reaches the grandchild on Unix. Route: delegated writer (runner.go, exec_windows.go, exec_other.go, managed_* reuse, tests: 2+ non-trivial files).
 - [ ] TP-02: Stryker wiring plus updated pinned tests (`check_test.go`, `stryker_command_test.go`, `command_test.go`). Route: delegated writer.
 - [ ] TP-03: e2e on the built binary in the scratchpad fixture. Route: inline (bounded runs).
 - [ ] TP-04: docs plus artifacts. Route: inline or delegated depending on size.
@@ -69,3 +69,12 @@ Design and measurements: `docs/research/prioridad-en-dos-fases.md`.
 
 ## Progress
 - Created 2026-10-07. RDD is off (clone-local), so there is no native review.
+- 2026-10-07, TP-01 done. Route: delegated writer (7 runner files, 2+ non-trivial).
+  - Field `runner.Command.LowerPriorityWhen func() bool`, polled every 250ms (`lowerPriorityPollInterval`) from a goroutine beside the Context watcher, fires once, stops when the process exits. Only `Run` honors it.
+  - Decision: setting it together with `LowPriority` is refused with `ErrConflictingPriority` (a `StartError`) before anything starts. "LowPriority wins" was tried first and dropped: its test had to run a below-normal child, which starved under the full suite's load (pids never appeared in 10s), the very effect this feature addresses.
+  - Windows: suspended start, unlimited job (`createJob`, factored out of `createKillOnCloseJob`), `JOB_OBJECT_LIMIT_PRIORITY_CLASS` + `BELOW_NORMAL` on the signal, handle closed after Wait, no kill-on-close, Context kill still leader-only.
+  - Unix: `Setpgid`, SIGINT/SIGTERM caught from before Start and forwarded to `-pgid`, Context kills `-pgid` with SIGKILL, `setpriority(PRIO_PGRP)` on the signal.
+  - RED: compile failure (`unknown field LowerPriorityWhen`); then with the field and no behavior, Windows: grandchild-lowered test "runs at normal priority, want low", never-fires test "condition consulted 0 times in 5s"; Linux (WSL): the same two plus "grandchild still runs after the run was cancelled". Forwarding test with the forward removed: "Run() had not returned 10s after the interrupt". Refusal test with the guard removed: "Run() = <nil>, want a StartError".
+  - GREEN: Windows `go test -count=1 ./...` ok (3 consecutive runs); Linux runner tests via WSL (cross-compiled `runner.test -test.v`) all PASS, 2 runs.
+  - Checks: `go build ./...` ok; `go vet ./...` ok; `GOOS=linux go vet ./...` ok; `gofmt -l .` empty; `ditto staged --dry --exclude-prefix tools/` listed 4 staged files (exec_other.go, exec_windows.go, managed_windows.go, runner.go) with their mutation ranges, dry run only.
+  - Next: TP-02.

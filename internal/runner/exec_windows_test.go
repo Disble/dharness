@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -256,5 +257,47 @@ func TestPlatformizeRoutesShimsThroughCmd(t *testing.T) {
 				t.Errorf("CmdLine = %q, want the tool arguments quoted at the tail", target.CmdLine)
 			}
 		})
+	}
+}
+
+var procGetPriorityClass = kernel32DLL.NewProc("GetPriorityClass")
+
+// priorityOf names the priority class pid runs at: "normal", "low" for
+// below normal, or the raw class for anything else.
+func priorityOf(t *testing.T, pid int) string {
+	t.Helper()
+	const processQueryLimitedInformation = 0x1000
+	handle, err := syscall.OpenProcess(processQueryLimitedInformation, false, uint32(pid))
+	if err != nil {
+		t.Fatalf("OpenProcess(%d): %v", pid, err)
+	}
+	defer func() { _ = syscall.CloseHandle(handle) }()
+	class, _, err := procGetPriorityClass.Call(uintptr(handle))
+	switch class {
+	case 0:
+		t.Fatalf("GetPriorityClass(%d): %v", pid, err)
+	case 0x20:
+		return "normal"
+	case belowNormalPriorityClass:
+		return "low"
+	}
+	return fmt.Sprintf("class %#x", class)
+}
+
+// TestLowerPriorityWhenStillReachesAShim pins that holding the process
+// suspended until it is in the job does not cost the shim route: every tool
+// dharness runs locally on Windows is reached through cmd.exe.
+func TestLowerPriorityWhenStillReachesAShim(t *testing.T) {
+	t.Setenv(argvHelperEnv, "1")
+	shim := writeCmdShim(t)
+
+	var out strings.Builder
+	err := Run(Command{Name: shim, Args: []string{"a (b) c"}, LowerPriorityWhen: func() bool { return false }}, &out, &out)
+
+	if err != nil {
+		t.Fatalf("Run() = %v, want nil; the tool printed: %s", err, out.String())
+	}
+	if got := strings.TrimSpace(out.String()); got != "<a (b) c>" {
+		t.Errorf("tool received %q, want <a (b) c>", got)
 	}
 }

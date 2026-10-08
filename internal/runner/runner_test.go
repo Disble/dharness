@@ -83,6 +83,9 @@ func TestMain(m *testing.M) {
 		}
 		os.Exit(0)
 	}
+	if dir, isHelper := os.LookupEnv(treeHelperEnv); isHelper {
+		startTreeThenWaitForRelease(dir)
+	}
 	if pidFile, isHelper := os.LookupEnv(grandchildHelperEnv); isHelper {
 		startGrandchildThenSleep(pidFile)
 	}

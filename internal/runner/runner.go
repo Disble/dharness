@@ -51,6 +51,30 @@ type Command struct {
 	// slightly longer in wall clock and the machine stays usable throughout.
 	LowPriority bool
 
+	// LowerPriorityWhen, when non-nil, starts the process at normal priority
+	// and lowers it, with every process it has started by then, the first
+	// time the condition reports true.
+	//
+	// It exists for Stryker's two phases. The dry run is one test runner on
+	// about one core, and at low priority on a loaded machine it loses to
+	// everything else until vitest's 5s per-test timeout fails it: measured,
+	// 2.8s jsdom tests reached 5.5-6.3s, and one stalled for ~299s beside 12
+	// background threads. The mutant phase that follows is the one that
+	// saturates the machine, and it still yields. The switch has to reach
+	// the workers that already exist when the dry run ends, so it lowers the
+	// whole tree, not the leader. docs/research/prioridad-en-dos-fases.md
+	// holds the measurements.
+	//
+	// The condition is consulted about every lowerPriorityPollInterval, from
+	// another goroutine, while the process runs, and never again once it has
+	// reported true. A condition that never fires leaves the run at normal
+	// priority to the end, which is correct rather than a failure: the
+	// verdict never depends on it. Setting LowPriority too is refused with
+	// ErrConflictingPriority before anything starts: the two ask for opposite
+	// starting priorities, and quietly honoring one would hide the mistake.
+	// Only Run honors it; StartManaged does not.
+	LowerPriorityWhen func() bool
+
 	// Context, when set, kills the running process the moment it is done —
 	// left nil for every ordinary call, which starts no watcher goroutine
 	// and behaves exactly as before.
@@ -143,6 +167,11 @@ type invocation struct {
 // unexamined file, or a red one naming a file that was never there.
 var ErrUndeliverableArgument = errors.New("argument cannot be delivered unaltered")
 
+// ErrConflictingPriority reports a Command that sets both LowPriority and
+// LowerPriorityWhen: one starts the process low, the other starts it normal
+// and lowers it later. Set one.
+var ErrConflictingPriority = errors.New("LowPriority and LowerPriorityWhen are both set; set one")
+
 // Run executes cmd, streaming its output to the given writers.
 var Run = execute
 
@@ -150,7 +179,16 @@ var Run = execute
 // has exited, for output pipes something else still holds. See execute.
 const cancelledWaitDelay = 2 * time.Second
 
+// lowerPriorityPollInterval is how often a running Command's
+// LowerPriorityWhen is consulted. Stryker writes its dry-run event ~200ms
+// before the first mutant, so a quarter second costs the mutant phase at most
+// a moment at normal priority.
+const lowerPriorityPollInterval = 250 * time.Millisecond
+
 func execute(cmd Command, stdout, stderr io.Writer) error {
+	if cmd.LowPriority && cmd.LowerPriorityWhen != nil {
+		return &StartError{Command: cmd.String(), Cause: ErrConflictingPriority}
+	}
 	target := platformize(cmd.Name, cmd.Args)
 	if target.Err != nil {
 		return &StartError{Command: cmd.String(), Cause: target.Err}
@@ -175,11 +213,35 @@ func execute(cmd Command, stdout, stderr io.Writer) error {
 	if cmd.LowPriority {
 		beforeStart(process)
 	}
+	// A tree that may be lowered later is held from before the process
+	// exists, so that nothing it starts can run outside what the switch
+	// reaches.
+	var tree *lowerableTree
+	if cmd.LowerPriorityWhen != nil {
+		var err error
+		if tree, err = holdTree(process); err != nil {
+			return &StartError{Command: cmd.String(), Cause: err}
+		}
+	}
 	if err := process.Start(); err != nil {
+		if tree != nil {
+			tree.release()
+		}
 		return &StartError{Command: cmd.String(), Cause: err}
 	}
 	if cmd.LowPriority {
 		afterStart(process.Process.Pid)
+	}
+	kill := process.Process.Kill
+	if tree != nil {
+		if err := tree.started(process); err != nil {
+			_ = process.Process.Kill()
+			_ = process.Wait()
+			tree.release()
+			return &StartError{Command: cmd.String(), Cause: err}
+		}
+		defer tree.release()
+		kill = tree.kill
 	}
 
 	if cmd.Context != nil {
@@ -193,17 +255,22 @@ func execute(cmd Command, stdout, stderr io.Writer) error {
 		// What this does not do is end the grandchild. One whose output is a
 		// file rather than a pipe pins nothing and runs on: a console
 		// interrupt reaches it directly, a signal sent to dharness alone does
-		// not.
+		// not. A lowerable tree on Unix is the exception: its kill ends the
+		// whole process group the leader heads, grandchildren included.
 		process.WaitDelay = cancelledWaitDelay
 		stopWatching := make(chan struct{})
 		defer close(stopWatching)
 		go func() {
 			select {
 			case <-cmd.Context.Done():
-				_ = process.Process.Kill()
+				_ = kill()
 			case <-stopWatching:
 			}
 		}()
+	}
+
+	if tree != nil {
+		defer lowerWhen(cmd.LowerPriorityWhen, tree.lower)()
 	}
 
 	err := process.Wait()
@@ -216,6 +283,35 @@ func execute(cmd Command, stdout, stderr io.Writer) error {
 		return &ExitError{Command: cmd.String(), Code: exitErr.ExitCode(), Interrupted: endedByConsoleInterrupt(exitErr.ProcessState)}
 	}
 	return &StartError{Command: cmd.String(), Cause: err}
+}
+
+// lowerWhen consults condition every lowerPriorityPollInterval and calls lower
+// the first time it reports true, then stops. The returned function stops the
+// polling and returns only once no call to condition or lower is in flight,
+// so the tree can be released after it without racing a late switch.
+func lowerWhen(condition func() bool, lower func()) (stop func()) {
+	quit := make(chan struct{})
+	finished := make(chan struct{})
+	go func() {
+		defer close(finished)
+		ticker := time.NewTicker(lowerPriorityPollInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-quit:
+				return
+			case <-ticker.C:
+				if condition() {
+					lower()
+					return
+				}
+			}
+		}
+	}()
+	return func() {
+		close(quit)
+		<-finished
+	}
 }
 
 // SetForTest replaces Run and returns a restore function.
