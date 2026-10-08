@@ -234,6 +234,10 @@ func mutateStaged(ctx context.Context, concurrency int, excludePrefixes []string
 	}
 	defer func() { _ = runner.RemoveSandbox(reportDir) }()
 	reportPath := filepath.Join(reportDir, "mutation.json")
+	// Stryker's events go beside the report, for the same reason: a default
+	// reports/mutation/events in the snapshot is a link into the real
+	// project, shared with any concurrent run there. Removed with reportDir.
+	eventsDir := filepath.Join(reportDir, "events")
 	// reportDir is freshly created above, so this can only ever find nothing
 	// to remove; the guard stays because a report path is never trusted
 	// without it, the same discipline the ordinary path applies.
@@ -253,7 +257,7 @@ func mutateStaged(ctx context.Context, concurrency int, excludePrefixes []string
 	}
 	// The scope goes in a config file rather than on the command line, which
 	// a staged change can outgrow; see tool.StrykerMutateFromConfig.
-	configFile, err := writeStagedStrykerConfig(snapshotSource, selection.ConfigFile, entries, reportPath)
+	configFile, err := writeStagedStrykerConfig(snapshotSource, selection.ConfigFile, entries, reportPath, eventsDir)
 	if err != nil {
 		return err
 	}
@@ -270,7 +274,10 @@ func mutateStaged(ctx context.Context, concurrency int, excludePrefixes []string
 	// because mutation and report interpretation succeeded and found a
 	// blocking status. Only a run that never produced a verdict fails it.
 	rec.start(phaseStryker)
-	mutation := runStryker(ctx, binary, snapshotSource, selection, args, stdout)
+	// Normal priority for the dry run, low for the mutants: the run is lowered
+	// once the event-recorder writes onDryRunCompleted into the eventsDir the
+	// generated config names.
+	mutation := runStryker(ctx, binary, snapshotSource, selection, args, tool.StrykerDryRunCompleted(eventsDir), stdout)
 	if err := interrupted(ctx, mutation); err != nil {
 		return err
 	}
@@ -532,9 +539,10 @@ const stagedStrykerConfig = "dharness-staged.stryker.config.json"
 //
 // Naming a config file replaces the one Stryker would have found, so the
 // project's own config — projectConfig, relative to source, or empty when
-// there is none — is carried over whole: every key except mutate and
-// jsonReporter keeps its value byte for byte, mutate holds entries, and
-// jsonReporter is reportPath's own object (see overrideJSONReporterFileName).
+// there is none — is carried over whole: every key except mutate,
+// jsonReporter and eventReporter keeps its value byte for byte, mutate holds
+// entries, jsonReporter.fileName is reportPath and eventReporter.baseDir is
+// eventsDir (see overrideObjectField).
 // Relative paths inside the carried-over keys still resolve, because Stryker
 // resolves them from the directory it runs in and the file sits in that same
 // directory.
@@ -547,9 +555,15 @@ const stagedStrykerConfig = "dharness-staged.stryker.config.json"
 // checkout, and reading whichever report lands there second is a race, not a
 // verdict.
 //
+// eventReporter.baseDir is always eventsDir, an absolute directory this run
+// alone owns, for the same reason, and because the run's priority switch
+// watches it for Stryker's onDryRunCompleted event. A config file is the only
+// place it can be set: --eventReporter.baseDir is refused on the command line
+// as an unknown option.
+//
 // Only JSON reaches here: projectConfig is named by project.StrykerRunner,
 // which refuses an executable config rather than evaluate it.
-func writeStagedStrykerConfig(source, projectConfig string, entries []string, reportPath string) (string, error) {
+func writeStagedStrykerConfig(source, projectConfig string, entries []string, reportPath, eventsDir string) (string, error) {
 	fields := map[string]json.RawMessage{}
 	if projectConfig != "" {
 		var err error
@@ -560,11 +574,16 @@ func writeStagedStrykerConfig(source, projectConfig string, entries []string, re
 	// Marshalling a []string or a string cannot fail.
 	fields["mutate"], _ = json.Marshal(entries)
 
-	reporter, err := overrideJSONReporterFileName(fields["jsonReporter"], reportPath)
-	if err != nil {
-		return "", fmt.Errorf("Stryker config %s cannot carry the staged scope: %w; fix the JSON config and retry", projectConfig, err)
+	for _, override := range []struct{ object, field, value string }{
+		{"jsonReporter", "fileName", reportPath},
+		{"eventReporter", "baseDir", eventsDir},
+	} {
+		object, err := overrideObjectField(fields[override.object], override.object, override.field, override.value)
+		if err != nil {
+			return "", fmt.Errorf("Stryker config %s cannot carry the staged scope: %w; fix the JSON config and retry", projectConfig, err)
+		}
+		fields[override.object] = object
 	}
-	fields["jsonReporter"] = reporter
 
 	if err := os.WriteFile(filepath.Join(source, stagedStrykerConfig), assembleJSONObject(fields), 0o600); err != nil {
 		return "", fmt.Errorf("write the staged Stryker config: %w", err)
@@ -572,26 +591,26 @@ func writeStagedStrykerConfig(source, projectConfig string, entries []string, re
 	return stagedStrykerConfig, nil
 }
 
-// overrideJSONReporterFileName returns the jsonReporter object a staged run's
-// generated config carries: fileName set to reportPath, and every other key
-// existing held kept byte for byte — the same discipline
-// writeStagedStrykerConfig applies to the rest of the project's config.
-// existing is empty when the project never set jsonReporter at all.
-func overrideJSONReporterFileName(existing json.RawMessage, reportPath string) (json.RawMessage, error) {
+// overrideObjectField returns the object a staged run's generated config
+// carries under name: field set to value, and every other key existing held
+// kept byte for byte — the same discipline writeStagedStrykerConfig applies
+// to the rest of the project's config. existing is empty when the project
+// never set name at all.
+func overrideObjectField(existing json.RawMessage, name, field, value string) (json.RawMessage, error) {
 	fields := map[string]json.RawMessage{}
 	if len(existing) > 0 {
 		if err := json.Unmarshal(existing, &fields); err != nil {
-			return nil, fmt.Errorf("jsonReporter must be a JSON object: %w", err)
+			return nil, fmt.Errorf("%s must be a JSON object: %w", name, err)
 		}
 		// A JSON null unmarshals into a nil map, not an error, and assigning
-		// into a nil map panics; treat it the same as jsonReporter never
-		// having been set at all.
+		// into a nil map panics; treat it the same as name never having been
+		// set at all.
 		if fields == nil {
 			fields = map[string]json.RawMessage{}
 		}
 	}
 	// Marshalling a string cannot fail.
-	fields["fileName"], _ = json.Marshal(reportPath)
+	fields[field], _ = json.Marshal(value)
 	return assembleJSONObject(fields), nil
 }
 

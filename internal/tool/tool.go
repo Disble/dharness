@@ -16,6 +16,8 @@ package tool
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -106,11 +108,12 @@ func StrykerServe(binaryPath, dir string) runner.Command {
 // file in a single `vitest related` run writing JSON to a run-owned file. The
 // optional config travels only when the snapshot selection names one.
 //
-// It runs at normal priority, unlike Stryker. These are the project's ordinary
-// tests with their ordinary timeouts: below normal priority on a loaded
-// machine, jsdom tests overran vitest's 5s default and failed for no reason in
-// the code, while the same set passed in full at normal priority. Low priority
-// is a remedy for a run that saturates the machine, and this one does not.
+// It runs at normal priority, unlike Stryker's mutant phase. These are the
+// project's ordinary tests with their ordinary timeouts: below normal priority
+// on a loaded machine, jsdom tests overran vitest's 5s default and failed for
+// no reason in the code, while the same set passed in full at normal
+// priority. Low priority is a remedy for a run that saturates the machine,
+// and this one does not.
 func VitestRelated(binaryPath, dir string, files []string, output, config string) runner.Command {
 	args := append([]string{"related"}, files...)
 	args = append(args, "--run", "--passWithNoTests", "--reporter=json", "--outputFile", output)
@@ -132,6 +135,11 @@ func JestRelated(binaryPath, dir string, files []string) runner.Command {
 
 // StrykerLocal invokes the copy of Stryker the project has installed. The path
 // is the command name, never an argument to a remote executor.
+//
+// It sets no priority. That is a per-run decision the caller makes: a
+// mutation run starts at normal priority and is lowered once its dry run
+// completes (StrykerDryRunCompleted), while `mutate --dry-run` is a dry run
+// from start to end and stays at normal priority throughout.
 func StrykerLocal(binaryPath, dir, testRunner string, configuredAppendPlugins []string, args ...string) runner.Command {
 	appendPlugins := append([]string{}, configuredAppendPlugins...)
 	if runnerPackage, ok := strykerRunnerPackages[testRunner]; ok && !contains(appendPlugins, runnerPackage) {
@@ -144,11 +152,54 @@ func StrykerLocal(binaryPath, dir, testRunner string, configuredAppendPlugins []
 	}
 
 	return runner.Command{
-		Label:       Stryker,
-		Name:        binaryPath,
-		Args:        commandArgs,
-		Dir:         dir,
-		LowPriority: true,
+		Label: Stryker,
+		Name:  binaryPath,
+		Args:  commandArgs,
+		Dir:   dir,
+	}
+}
+
+// strykerDryRunCompletedEvent is the suffix of the file Stryker's
+// event-recorder reporter writes when the dry run ends: one file per event,
+// named NNNNN-<event>.json, so 00000-onDryRunCompleted.json. Checked in the
+// published @stryker-mutator/core 6.0.0, 7.0.0, 8.0.0, 9.0.0, 9.6.1 and
+// 10.0.0 tarballs.
+const strykerDryRunCompletedEvent = "-onDryRunCompleted.json"
+
+// StrykerDefaultEventsDir is where the event-recorder writes when nothing
+// configures eventReporter.baseDir: reports/mutation/events relative to the
+// directory Stryker runs in. The base dir cannot be moved from the command
+// line — --eventReporter.baseDir is refused as an unknown option — only from
+// a config file.
+func StrykerDefaultEventsDir(dir string) string {
+	return filepath.Join(dir, "reports", "mutation", "events")
+}
+
+// StrykerDryRunCompleted reports whether the event-recorder has recorded the
+// end of the dry run in eventsDir: the condition for
+// runner.Command.LowerPriorityWhen on a mutation run.
+//
+// In a real run the event appeared ~200ms before the first mutant was tested,
+// so the switch lands at the start of the phase that saturates the machine
+// and after the phase that low priority breaks. A missing directory is false,
+// not an error: the recorder creates it when it starts, and a signal that
+// never arrives leaves the run at normal priority, which never affects the
+// verdict.
+//
+// It reads the directory rather than globbing it, so a path holding glob
+// metacharacters such as [id] cannot change what matches.
+func StrykerDryRunCompleted(eventsDir string) func() bool {
+	return func() bool {
+		entries, err := os.ReadDir(eventsDir)
+		if err != nil {
+			return false
+		}
+		for _, entry := range entries {
+			if strings.HasSuffix(entry.Name(), strykerDryRunCompletedEvent) {
+				return true
+			}
+		}
+		return false
 	}
 }
 
@@ -331,7 +382,7 @@ func testRunnerArgs(testRunner string) []string {
 //
 // --concurrency is passed explicitly because the default is derived from the
 // core count. It stays deliberately small rather than sized from whatever the
-// machine has free at this instant: the process already runs at reduced
+// machine has free at this instant: the mutant phase runs at reduced
 // priority, which yields continuously instead of going stale a minute into a
 // long run, and a scoped mutation over named paths does not need more.
 // The verdict is not a flag. Stryker exposes no --break and no dotted
@@ -357,9 +408,12 @@ func StrykerMutate(paths []string, testRunner, incrementalFile, sandbox string, 
 		"--tempDirName", sandbox,
 		"--cleanTempDir", "always",
 		// clear-text so a person can read it, json so dharness can reach a
+		// verdict, and event-recorder so dharness learns when the dry run
+		// ends: its onDryRunCompleted event is what lowers the run's priority
+		// for the mutant phase (StrykerDryRunCompleted). It never decides a
 		// verdict. progress paints a live bar into what is usually a pipe, and
 		// html writes a file report nobody in this flow opens.
-		"--reporters", "clear-text,json",
+		"--reporters", "clear-text,json,event-recorder",
 	)
 	return args
 }
@@ -402,6 +456,8 @@ func StrykerDryRun(paths []string, testRunner string, concurrency int) []string 
 	return append(args,
 		"--dryRunOnly",
 		"--concurrency", strconv.Itoa(concurrency),
+		// No event-recorder: the whole run is a dry run at normal priority,
+		// so there is no switch for its events to signal.
 		"--reporters", "clear-text,json",
 	)
 }

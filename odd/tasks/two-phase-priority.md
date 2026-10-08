@@ -50,7 +50,7 @@ Design and measurements: `docs/research/prioridad-en-dos-fases.md`.
 
 ## Tasks
 - [x] TP-01: runner capability, test-first with platform tests. A grandchild started before the switch ends up lowered. A condition that never fires leaves priority normal. Context cancel reaches the grandchild on Unix. Route: delegated writer (runner.go, exec_windows.go, exec_other.go, managed_* reuse, tests: 2+ non-trivial files).
-- [ ] TP-02: Stryker wiring plus updated pinned tests (`check_test.go`, `stryker_command_test.go`, `command_test.go`). Route: delegated writer.
+- [x] TP-02: Stryker wiring plus updated pinned tests (`check_test.go`, `stryker_command_test.go`, `command_test.go`). Route: delegated writer.
 - [ ] TP-03: e2e on the built binary in the scratchpad fixture. Route: inline (bounded runs).
 - [ ] TP-04: docs plus artifacts. Route: inline or delegated depending on size.
 
@@ -78,3 +78,14 @@ Design and measurements: `docs/research/prioridad-en-dos-fases.md`.
   - GREEN: Windows `go test -count=1 ./...` ok (3 consecutive runs); Linux runner tests via WSL (cross-compiled `runner.test -test.v`) all PASS, 2 runs.
   - Checks: `go build ./...` ok; `go vet ./...` ok; `GOOS=linux go vet ./...` ok; `gofmt -l .` empty; `ditto staged --dry --exclude-prefix tools/` listed 4 staged files (exec_other.go, exec_windows.go, managed_windows.go, runner.go) with their mutation ranges, dry run only.
   - Next: TP-02.
+- 2026-10-07, TP-02 done. Route: delegated writer (tool.go, mutate.go, mutate_staged.go plus tests: 2+ non-trivial files).
+  - Priority is chosen per run: `tool.StrykerLocal` sets none, and `cli.runStryker` takes `lowerPriorityWhen func() bool` and sets it on the command. Mutation runs (interactive and `--staged`) pass `tool.StrykerDryRunCompleted(eventsDir)`; `mutate --dry-run` passes nil (normal throughout); `StrykerServe` keeps `LowPriority: true`.
+  - `tool.StrykerDryRunCompleted` reads the directory (no glob, so `[id]` paths cannot change matching) and fires on a `*-onDryRunCompleted.json` entry; a missing dir is false. `tool.StrykerDefaultEventsDir(dir)` = `<dir>/reports/mutation/events`.
+  - `StrykerMutate` (and `StrykerMutateFromConfig`) pass `--reporters clear-text,json,event-recorder`; `StrykerDryRun` keeps `clear-text,json`.
+  - Interactive: `os.RemoveAll(<p.Source>/reports/mutation/events)` before launch, so a stale event cannot lower the dry run before Stryker's own cleanup. A project config setting `eventReporter.baseDir` leaves the run at normal priority (documented degradation, config not read).
+  - `--staged`: events go to `<dh-report-*>/events`, beside the run-owned report and removed with it; the generated config sets `eventReporter.baseDir` to it, keeping other `eventReporter` keys byte for byte (`overrideJSONReporterFileName` generalised to `overrideObjectField`).
+  - RED: tool, compile failure, then with stubs `StrykerMutate` lacked event-recorder, predicate stayed false after `00000-onDryRunCompleted.json`, default dir empty. cli, with signatures only: interactive "mutation has no LowerPriorityWhen", staged "generated eventReporter.baseDir = empty, config-level "baseDir = project/events", plus the two pinned priority tests. Dry-run test proven by reverting `StrykerLocal` to `LowPriority: true`: "dry run = LowPriority true ... want neither".
+  - GREEN: new tests pass; pinned tests rewritten to the new contract (`check_test.go` runStryker pass-through and mutation switch, `stryker_command_test.go` no priority in StrykerLocal, `command_test.go` serve LowPriority and no switch, `tool_test.go` reporters, staged config key counts +eventReporter).
+  - Checks: `go build ./...` ok; `go vet ./...` ok; `GOOS=linux go vet ./...` ok; `gofmt -l .` empty; `go test -count=1 ./...` all ok; `ditto staged --dry --exclude-prefix tools/` listed 3 staged files (internal/cli/mutate.go, internal/cli/mutate_staged.go, internal/tool/tool.go) with their mutation ranges, dry run only.
+  - Unverified until TP-03: that Stryker accepts an absolute `eventReporter.baseDir` and writes there.
+  - Next: TP-03.

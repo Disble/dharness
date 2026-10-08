@@ -95,8 +95,13 @@ func TestStrykerLocalRunsTheBinaryTheProjectInstalled(t *testing.T) {
 	if command.Label != Stryker || command.Name != binary || !slices.Equal(command.Args, wantArgs) {
 		t.Errorf("StrykerLocal() = %s %v, want %s %v", command.Name, command.Args, binary, wantArgs)
 	}
-	if command.Dir != `C:\project with spaces` || !command.LowPriority {
+	if command.Dir != `C:\project with spaces` {
 		t.Errorf("StrykerLocal() lost execution properties: %+v", command)
+	}
+	// Priority is the caller's per-run decision now: a mutation run is lowered
+	// only after its dry run, and a --dryRunOnly run never is.
+	if command.LowPriority || command.LowerPriorityWhen != nil {
+		t.Errorf("StrykerLocal() set a priority (LowPriority %t, LowerPriorityWhen set %t), want none: the run that uses it decides", command.LowPriority, command.LowerPriorityWhen != nil)
 	}
 }
 
