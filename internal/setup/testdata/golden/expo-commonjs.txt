@@ -264,7 +264,9 @@ pre-commit:
     ".constants.ts",
     ".helpers.ts",
     ".schema.ts"
-  ]
+  ],
+  "countComments": false,
+  "countBlankLines": false
 }
 ---
 .fallowrc.json

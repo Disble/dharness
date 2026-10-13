@@ -119,6 +119,25 @@ react-doctor owns React and React Native semantics, and runs with `--no-dead-cod
 so the two never answer the same question twice. Stryker answers one question
 neither can: whether the tests would notice the code breaking.
 
+### The line-count thresholds
+
+`.dharness/rules.json` holds the policy the `dharness/*` ESLint rules read.
+The staged ESLint phase enforces file length; an ESLint failure prevents
+react-doctor from running. A standalone react-doctor scan does not prove these
+rules passed: the verified 0.9.17 host does not adopt this generated flat ESLint
+configuration.
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `maxFileLines` | `500` | The ceiling a single file may not cross. |
+| `countComments` | `false` | Whether comment-only lines count toward the ceiling. |
+| `countBlankLines` | `false` | Whether blank lines count toward the ceiling. |
+| `roleSuffixes` | `.types.ts`, `.constants.ts`, `.helpers.ts`, `.schema.ts` | The file kinds whose contents are constrained. |
+
+A file ceiling counts code by default; setting both flags to `true` recovers a
+total-source-line count, and a line that is code plus a trailing comment counts
+once either way.
+
 ## Documentation
 
 - [`docs/design-principles.md`](docs/design-principles.md) — nineteen numbered
