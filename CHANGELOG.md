@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.12.0](https://github.com/Disble/dharness/compare/v1.11.0...v1.12.0) (2026-10-13)
+
+
+### Features
+
+* **setup:** add configurable file-line counting thresholds ([#72](https://github.com/Disble/dharness/issues/72)) ([e9db4f7](https://github.com/Disble/dharness/commit/e9db4f713cd345ffd318ca8fed01a46a8d03f48e))
+
+
+### Bug Fixes
+
+* **sync:** preserve project rule thresholds across setup runs ([#74](https://github.com/Disble/dharness/issues/74)) ([82c3159](https://github.com/Disble/dharness/commit/82c31599166ca2cee73d44743ddb5868f40470f0))
+
 ## [1.11.0](https://github.com/Disble/dharness/compare/v1.10.1...v1.11.0) (2026-10-08)
 
 
