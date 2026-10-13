@@ -256,42 +256,12 @@ func TestScalarCollisionCommentsTheWinnerExactlyOnce(t *testing.T) {
 	}
 }
 
-func TestOwnedFilesSatisfiedRequiresEveryOwnedFileToExist(t *testing.T) {
-	root := t.TempDir()
-	p := project.At(root, root)
-	p.InRepository = true
-
-	if err := os.MkdirAll(filepath.Join(root, project.Dir), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, project.Dir, ownedLefthook), []byte("x"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	// fallow.jsonc matches the current region byte-for-byte (both empty, no
-	// preset contributes anything to a generic project), so only the loop
-	// over ownedLefthook/ownedRules can still fail this — ownedRules is
-	// deliberately absent, and the loop must not skip checking it just
-	// because ownedLefthook, checked first, already exists.
-	if err := os.WriteFile(filepath.Join(root, project.Dir, ownedFallow), []byte(architectureSkeleton), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	if (ownedFilesStep{}).Satisfied(p) {
-		t.Error("Satisfied() = true with rules.json missing, even though lefthook.yml and fallow.jsonc's region both already match")
-	}
-}
-
-// TestOwnedFilesSatisfiedRequiresRulesJSONAfterAFullApply is a mutation
-// guard for the ownedLefthook/ownedRules existence loop: unlike
-// TestOwnedFilesSatisfiedRequiresEveryOwnedFileToExist (whose fixture never
-// wrote eslint.config.js, so a mutant skipping this loop entirely would
-// still fail Satisfied() later, for the wrong reason, hiding the gap), this
-// runs a full Apply() first — every other check the function makes
-// afterwards (region bytes, eslint bytes, the gitignore entry) genuinely
-// passes — then removes only rules.json by hand. A mutant that breaks out
-// of the loop before ever checking either file's existence would let this
-// incorrectly report satisfied, since nothing downstream would catch it.
-func TestOwnedFilesSatisfiedRequiresRulesJSONAfterAFullApply(t *testing.T) {
+// TestOwnedFilesSatisfiedRequiresTheLefthookFileAfterAFullApply is a
+// mutation guard for the one existence check this step still makes: a full
+// Apply leaves every file it owns in place, so only removing lefthook.yml can
+// bring the step back. TestOwnedFilesSatisfiedLeavesRulesJSONToTheThresholdsStep
+// pins the other direction — rules.json is not this step's any more.
+func TestOwnedFilesSatisfiedRequiresTheLefthookFileAfterAFullApply(t *testing.T) {
 	root := t.TempDir()
 	p := project.At(root, root)
 	p.InRepository = true
@@ -303,12 +273,44 @@ func TestOwnedFilesSatisfiedRequiresRulesJSONAfterAFullApply(t *testing.T) {
 		t.Fatal("Satisfied() = false immediately after Apply()")
 	}
 
-	if err := os.Remove(filepath.Join(root, project.Dir, ownedRules)); err != nil {
+	if err := os.Remove(filepath.Join(root, project.Dir, ownedLefthook)); err != nil {
 		t.Fatal(err)
 	}
 
 	if (ownedFilesStep{}).Satisfied(p) {
-		t.Error("Satisfied() = true after rules.json was removed by hand, want false — the existence loop must not be skipped")
+		t.Error("Satisfied() = true after lefthook.yml was removed by hand, want false — the existence check must not be skipped")
+	}
+}
+
+// TestOwnedFilesSatisfiedLeavesRulesJSONToTheThresholdsStep pins the split
+// that gives the thresholds their own step: removing rules.json must not
+// bring the owned-files step back, and must bring the thresholds step back.
+// The two together are what keep a malformed thresholds file from skipping
+// the gate, fallow and ESLint writes in the same run.
+func TestOwnedFilesSatisfiedLeavesRulesJSONToTheThresholdsStep(t *testing.T) {
+	root := t.TempDir()
+	p := project.At(root, root)
+	p.InRepository = true
+
+	if _, err := (ownedFilesStep{}).Apply(p, &Writer{}, io.Discard); err != nil {
+		t.Fatalf("ownedFilesStep.Apply() = %v", err)
+	}
+	if _, err := (rulesThresholdsStep{}).Apply(p, &Writer{}, io.Discard); err != nil {
+		t.Fatalf("rulesThresholdsStep.Apply() = %v", err)
+	}
+	if !(ownedFilesStep{}).Satisfied(p) || !(rulesThresholdsStep{}).Satisfied(p) {
+		t.Fatal("a step is unsatisfied immediately after both Apply() calls")
+	}
+
+	if err := os.Remove(filepath.Join(root, project.Dir, ownedRules)); err != nil {
+		t.Fatal(err)
+	}
+
+	if !(ownedFilesStep{}).Satisfied(p) {
+		t.Error("ownedFilesStep.Satisfied() = false after rules.json was removed, want true — the thresholds are not this step's file")
+	}
+	if (rulesThresholdsStep{}).Satisfied(p) {
+		t.Error("rulesThresholdsStep.Satisfied() = true after rules.json was removed, want false — it owns bringing the file back")
 	}
 }
 

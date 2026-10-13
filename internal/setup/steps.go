@@ -178,18 +178,19 @@ type ownedFilesStep struct{}
 
 func (ownedFilesStep) ID() string { return "write the files dharness owns" }
 
-// Satisfied checks lefthook.yml and rules.json for existence, as before —
-// dharness owns both outright and rewrites them wholesale every run, so
-// existence is the whole question. fallow.jsonc is different: it is
-// co-owned with the agent's `boundaries` block, so only the delimited
-// region's bytes are compared against what the currently matched presets
-// would render (design decision 8) — the rest of the file, boundaries
+// Satisfied checks lefthook.yml for existence — dharness owns it outright and
+// rewrites it wholesale every run, so existence is the whole question.
+// rules.json is deliberately not here: its contents are the project's, and a
+// second step answers for them (rulesThresholdsStep). Checking its existence
+// here would also make one Delegated answer speak for both files, which is
+// exactly the reason the thresholds step is split out. fallow.jsonc is
+// different again: it is co-owned with the agent's `boundaries` block, so only
+// the delimited region's bytes are compared against what the currently matched
+// presets would render (design decision 8) — the rest of the file, boundaries
 // included, is never read here.
 func (ownedFilesStep) Satisfied(p project.Project) bool {
-	for _, name := range []string{ownedLefthook, ownedRules} {
-		if _, err := os.Stat(filepath.Join(p.Root, project.Dir, name)); err != nil {
-			return false
-		}
+	if _, err := os.Stat(filepath.Join(p.Root, project.Dir, ownedLefthook)); err != nil {
+		return false
 	}
 
 	matches := preset.Resolve(p)
@@ -287,7 +288,90 @@ func (ownedFilesStep) Apply(p project.Project, w *Writer, _ io.Writer) (Facts, e
 		}
 	}
 
-	return Facts{}, w.WriteJSON(filepath.Join(p.Root, project.Dir, ownedRules), DefaultThresholds())
+	// rules.json is not written here any more: its contents are the
+	// project's thresholds, and rulesThresholdsStep owns them. Writing a
+	// default document from this step — which it used to — destroyed every
+	// threshold a project had set on every sync.
+	return Facts{}, nil
+}
+
+// ------------------------------------------------------- rules thresholds
+//
+// The thresholds the plugin's rules read live in their own file, and they
+// belong to the project: react-doctor accepts only a severity, so the number
+// cannot ride on the rule declaration, and a project that wants 300 lines
+// instead of 500 says so here.
+//
+// That is why this is a step of its own rather than a clause in
+// ownedFilesStep. The two answer different questions — ownedFilesStep writes
+// the files dharness owns outright, and this one rewrites only what a
+// project left undecided — and a single Delegated answer cannot speak for
+// both: delegating every owned file because the thresholds file is malformed
+// would incorrectly skip the gate, fallow and ESLint writes the same run
+// still has to make.
+
+type rulesThresholdsStep struct{}
+
+// ID names the file, because a reader deciding what to repair has to know
+// which one this entry is about.
+func (rulesThresholdsStep) ID() string {
+	return "keep the thresholds the rules read in " + thresholdsRelPath()
+}
+
+// Satisfied compares the bytes on disk against the document this run would
+// write, derived from the file itself (§07): a file that is missing, one that
+// carries a value normalization changes, and one that cannot be read as a
+// JSON object all answer false — the first two because Apply has work to do,
+// the last because Delegated must be asked.
+//
+// A shape that delegates is never satisfied. run() asks Satisfied first and
+// skips a satisfied step without ever asking Delegated, so answering true to
+// both would file a refused file under "Already in place" and compute its
+// reason for nothing — the same contract eslintExtendsStep.Satisfied
+// documents at greater length.
+func (rulesThresholdsStep) Satisfied(p project.Project) bool {
+	file := readThresholdsFile(filepath.Join(p.Root, project.Dir, ownedRules))
+	if file.repair != "" || file.raw == nil {
+		return false
+	}
+	return bytes.Equal(file.raw, file.document)
+}
+
+func (rulesThresholdsStep) Describe(project.Project) string {
+	return fmt.Sprintf(
+		"%s holds the numbers the rules cannot carry: react-doctor accepts only\n`error`, `warn` or `off` as a severity, so the file ceiling and the role\nsuffixes live here. `countComments` and `countBlankLines` decide whether those\nlines count toward the ceiling, and both default to false. dharness fills in\nwhat this project has not decided and leaves everything else as it is.",
+		thresholdsRelPath())
+}
+
+// Delegated hands the file to the agent when it exists and dharness cannot
+// read it as a JSON object. Overwriting it would destroy the only copy of
+// what the project tried to say, and decoding it is a decision about intent
+// (§05). The reason names the file and the repair, because the reader is the
+// agent that ran the commit (§21).
+func (rulesThresholdsStep) Delegated(p project.Project) (string, bool) {
+	file := readThresholdsFile(filepath.Join(p.Root, project.Dir, ownedRules))
+	if file.repair == "" {
+		return "", false
+	}
+	return file.repair, true
+}
+
+// Apply writes the normalized document by read-merge-write: the bytes on disk
+// are the starting point, so a project's own numbers survive and the write is
+// inside the run's transaction (Writer.Undo restores the original bytes).
+//
+// It refuses a file Delegated already refuses. That branch is unreachable
+// from setup.Run — Delegated is asked first and skips it — and it is kept
+// because a direct call is the one path where nothing else would stop the
+// overwrite.
+func (s rulesThresholdsStep) Apply(p project.Project, w *Writer, _ io.Writer) (Facts, error) {
+	path := filepath.Join(p.Root, project.Dir, ownedRules)
+
+	file := readThresholdsFile(path)
+	if file.repair != "" {
+		return Facts{}, fmt.Errorf("%s: %s", s.ID(), file.repair)
+	}
+	return Facts{}, w.Write(path, file.document)
 }
 
 // ------------------------------------------------------------- extends

@@ -14,7 +14,17 @@
    describe |
      The gate, the architecture and the rule thresholds live in .dharness/, which is
      committed. The project's own files only ever gain one line pointing at them.
-3  point .fallowrc.json at the file dharness owns
+3  keep the thresholds the rules read in .dharness/rules.json
+   satisfied=false delegated=false
+   why |
+
+   describe |
+     .dharness/rules.json holds the numbers the rules cannot carry: react-doctor accepts only
+     `error`, `warn` or `off` as a severity, so the file ceiling and the role
+     suffixes live here. `countComments` and `countBlankLines` decide whether those
+     lines count toward the ceiling, and both default to false. dharness fills in
+     what this project has not decided and leaves everything else as it is.
+4  point .fallowrc.json at the file dharness owns
    satisfied=false delegated=false
    why |
 
@@ -23,7 +33,7 @@
      Add this line to .fallowrc.json:
 
          "extends": [".dharness/fallow.jsonc"]
-4  resolve the keys this project and dharness both declare
+5  resolve the keys this project and dharness both declare
    satisfied=true delegated=true
    why |
      .fallowrc.json declares its own `boundaries`, and fallow's `extends` merges that key
@@ -35,7 +45,7 @@
      owns and keep the project's. Either is a valid answer; both at once is not,
      because the two blocks merge field by field and a zone the other one removed
      can still be referenced.
-5  point lefthook.yml at the file dharness owns
+6  point lefthook.yml at the file dharness owns
    satisfied=true delegated=false
    why |
 
@@ -45,7 +55,7 @@
 
          extends:
            - .dharness/lefthook.yml
-6  point eslint.config.js at the file dharness owns
+7  point eslint.config.js at the file dharness owns
    satisfied=false delegated=false
    why |
 
@@ -56,7 +66,7 @@
          import dharnessLayer from "./.dharness/eslint.config.cjs";
 
          export default [...dharnessLayer({ plugin: dharnessPlugin })];
-7  fix the lint config react-doctor silently drops
+8  fix the lint config react-doctor silently drops
    satisfied=true delegated=true
    why |
      .eslintrc.json does not parse. react-doctor adopts this file and runs the rules in it,
@@ -67,14 +77,14 @@
      Make .eslintrc.json parse, or delete it. Either answer is fine; a file that is present
      and unreadable is not, because the gate cannot tell you which rules it stopped
      running.
-8  give the agent fallow's own tools
+9  give the agent fallow's own tools
    satisfied=false delegated=false
    why |
 
    describe |
      fallow ships an MCP server with the analysis an agent would otherwise ask a
      wrapper to invent: boundaries, traces, impact, health.
-9  wire the gate into git
+10  wire the gate into git
    satisfied=false delegated=true
    why |
      nothing answers: there is no lefthook config, no .husky/ and no lefthook
@@ -88,7 +98,7 @@
      lefthook writes its own git hook once configured and installed; husky keeps
      a shell script that needs one appended line. Either way, the step is
      satisfied once "dharness check" runs on commit.
-10  install react-doctor's agent skill
+11  install react-doctor's agent skill
    satisfied=false delegated=true
    why |
      its only non-interactive form installs five things: skills for every agent it
@@ -98,7 +108,7 @@
          npx --yes react-doctor@latest install
 
      Choose the skill and decline the rest.
-11  decide this project's architecture
+12  decide this project's architecture
    satisfied=false delegated=true
    why |
      architecture boundaries say what the code is meant to be, and no tool can

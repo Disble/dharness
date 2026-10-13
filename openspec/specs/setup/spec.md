@@ -983,6 +983,115 @@ inventing a convention.
 
 ---
 
+## Capability: `rules-thresholds`
+
+The thresholds `.dharness/rules.json` carries are the project's decisions, and
+the plugin reads them at rule-execution time. This capability covers how `sync`
+generates them, which values it preserves, and what it does with a file it
+cannot read.
+
+### Requirement: the thresholds file is owned by its own step, not by the owned-files step
+
+`ownedFilesStep` MUST NOT write `.dharness/rules.json` or require it to exist,
+and a dedicated `rulesThresholdsStep` MUST be registered in `Plan()`
+immediately after `ownedFilesStep`. The step's `Delegated(p)` MUST speak only
+for the thresholds file, so delegating it never skips the gate, architecture or
+ESLint writes `ownedFilesStep` still has to make in the same run.
+
+#### Scenario: a malformed thresholds file does not stop the other owned writes
+
+- **GIVEN** a project whose `.dharness/rules.json` is not a JSON object
+- **WHEN** `sync` runs
+- **THEN** the thresholds step reports delegated, `rules.json` keeps its exact
+  bytes, and `.dharness/lefthook.yml`, `.dharness/fallow.jsonc` and
+  `.dharness/eslint.config.mjs` are still written
+
+#### Scenario: removing the thresholds file brings back only its own step
+
+- **GIVEN** a project where both steps have applied
+- **WHEN** `.dharness/rules.json` is removed by hand
+- **THEN** `ownedFilesStep.Satisfied(p)` is still true and
+  `rulesThresholdsStep.Satisfied(p)` is false
+
+### Requirement: the generated document keeps the schema, the ceiling and a strict counting policy
+
+`sync` MUST write schema `dharness.rules/v1`, `maxFileLines` defaulting to 500,
+`countComments` and `countBlankLines` defaulting to `false`, and MUST NOT add a
+new schema version or a new required field. A missing file is the defaults, not
+an error.
+
+#### Scenario: a new project gets the defaults
+
+- **GIVEN** a project with no `.dharness/rules.json`
+- **WHEN** `sync` runs
+- **THEN** the written document declares `dharness.rules/v1` with
+  `maxFileLines` 500 and both counting flags false, and the step is satisfied on
+  the next run without writing again
+
+### Requirement: normalization validates each recognized field on its own, matching the plugin's own fallbacks
+
+Every recognized field MUST be validated independently: `maxFileLines` MUST be
+a positive integer, `roleSuffixes` MUST be a list whose every entry is a string
+(an empty list is a decision), and both counting flags MUST be JSON booleans. A
+value that is not a decision MUST fall back to that field's default without
+changing any other field. Valid values, an explicit `false`, and keys the
+document does not recognize MUST all be preserved.
+
+#### Scenario: an old file is upgraded without losing its numbers
+
+- **GIVEN** a `.dharness/rules.json` written before the counting flags existed,
+  carrying `maxFileLines: 300` and `roleSuffixes: [".ts"]`
+- **WHEN** `sync` runs
+- **THEN** the file keeps 300 and `[".ts"]` and gains both flags as `false`
+
+#### Scenario: one invalid value costs only that value
+
+- **GIVEN** a file carrying a negative `maxFileLines`, `countComments: true`
+  and an unknown key
+- **WHEN** `sync` runs
+- **THEN** `maxFileLines` becomes 500, `countComments` stays true, and the
+  unknown key keeps its value
+
+### Requirement: a document dharness cannot read is preserved and delegated to the agent
+
+Where `.dharness/rules.json` exists and cannot be read as a JSON object —
+malformed JSON, `null`, an array, a scalar, or an unreadable file — `sync` MUST
+leave the bytes exactly as they are, MUST report the step as delegated with a
+repair the agent can execute, and MUST NOT write the file from `Apply`, even
+when `Apply` is called directly.
+
+#### Scenario: malformed JSON is reported, not repaired
+
+- **GIVEN** a `.dharness/rules.json` that does not parse
+- **WHEN** `sync` runs
+- **THEN** the step is delegated with a reason that names the file, and the
+  file's bytes are unchanged
+
+#### Scenario: a direct call refuses too
+
+- **GIVEN** an unreadable `.dharness/rules.json`
+- **WHEN** `rulesThresholdsStep.Apply(p, w, out)` is called directly
+- **THEN** it returns an error and the file's bytes are unchanged
+
+### Requirement: repeated syncs converge, and a rolled-back run restores the original bytes
+
+A second `sync` over an already-normalized file MUST write nothing, and a run
+that fails after the thresholds step MUST restore the bytes the file held
+before it.
+
+#### Scenario: replay is byte-identical
+
+- **GIVEN** a project whose thresholds file matches the normalized document
+- **WHEN** `sync` runs again
+- **THEN** the step is satisfied and the file's bytes do not change
+
+#### Scenario: `Undo` restores a hand-edited file
+
+- **GIVEN** a hand-edited `.dharness/rules.json` carrying values normalization
+  changes
+- **WHEN** the run rolls back
+- **THEN** the file holds the bytes it held before the run
+
 ## Explicit non-requirements (out of scope for this spec)
 
 These are named in the proposal as separate follow-up changes and are

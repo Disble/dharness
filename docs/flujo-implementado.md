@@ -52,12 +52,29 @@ Con el directorio ya definido, el plugin lee sus umbrales de
 ser un archivo del repositorio, versionado junto al resto y distinto por
 proyecto sin republicar el paquete.
 
+El archivo guarda, además del techo, dos decisiones de conteo: `countComments`
+y `countBlankLines`. Los dos vienen en `false`, así que el techo cuenta código
+—las líneas que solo son un comentario y las líneas en blanco no suman— y
+ponerlos en `true` recupera el conteo de líneas totales del archivo. Cada campo
+se valida por separado, con los mismos criterios que usa el plugin al leerlo:
+`maxFileLines` es un entero positivo, `roleSuffixes` es una lista donde todas
+las entradas son cadenas, y los dos flags son booleanos estrictos. Un valor que
+no cumple recae solo en su default y no toca el resto, así que un número mal
+escrito no cuesta las demás decisiones del proyecto.
+
+Los umbrales son del proyecto. `sync` completa solo lo que el archivo no
+decidió, conserva los valores válidos y las claves que no conoce, y no pisa lo
+que ya estaba bien escrito. Si `rules.json` no es un objeto JSON legible —JSON
+roto, `null`, un arreglo, un escalar— o no se puede leer, dharness conserva los
+bytes tal cual y le entrega la reparación al agente; el paso de los umbrales es
+uno propio, así que los demás archivos de la corrida se escriben igual.
+
 ```
 .dharness/
   .gitignore       # ignora todo salvo lo nombrado abajo
   lefthook.yml     # el gate
   fallow.jsonc     # arquitectura: zonas o preset
-  rules.json       # umbrales de las reglas propias
+  rules.json       # umbrales del proyecto para las reglas propias
   evidence.json    # hechos medidos, no progreso
   stryker-tmp/     # sandbox de la corrida, ignorado
 
@@ -175,9 +192,14 @@ es justamente su razón de ser.
 flowchart TD
     PLAN["del plan, solo los pasos de dharness"] --> A1["instalar los paquetes que declara package.json y faltan"]
     A1 --> A2{"los archivos de .dharness/, ¿existen y los escribió esta versión?"}
-    A2 -->|"faltan o quedaron viejos"| A2W["escribir lefthook.yml y rules.json con lo que esta versión dice"]
+    A2 -->|"faltan o quedaron viejos"| A2W["escribir los archivos propios de esta versión"]
     A2 -->|"ya están al día"| A3
-    A2W --> A2F{"fallow.jsonc: ¿el agente ya escribió boundaries adentro?"}
+    A2W --> A2T{"rules.json, ¿se lee como objeto JSON?"}
+    A2T -->|"sí"| A2N["normalizar campo por campo: los umbrales del proyecto se conservan"]
+    A2T -->|"no"| A2P["conservar los bytes y delegar la reparación al agente"]
+    A2N --> A2F
+    A2P --> A2F
+    A2F{"fallow.jsonc: ¿el agente ya escribió boundaries adentro?"}
     A2F -->|"no"| A2D["escribirlo entero"]
     A2F -->|"sí"| A2M["fusionar: se actualiza lo de dharness y se respeta lo del agente"]
     A2D --> A3["agregar la línea extends donde el archivo del proyecto no existía"]
@@ -381,7 +403,7 @@ tenido que anotarlo.
 | Gate cableado | Algún hook invoca `dharness check` | El hook se borra, se reescribe, o pasa a llamar a un comando que ya no existe |
 | Herramientas del agente | La skill de react-doctor y `fallow-mcp` registrados | Se cambia de agente, o se borra la configuración del MCP |
 | Arquitectura declarada | `.dharness/fallow.jsonc` declara `boundaries` y el proyecto lo extiende | Se borra la configuración. **No** cuando queda vieja: eso solo lo ve `fallow list --boundaries` |
-| Archivos propios al día | Los de `.dharness/` dicen lo que escribe la versión de dharness instalada | Se actualiza el binario y sus umbrales o su gate cambiaron |
+| Archivos propios al día | Los de `.dharness/` dicen lo que escribe la versión de dharness instalada, y `rules.json` conserva los umbrales y flags que el proyecto decidió | Se actualiza el binario y sus defaults o su gate cambiaron |
 
 ---
 

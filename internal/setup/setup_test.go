@@ -1425,21 +1425,31 @@ func TestGateStepIsAnOpenDecisionWhenNoManagerAnswers(t *testing.T) {
 }
 
 // The thresholds live in a file because react-doctor accepts only a severity,
-// so a rule cannot carry its own number.
+// so a rule cannot carry its own number. That file has its own step now:
+// writing it from ownedFilesStep, as this step used to, meant a project's own
+// numbers and flags were overwritten with the defaults on every sync.
 func TestOwnedFilesCarryTheThresholdsTheRulesCannot(t *testing.T) {
 	root := t.TempDir()
 	p := project.Project{Root: root}
 
 	if _, err := (ownedFilesStep{}).Apply(p, &Writer{}, io.Discard); err != nil {
-		t.Fatalf("Apply() = %v", err)
+		t.Fatalf("ownedFilesStep.Apply() = %v", err)
+	}
+	if _, err := (rulesThresholdsStep{}).Apply(p, &Writer{}, io.Discard); err != nil {
+		t.Fatalf("rulesThresholdsStep.Apply() = %v", err)
 	}
 
 	raw, err := os.ReadFile(filepath.Join(root, project.Dir, ownedRules))
 	if err != nil {
 		t.Fatalf("the thresholds file was not written: %v", err)
 	}
-	if !strings.Contains(string(raw), `"maxFileLines": 500`) {
-		t.Errorf("thresholds do not carry the file ceiling:\n%s", raw)
+	thresholds := decodedThresholds(t, raw)
+	if thresholds.MaxFileLines != 500 {
+		t.Errorf("thresholds do not carry the file ceiling: %+v", thresholds)
+	}
+	if thresholds.CountComments || thresholds.CountBlankLines {
+		t.Errorf("thresholds count comments=%t blanks=%t, want both false",
+			thresholds.CountComments, thresholds.CountBlankLines)
 	}
 
 	// The architecture is deliberately absent: it is decided, not detected.
