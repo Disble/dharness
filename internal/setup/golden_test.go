@@ -120,6 +120,41 @@ func TestGenericMechanismHasNoUpdatePath(t *testing.T) {
 	}
 }
 
+// TestWriteIndentedBlankLines pins the blank-line half of writeIndented's
+// contract: an empty line is written as a bare newline, never padded out to
+// the five-space indent. Padding an empty line emits trailing whitespace,
+// which `git diff --check` rejects and which no report ever wanted — every
+// padded blank line in testdata/golden is this helper's output for a blank
+// why, Describe or delegation row.
+func TestWriteIndentedBlankLines(t *testing.T) {
+	cases := []struct {
+		name  string
+		in    string
+		want  string
+		lines int
+	}{
+		{"empty input is one bare newline", "", "\n", 1},
+		{"plain text keeps the five-space indent", "hello", "     hello\n", 1},
+		{"leading indentation survives after the indent", "    indented", "         indented\n", 1},
+		{"trailing spaces on a non-empty line survive", "trail   ", "     trail   \n", 1},
+		{"consecutive blank lines and a trailing newline", "a\n\n\nb\n", "     a\n\n\n     b\n\n", 5},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			writeIndented(&buf, tc.in)
+
+			if got := buf.String(); got != tc.want {
+				t.Errorf("writeIndented(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+			if got := strings.Count(buf.String(), "\n"); got != tc.lines {
+				t.Errorf("writeIndented(%q) wrote %d newlines, want %d", tc.in, got, tc.lines)
+			}
+		})
+	}
+}
+
 // renderGolden captures Plan()'s report and the tree Apply writes, in the
 // two-region format Decision 7 fixes: every step's ID/Satisfied/Delegated's
 // ok+why/Describe, then every file under p.Root after Apply, sorted and
@@ -203,9 +238,15 @@ func writtenTree(t *testing.T, root string) []string {
 }
 
 // writeIndented writes s five spaces deep, one line at a time, so a
-// multi-line Describe or Delegated reason nests visibly under its label.
+// multi-line Describe or Delegated reason nests visibly under its label. An
+// empty line is written as a bare newline: padding it to the indent would
+// put trailing whitespace in the fixture for no reader's benefit.
 func writeIndented(buf *bytes.Buffer, s string) {
 	for _, line := range strings.Split(s, "\n") {
+		if line == "" {
+			buf.WriteString("\n")
+			continue
+		}
 		buf.WriteString("     " + line + "\n")
 	}
 }

@@ -2,26 +2,26 @@
 1  install what this project is missing
    satisfied=false delegated=false
    why |
-     
+
    describe |
      This package provides dharness's project lint rules.
-     
+
          npm install --save-dev dharness-eslint-plugin eslint-config-expo eslint-plugin-react-doctor
 2  write the files dharness owns
    satisfied=false delegated=false
    why |
-     
+
    describe |
      The gate, the architecture and the rule thresholds live in .dharness/, which is
      committed. The project's own files only ever gain one line pointing at them.
 3  point .fallowrc.json at the file dharness owns
    satisfied=false delegated=false
    why |
-     
+
    describe |
      fallow composes with `extends`, so the architecture arrives by reference.
      Add this line to .fallowrc.json:
-     
+
          "extends": [".dharness/fallow.jsonc"]
 4  resolve the keys this project and dharness both declare
    satisfied=true delegated=true
@@ -38,23 +38,23 @@
 5  point lefthook.yml at the file dharness owns
    satisfied=true delegated=false
    why |
-     
+
    describe |
      lefthook composes with `extends`, so the gate arrives by reference.
      Add this line to lefthook.yml:
-     
+
          extends:
            - .dharness/lefthook.yml
 6  point eslint.config.js at the file dharness owns
    satisfied=false delegated=false
    why |
-     
+
    describe |
      ESLint's flat config has no `extends` of its own, so the layer arrives by
      import and spread instead. A new eslint.config.js is written:
-     
+
          import dharnessLayer from "./.dharness/eslint.config.cjs";
-     
+
          export default [...dharnessLayer({ plugin: dharnessPlugin })];
 7  fix the lint config react-doctor silently drops
    satisfied=true delegated=true
@@ -70,7 +70,7 @@
 8  give the agent fallow's own tools
    satisfied=false delegated=false
    why |
-     
+
    describe |
      fallow ships an MCP server with the analysis an agent would otherwise ask a
      wrapper to invent: boundaries, traces, impact, health.
@@ -82,9 +82,9 @@
      not a default dharness gets to pick.
    describe |
      Choose a hook manager and wire it to run the gate:
-     
+
          dharness check
-     
+
      lefthook writes its own git hook once configured and installed; husky keeps
      a shell script that needs one appended line. Either way, the step is
      satisfied once "dharness check" runs on commit.
@@ -96,7 +96,7 @@
      workflow. There is no flag to ask for the skill alone.
    describe |
          npx --yes react-doctor@latest install
-     
+
      Choose the skill and decline the rest.
 11  decide this project's architecture
    satisfied=false delegated=true
@@ -106,7 +106,7 @@
      needs to change.
    describe |
      ### What to find out
-     
+
      1. Read the source layout. What are the real seams: features, layers, a
         delivery shell around a domain, a monorepo of packages that repeat the same
         internal shape?
@@ -122,57 +122,57 @@
         without sharing zones.
      5. Ask the person you are working with whatever the code cannot answer. This
         is a decision about intent, and they hold it.
-     
+
      ### Where to write it
-     
+
          .dharness/fallow.jsonc
-     
+
      That file is already referenced from this project's fallow configuration, so
      writing the `boundaries` block there is the whole change.
-     
+
      ### How to check the result
-     
+
          npx --yes fallow@latest list --boundaries
-     
+
      It prints every zone with the number of files it matched and the rules already
      expanded, and warns when a zone matched nothing — which is what a glob that
      does not fit this tree looks like. A zone with zero files is a mistake, not a
      style choice.
-     
+
          npx --yes fallow@latest dead-code --boundary-violations
-     
+
      Then read what the declaration costs today. Violations that already exist are
      reported but do not block: the gate fails only on the ones a change
      introduces, so an architecture can be declared on a codebase that does not
      yet obey it. Type-only imports do count as crossings, and imports of
      external packages do not.
-     
+
      ### The one rule dharness will not choose for you
-     
+
      When a module splits into role files — `*.types.ts`, `*.helpers.ts` and the
      rest — does this project publish it through an `index.ts`, or does it import
      the concrete files?
-     
+
      Both are architectures, not one right answer. A project can have good
      reasons to ban barrel files outright, and one that does cannot satisfy a rule
      demanding the file it deleted — every split module would report forever.
-     
+
      So `folder-ownership` ships **off**. The other five rules are guardrails on
      generated code and stay on; this one is the only one that takes a side.
-     
+
      If this project does publish through barrels, turn it on in its own layer in
      eslint.config.js — an object placed after dharness's spread, since flat config merges
      last-wins per rule:
-     
+
          {
            rules: {
              "dharness/folder-ownership": "error",
            },
          }
-     
+
      A severity written there survives every later run: dharness fills in only the
      rules a project has not answered for itself.
-     
+
 
 == tree ==
 .dharness/.gitignore
