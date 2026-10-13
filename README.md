@@ -136,7 +136,13 @@ configuration.
 
 A file ceiling counts code by default; setting both flags to `true` recovers a
 total-source-line count, and a line that is code plus a trailing comment counts
-once either way.
+once either way. The file is the project's to edit: `sync` fills in only the
+fields the project has not decided, keeps valid values and unknown keys, and
+falls back field by field when one value is not a decision — a negative ceiling,
+a role list with one non-string entry, a flag that is not a boolean. It never
+overwrites a file it cannot read as a JSON object: malformed JSON, `null`, an
+array or a scalar is preserved byte for byte and handed to the agent to repair,
+while independent setup steps continue.
 
 ## Documentation
 

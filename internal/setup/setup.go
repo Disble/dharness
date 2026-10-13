@@ -104,6 +104,7 @@ func Plan() []Step {
 	return []Step{
 		installStep{},
 		ownedFilesStep{},
+		rulesThresholdsStep{},
 		fallowExtendsStep{},
 		boundariesOwnerStep{},
 		lefthookExtendsStep{},
@@ -318,6 +319,12 @@ func satisfiedEvidence(p project.Project, step Step) string {
 
 	case ownedFilesStep:
 		return "owned files match"
+
+	// The thresholds step's fact is that the file on disk already is the
+	// document this run would write — the derived comparison Satisfied itself
+	// makes, stated directly rather than reusing Describe's fix instructions.
+	case rulesThresholdsStep:
+		return "thresholds match"
 
 	case eslintExtendsStep:
 		return eslintExtendsSatisfiedEvidence(p, step)

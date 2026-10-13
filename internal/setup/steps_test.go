@@ -1,6 +1,7 @@
 package setup
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/Disble/dharness/internal/preset"
 	"github.com/Disble/dharness/internal/project"
+	"github.com/Disble/dharness/internal/report"
 	"github.com/Disble/dharness/internal/runner"
 	"github.com/Disble/dharness/internal/tool"
 )
@@ -1890,4 +1892,383 @@ func TestEslintProbePathsCoverTheConfigsOwnExtension(t *testing.T) {
 			t.Errorf("eslintProbePaths() = %v, want %s covered too", paths, want)
 		}
 	}
+}
+
+// --------------------------------------------------- rules thresholds
+//
+// Every test below drives the real step over a real temporary tree. The
+// thresholds file is the whole deliverable, so reading it back is the only
+// evidence that counts: a private helper returning the right struct would
+// prove nothing about what a project finds on disk.
+
+// writeThresholdsFixture writes a rules file under p.Root and returns its
+// path.
+func writeThresholdsFixture(t *testing.T, p project.Project, raw string) string {
+	t.Helper()
+
+	path := filepath.Join(p.Root, project.Dir, ownedRules)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// TestRulesThresholdsStepWritesTheDefaultsForAProjectThatNeverDecided is the
+// adoption case and §15's convergence rule over this file: no file at all is
+// the defaults, the first write is already the answer so a second run writes
+// nothing, and replaying it produces the same bytes again.
+func TestRulesThresholdsStepWritesTheDefaultsForAProjectThatNeverDecided(t *testing.T) {
+	root := t.TempDir()
+	p := project.At(root, root)
+
+	if (rulesThresholdsStep{}).Satisfied(p) {
+		t.Fatal("Satisfied() = true before the thresholds file exists")
+	}
+	if _, delegated := (rulesThresholdsStep{}).Delegated(p); delegated {
+		t.Fatal("Delegated() ok = true for a file that does not exist, want false")
+	}
+
+	if _, err := (rulesThresholdsStep{}).Apply(p, &Writer{}, io.Discard); err != nil {
+		t.Fatalf("Apply() = %v", err)
+	}
+
+	path := filepath.Join(root, project.Dir, ownedRules)
+	first, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("Apply() did not write the thresholds file: %v", err)
+	}
+	got := decodedThresholds(t, first)
+	if got.MaxFileLines != 500 || got.CountComments || got.CountBlankLines {
+		t.Errorf("written thresholds = %+v, want 500 with both counting flags false", got)
+	}
+	if !(rulesThresholdsStep{}).Satisfied(p) {
+		t.Fatal("Satisfied() = false after the first Apply(), want convergence")
+	}
+
+	if _, err := (rulesThresholdsStep{}).Apply(p, &Writer{}, io.Discard); err != nil {
+		t.Fatalf("second Apply() = %v", err)
+	}
+	second, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(first, second) {
+		t.Errorf("replay drifted:\nfirst  %q\nsecond %q", first, second)
+	}
+}
+
+// TestRulesThresholdsStepUpgradesAFileWrittenBeforeTheFlagsExisted is the
+// upgrade path: a file from an earlier dharness gains the two flags, and
+// every number the project had already chosen survives it.
+func TestRulesThresholdsStepUpgradesAFileWrittenBeforeTheFlagsExisted(t *testing.T) {
+	root := t.TempDir()
+	p := project.At(root, root)
+	writeThresholdsFixture(t, p, "{\n  \"schema\": \"dharness.rules/v1\",\n  \"maxFileLines\": 300,\n  \"roleSuffixes\": [\".ts\"]\n}\n")
+
+	if (rulesThresholdsStep{}).Satisfied(p) {
+		t.Fatal("Satisfied() = true for a file that predates the counting flags, want false")
+	}
+
+	if _, err := (rulesThresholdsStep{}).Apply(p, &Writer{}, io.Discard); err != nil {
+		t.Fatalf("Apply() = %v", err)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(root, project.Dir, ownedRules))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := decodedThresholds(t, raw)
+	if got.MaxFileLines != 300 || !slices.Equal(got.RoleSuffixes, []string{".ts"}) {
+		t.Errorf("upgrade lost the project's own choices: %+v", got)
+	}
+	if got.CountComments || got.CountBlankLines {
+		t.Errorf("upgrade left the counting flags %t/%t, want both false", got.CountComments, got.CountBlankLines)
+	}
+}
+
+// TestRulesThresholdsStepKeepsEveryCountingCombination pins that all four
+// combinations survive a sync, explicit false included: a project that chose
+// true must not be reset, and one that chose false must not be flipped by a
+// default that happens to share its value.
+func TestRulesThresholdsStepKeepsEveryCountingCombination(t *testing.T) {
+	for _, combination := range []struct {
+		comments bool
+		blanks   bool
+	}{
+		{comments: false, blanks: false},
+		{comments: false, blanks: true},
+		{comments: true, blanks: false},
+		{comments: true, blanks: true},
+	} {
+		t.Run(fmt.Sprintf("comments=%t blanks=%t", combination.comments, combination.blanks), func(t *testing.T) {
+			root := t.TempDir()
+			p := project.At(root, root)
+			writeThresholdsFixture(t, p, fmt.Sprintf(
+				`{"maxFileLines":250,"roleSuffixes":[".ts"],"countComments":%t,"countBlankLines":%t}`,
+				combination.comments, combination.blanks))
+
+			if _, err := (rulesThresholdsStep{}).Apply(p, &Writer{}, io.Discard); err != nil {
+				t.Fatalf("Apply() = %v", err)
+			}
+
+			raw, err := os.ReadFile(filepath.Join(root, project.Dir, ownedRules))
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := decodedThresholds(t, raw)
+			if got.CountComments != combination.comments || got.CountBlankLines != combination.blanks {
+				t.Errorf("written flags = comments %t blanks %t, want %t/%t",
+					got.CountComments, got.CountBlankLines, combination.comments, combination.blanks)
+			}
+			if got.MaxFileLines != 250 || !slices.Equal(got.RoleSuffixes, []string{".ts"}) {
+				t.Errorf("a valid threshold was lost while the flags were kept: %+v", got)
+			}
+			if !(rulesThresholdsStep{}).Satisfied(p) {
+				t.Error("Satisfied() = false after Apply(), want convergence in one run")
+			}
+		})
+	}
+}
+
+// TestRulesThresholdsStepPreservesUnknownKeysAcrossSync pins the whole
+// document's round trip: a normalized file keeps every key dharness does not
+// read — values included, and a number's own literal with them, so a 1e309 or
+// a hand-written 9007199254740993 inside a project key is never re-parsed — so
+// a project that stores extra data beside the thresholds does not lose it on
+// the next commit.
+func TestRulesThresholdsStepPreservesUnknownKeysAcrossSync(t *testing.T) {
+	t.Run("unknown keys and their raw numbers survive", func(t *testing.T) {
+		root := t.TempDir()
+		p := project.At(root, root)
+		writeThresholdsFixture(t, p, `{"maxFileLines":120,"repo":{"owner":"team"},"limits":{"hard":1e309,"exact":9007199254740993},"note":"keep me"}`)
+
+		if _, err := (rulesThresholdsStep{}).Apply(p, &Writer{}, io.Discard); err != nil {
+			t.Fatalf("Apply() = %v", err)
+		}
+
+		raw, err := os.ReadFile(filepath.Join(root, project.Dir, ownedRules))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{
+			`"maxFileLines": 120`,
+			`"note": "keep me"`,
+			`"owner": "team"`,
+			`"hard": 1e309`,
+			`"exact": 9007199254740993`,
+		} {
+			if !strings.Contains(string(raw), want) {
+				t.Errorf("the project's own value %s did not survive:\n%s", want, raw)
+			}
+		}
+	})
+
+	// The public half of the numeric contract with the plugin: it validates
+	// this field with `Number.isInteger(value) && value > 0`, which has no
+	// upper bound, so a whole ceiling above Go's own int range is still the
+	// project's decision and must survive the write untouched.
+	t.Run("a ceiling the plugin would honour survives", func(t *testing.T) {
+		for _, tc := range []struct {
+			name string
+			raw  string
+			want string
+		}{
+			{name: "above any 64-bit integer", raw: "1e19", want: "10000000000000000000"},
+			{name: "past the float64 integer precision", raw: "9007199254740993", want: "9007199254740992"},
+			{name: "the largest finite float64", raw: "1e308", want: "1e+308"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				root := t.TempDir()
+				p := project.At(root, root)
+				writeThresholdsFixture(t, p, fmt.Sprintf(`{"maxFileLines":%s,"roleSuffixes":[".ts"]}`, tc.raw))
+
+				if _, err := (rulesThresholdsStep{}).Apply(p, &Writer{}, io.Discard); err != nil {
+					t.Fatalf("Apply() = %v", err)
+				}
+
+				raw, err := os.ReadFile(filepath.Join(root, project.Dir, ownedRules))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if want := `"maxFileLines": ` + tc.want; !strings.Contains(string(raw), want) {
+					t.Errorf("the ceiling the plugin honours was not preserved:\n got %s\nwant a line with %s", raw, want)
+				}
+			})
+		}
+	})
+}
+
+// TestRulesThresholdsStepPreservesWhatItCannotReadAndDelegatesIt is the
+// preserve-and-delegate contract: malformed JSON and a non-object document
+// are left byte-for-byte alone, reported as the agent's to repair, and never
+// overwritten even when Apply is called directly — Delegated is what keeps
+// it out of a normal run, and Apply's own guard is what keeps a direct call
+// honest.
+func TestRulesThresholdsStepPreservesWhatItCannotReadAndDelegatesIt(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		raw  string
+	}{
+		{name: "malformed JSON", raw: "{\n  \"maxFileLines\": 300,\n"},
+		{name: "a zero-byte file", raw: ""},
+		{name: "a null document", raw: "null\n"},
+		{name: "an array", raw: "[1, 2]\n"},
+		{name: "a scalar", raw: "500\n"},
+		{name: "a string", raw: "\"thresholds\"\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			p := project.At(root, root)
+			path := writeThresholdsFixture(t, p, tc.raw)
+
+			if (rulesThresholdsStep{}).Satisfied(p) {
+				t.Error("Satisfied() = true for a document dharness cannot read, want false")
+			}
+			why, delegated := (rulesThresholdsStep{}).Delegated(p)
+			if !delegated {
+				t.Fatal("Delegated() ok = false, want true — the file is the agent's to repair")
+			}
+			if !strings.Contains(why, thresholdsRelPath()) || !strings.Contains(why, "dharness sync") {
+				t.Errorf("Delegated() why = %q, want it to name the file and the command that resumes the run", why)
+			}
+
+			if _, err := (rulesThresholdsStep{}).Apply(p, &Writer{}, io.Discard); err == nil {
+				t.Error("Apply() = nil, want an error — a direct call must not overwrite what a normal run delegates")
+			}
+
+			after, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(after) != tc.raw {
+				t.Errorf("the file changed:\n got %q\nwant %q", after, tc.raw)
+			}
+		})
+	}
+}
+
+// TestRulesThresholdsStepPreservesAnUnreadableFile covers the read-error
+// branch with a real failure the filesystem can produce without permissions:
+// a directory where the file belongs.
+func TestRulesThresholdsStepPreservesAnUnreadableFile(t *testing.T) {
+	root := t.TempDir()
+	p := project.At(root, root)
+	path := filepath.Join(root, project.Dir, ownedRules)
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if (rulesThresholdsStep{}).Satisfied(p) {
+		t.Error("Satisfied() = true for an unreadable path, want false")
+	}
+	if _, delegated := (rulesThresholdsStep{}).Delegated(p); !delegated {
+		t.Error("Delegated() ok = false, want true for an unreadable path")
+	}
+	if _, err := (rulesThresholdsStep{}).Apply(p, &Writer{}, io.Discard); err == nil {
+		t.Error("Apply() = nil, want an error for an unreadable path")
+	}
+	if info, err := os.Stat(path); err != nil || !info.IsDir() {
+		t.Errorf("the unreadable path was disturbed: info=%v err=%v", info, err)
+	}
+}
+
+// TestRulesThresholdsStepUndoRestoresTheOriginalBytes keeps the write inside
+// the run's transaction: whatever the file said before a sync, a rolled-back
+// run puts those bytes back.
+func TestRulesThresholdsStepUndoRestoresTheOriginalBytes(t *testing.T) {
+	root := t.TempDir()
+	p := project.At(root, root)
+	original := `{"maxFileLines":275,"roleSuffixes":[".ts"]}`
+	path := writeThresholdsFixture(t, p, original)
+
+	w := &Writer{}
+	if _, err := (rulesThresholdsStep{}).Apply(p, w, io.Discard); err != nil {
+		t.Fatalf("Apply() = %v", err)
+	}
+	if err := w.Undo(); err != nil {
+		t.Fatalf("Undo() = %v", err)
+	}
+
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("Undo() did not restore the thresholds file: %v", err)
+	}
+	if string(after) != original {
+		t.Errorf("Undo() restored %q, want the bytes it found %q", after, original)
+	}
+}
+
+// TestRunPreservesABrokenThresholdsFileAndStillWritesTheOtherOwnedFiles is
+// the reason this is a step of its own rather than a clause in
+// ownedFilesStep: a broken thresholds file is delegated, and the gate,
+// architecture and ESLint files dharness owns are still written in the same
+// run. Folding the two into one Delegated answer would silently skip all
+// three.
+func TestRunPreservesABrokenThresholdsFileAndStillWritesTheOtherOwnedFiles(t *testing.T) {
+	root := t.TempDir()
+	p := project.At(root, root)
+	p.InRepository = true
+	broken := "{\n  \"maxFileLines\":\n"
+	thresholds := writeThresholdsFixture(t, p, broken)
+
+	t.Cleanup(runner.SetForTest(func(runner.Command, io.Writer, io.Writer) error { return nil }))
+	t.Cleanup(project.SetGitOutputForTest(func(string, ...string) ([]byte, error) { return nil, nil }))
+
+	steps, _, err := Run(p)
+	if err != nil {
+		t.Fatalf("Run() = %v", err)
+	}
+
+	var thresholdsResult *report.StepResult
+	for i := range steps {
+		if steps[i].ID == (rulesThresholdsStep{}).ID() {
+			thresholdsResult = &steps[i]
+		}
+	}
+	if thresholdsResult == nil {
+		t.Fatalf("Run() returned no result for %q", (rulesThresholdsStep{}).ID())
+	}
+	if thresholdsResult.Status != report.Delegated {
+		t.Errorf("thresholds step status = %q, want delegated — the broken file is the agent's to repair", thresholdsResult.Status)
+	}
+	if !strings.Contains(thresholdsResult.Why, thresholdsRelPath()) {
+		t.Errorf("Why = %q, want it to name %s", thresholdsResult.Why, thresholdsRelPath())
+	}
+
+	after, err := os.ReadFile(thresholds)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != broken {
+		t.Errorf("the broken file changed:\n got %q\nwant %q", after, broken)
+	}
+
+	for _, name := range []string{ownedLefthook, ownedFallow, ownedEslintName(projectEslintModule(p))} {
+		if _, err := os.Stat(filepath.Join(root, project.Dir, name)); err != nil {
+			t.Errorf("%s was not written while the thresholds step was delegated: %v", name, err)
+		}
+	}
+}
+
+// TestRulesThresholdsStepIsRegisteredRightAfterTheOwnedFilesStep pins the
+// one structural fact the split depends on: the thresholds step applies
+// immediately after the step that writes the rest of the owned files, so the
+// directory exists and the two never fight over the same file.
+func TestRulesThresholdsStepIsRegisteredRightAfterTheOwnedFilesStep(t *testing.T) {
+	for i, step := range Plan() {
+		if _, ok := step.(rulesThresholdsStep); !ok {
+			continue
+		}
+		if i == 0 {
+			t.Fatal("rulesThresholdsStep is first in Plan(), so ownedFilesStep never runs before it")
+		}
+		if _, ok := Plan()[i-1].(ownedFilesStep); !ok {
+			t.Errorf("Plan()[%d] is %T, want ownedFilesStep immediately before rulesThresholdsStep", i-1, Plan()[i-1])
+		}
+		return
+	}
+	t.Fatal("rulesThresholdsStep is not registered in Plan()")
 }
