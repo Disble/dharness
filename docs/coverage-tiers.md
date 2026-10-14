@@ -54,6 +54,8 @@ Filtering changes scope, not verdict: eligible `Survived` and `NoCoverage` mutan
 - A tier declaration is not proof that its business classification is correct; that risk belongs to the project.
 - Complete adopted-unit verification is different from `mutate --staged`, which checks changed ranges only.
 - Native coverage integration is Vitest-first. Jest coverage is backlog; existing Jest workflows are unchanged.
+- Coverage belongs to the project's existing complete verification workflow and local gate; ordinary focused/watch runs do not gain mandatory coverage.
+- Existing CI may consume the same native runner configuration. This adoption does not create or manage CI workflows, select a CI provider, or add a coverage-launch command.
 - The skill is guidance, not the gate. Enforcement must work even when an agent never reads it.
 - No external skill installer, Vercel publication, new wrapped CLI or new module dependency is required.
 
