@@ -41,6 +41,12 @@ The integration uses the read-only JSON facade `dharness policy --root <reposito
 
 An absent manifest means no adoption unless a managed coverage integration already requires that manifest. A malformed manifest is a failure, never an empty policy. The resolver measures the complete declared source universe, including unexecuted files, without using a code-age cutoff.
 
+## Existing mutation workflows
+
+`dharness mutate <paths...>` filters declared infrastructure before installation, dry-run measurement, sandbox creation or cache access. Eligible CORE, IMPORTANT and unadopted paths retain their original ranges, including column suffixes. An all-infrastructure request succeeds with `no runtime source to mutate after coverage-tier exclusions` and starts no mutation tool.
+
+Filtering changes scope, not verdict: eligible `Survived` and `NoCoverage` mutants still fail. Existing cumulative-report notes can name excluded files outside this run's scope; they do not make those files eligible. A malformed policy refuses the run instead of silently retaining every path.
+
 ## Boundaries
 
 - A tier declaration is not proof that its business classification is correct; that risk belongs to the project.

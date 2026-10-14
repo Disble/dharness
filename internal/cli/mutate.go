@@ -75,7 +75,7 @@ func countByStatus(survivors []tool.Survivor) (survived, noCoverage int) {
 // the paths, the test runner derives it from the import graph, and barrel files
 // inflate that graph until every test counts as related.
 func RunMutate(args []string, stdout io.Writer) error {
-	flags := newFlagSet("mutate <path...>", stdout, "Run mutation testing over the given files, or over given lines as src/thing.ts:12-40. Use it once their tests are green.")
+	flags := newFlagSet("mutate <path...>", stdout, "Run mutation testing over the given files, or over given lines as src/thing.ts:12-40. Use it once their tests are green. coverage-tiers.json excludes declared infrastructure; unadopted paths stay eligible.")
 	concurrency := flags.Int("concurrency", defaultConcurrency, "Stryker workers")
 	dryRun := flags.Bool("dry-run", false, "measure how many tests a scoped run executes, without mutating anything")
 	upgrade := flags.Bool("upgrade", false, "bring Stryker to @latest, rewriting the version the project declares")
@@ -122,6 +122,23 @@ func RunMutate(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
+	// The consumer's own classification decides which of the named paths are
+	// runtime code worth mutating. Everything it never declared stays exactly as
+	// it was, and a policy it declared but dharness cannot read refuses the run
+	// rather than mutating unclassified code (§05).
+	scopes, err = filterInfrastructureScopes(p.Root, p.Source, scopes)
+	if err != nil {
+		return err
+	}
+	// §13: when every named path lost to a declared exclusion there is nothing
+	// left to mutate, so nothing is started — no Stryker install, no sandbox and
+	// no incremental cache — and the run says why rather than reporting success
+	// over an empty scope.
+	if len(scopes) == 0 {
+		fmt.Fprintln(stdout, "no runtime source to mutate after coverage-tier exclusions")
+		return nil
+	}
+
 	// The tokens go to Stryker exactly as they were typed, range and all. The
 	// parsed form stays behind so the verdict can be held to the same scope.
 	arguments := make([]string, 0, len(scopes))
