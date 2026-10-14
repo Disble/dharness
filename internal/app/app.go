@@ -42,6 +42,8 @@ func RunArgs(args []string, stdout io.Writer) error {
 		return cli.RunCheck(args[1:], stdout)
 	case "mutate":
 		return cli.RunMutate(args[1:], stdout)
+	case "policy":
+		return cli.RunPolicy(args[1:], stdout)
 	default:
 		return &UnknownCommandError{Command: args[0]}
 	}
