@@ -93,6 +93,7 @@ func TestMutationTiersBinaryScopeAndRefusal(t *testing.T) {
 	}
 	git := func(args ...string) {
 		t.Helper()
+		args = append([]string{"-c", "user.name=dharness test", "-c", "user.email=test@dharness.invalid", "-c", "commit.gpgsign=false"}, args...)
 		cmd := exec.Command("git", args...)
 		cmd.Dir = root
 		if out, err := cmd.CombinedOutput(); err != nil {
@@ -101,6 +102,7 @@ func TestMutationTiersBinaryScopeAndRefusal(t *testing.T) {
 	}
 	git("init", "--quiet")
 	git("add", ".")
+	git("commit", "--quiet", "-m", "fixture baseline")
 	run := func(args ...string) (string, string, int) {
 		t.Helper()
 		cmd := exec.Command(binary, args...)
@@ -130,6 +132,23 @@ func TestMutationTiersBinaryScopeAndRefusal(t *testing.T) {
 			t.Fatalf("no-op wrote mutation state: %v", err)
 		}
 	}
+	// The staged command must read the committed declaration, even when the
+	// working manifest attempts to make the staged infrastructure eligible.
+	write(filepath.Join(root, "src", "cart", "types.ts"), "export type Total = string;\n")
+	git("add", "src/cart/types.ts")
+	workingManifest := strings.Replace(manifest, `"tier":"infrastructure"`, `"tier":"core"`, 1)
+	write(filepath.Join(root, "coverage-tiers.json"), workingManifest)
+	stdout, stderr, code = run("mutate", "--staged")
+	if code != 0 || stderr != "" || !strings.Contains(stdout, "no runtime source to mutate after coverage-tier exclusions\n") || !strings.Contains(stdout, "classify not started") || strings.Contains(stdout, "process fixture:") {
+		t.Fatalf("native staged no-op: code=%d stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	if after, err := os.ReadFile(filepath.Join(root, "coverage-tiers.json")); err != nil || string(after) != workingManifest {
+		t.Fatalf("staged no-op modified working declaration: %q, %v", after, err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".dharness")); !os.IsNotExist(err) {
+		t.Fatalf("staged no-op wrote mutation state: %v", err)
+	}
+	write(filepath.Join(root, "coverage-tiers.json"), manifest)
 	stdout, stderr, code = run("mutate", "src/cart/total.ts:1:3-1:5", "src/cart/ui.ts", "src/cart/types.ts", "src/legacy.ts")
 	if code != 0 || stderr != "" || !strings.Contains(stdout, `"--mutate","src/cart/total.ts:1:3-1:5,src/cart/ui.ts,src/legacy.ts"`) || !strings.Contains(stdout, "Every mutant was caught") {
 		t.Fatalf("native mixed scope: code=%d stdout=%q stderr=%q", code, stdout, stderr)
