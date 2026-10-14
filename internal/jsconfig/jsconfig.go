@@ -1,7 +1,9 @@
-// Package jsconfig answers one question about a JavaScript source: where
-// does an extra array element belong, or why does it belong nowhere. It
-// holds no dharness spelling — no marker text, no file names, no framework
-// names — and it never writes.
+// Package jsconfig answers two questions about a JavaScript or a TypeScript
+// source, and never evaluates it. Analyze says where an extra array element
+// belongs in an ESLint flat config, or why it belongs nowhere; AnalyzeExport
+// says where a module's own configuration export begins and ends, or why that
+// cannot be bounded. The package holds no dharness spelling — no marker text,
+// no file names, no framework names — and it never writes.
 package jsconfig
 
 import (
