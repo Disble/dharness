@@ -135,6 +135,22 @@ func mutateStaged(ctx context.Context, concurrency int, excludePrefixes []string
 		return err
 	}
 
+	// Coverage classification is the consumer's, declared in the snapshot's
+	// own coverage-tiers.json — the manifest being committed, never the
+	// working tree's copy — and it narrows the staged ranges before the
+	// classifier or Stryker sees them. Unadopted source keeps its legacy
+	// scope; only declared infrastructure leaves. A manifest that cannot be
+	// resolved refuses here rather than falling through to mutating code the
+	// consumer may have excluded (design-principles.md §05).
+	scopes, err = filterInfrastructureScopes(snapshotRoot, snapshotSource, scopes)
+	if err != nil {
+		return err
+	}
+	if len(scopes) == 0 {
+		fmt.Fprintln(stdout, "no runtime source to mutate after coverage-tier exclusions")
+		return nil
+	}
+
 	// Stryker runs in the snapshot, so it reads the snapshot's Stryker config
 	// — the one being committed — and the working tree's copy may carry edits
 	// that were never staged. The selection read above only serves the

@@ -45,6 +45,8 @@ An absent manifest means no adoption unless a managed coverage integration alrea
 
 `dharness mutate <paths...>` filters declared infrastructure before installation, dry-run measurement, sandbox creation or cache access. Eligible CORE, IMPORTANT and unadopted paths retain their original ranges, including column suffixes. An all-infrastructure request succeeds with `no runtime source to mutate after coverage-tier exclusions` and starts no mutation tool.
 
+`dharness mutate --staged` resolves the manifest and adopted source from its index snapshot, not unstaged working-tree edits. Its existing local Stryker prerequisites remain; the tier filter then runs before technical classification, membership discovery and related tests. Excluded infrastructure cannot re-enter the dropped-file self-check.
+
 Filtering changes scope, not verdict: eligible `Survived` and `NoCoverage` mutants still fail. Existing cumulative-report notes can name excluded files outside this run's scope; they do not make those files eligible. A malformed policy refuses the run instead of silently retaining every path.
 
 ## Boundaries
