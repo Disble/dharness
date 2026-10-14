@@ -71,6 +71,10 @@ FLAGS
                             this prefix from scope (repeatable)
   --help, -h                Show this message; every command also accepts help
 
+INTEGRATION HELPERS
+  policy --root <path>      Resolve coverage tiers as read-only JSON; not a test runner
+                            or another manual step before tests.
+
 dharness owns invocation only. Each wrapped tool keeps its own configuration,
 written by that tool's own installer.
 `, version)
