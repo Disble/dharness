@@ -321,20 +321,17 @@ func satisfiedEvidence(p project.Project, step Step) string {
 		return "boundaries declared"
 
 	case coverageTiersStep:
-		// Not firstLine(Describe(p)): Describe explains what to wire, and "this
-		// repository declared nothing" is not a fix instruction — the same
-		// distinction the switch above exists for.
+		// A JS project without a declaration delegates adoption instead.
 		if !coverageTiersDeclared(p) {
-			return "no " + tiers.ManifestName
+			return "no JS project; coverage tiers not applicable"
 		}
 		return tiers.ManifestName + " → " + filepath.ToSlash(filepath.Join(project.Dir, coverageBridgeName))
 
 	case coverageTiersSkillStep:
-		// Same distinction as the case above: with no declaration this step has
-		// nothing to distribute, and Describe's "the guidance ships with this
-		// step" would read as an instruction about work that is not pending.
+		// Distribution depends on the preceding adoption choice; absence is
+		// not evidence that the skill was installed or coverage is enforced.
 		if !coverageTiersDeclared(p) {
-			return "no " + tiers.ManifestName
+			return "inactive; guidance is distributed only after coverage tiers are adopted"
 		}
 		return "skill copies and references match"
 

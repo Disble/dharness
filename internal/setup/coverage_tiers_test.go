@@ -223,11 +223,11 @@ func TestCoverageTiersStepLeavesARepositoryThatNeverDeclaredItAlone(t *testing.T
 	writeGoldenFixtureFile(t, root, "vitest.config.js", config)
 	p := project.At(root, root)
 
-	if !(coverageTiersStep{}).Satisfied(p) {
-		t.Error("Satisfied() = false for a repository that never declared the policy")
+	if (coverageTiersStep{}).Satisfied(p) {
+		t.Error("an unadopted policy must not be reported as enforced")
 	}
-	if result := coverageTiersStepResult(t, p); result.Status != report.Satisfied {
-		t.Fatalf("the report filed the step as %s, want satisfied", result.Status)
+	if result := coverageTiersStepResult(t, p); result.Status != report.Delegated || !strings.Contains(result.Why, "Offer adoption") {
+		t.Fatalf("the report must offer optional adoption, got %+v", result)
 	}
 
 	if err := Apply(p, io.Discard); err != nil {

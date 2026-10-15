@@ -184,9 +184,46 @@
      rules a project has not answered for itself.
 
 13  enforce the coverage tiers in the native test run
-   satisfied=true delegated=false
+   satisfied=false delegated=true
    why |
+     coverage-tiers.json is absent: coverage tiers are optional and not enforced.
+     Offer adoption to the user; do not treat absence as completed enforcement or
+     silently choose the project's business policy. If adoption is deferred, leave
+     coverage files and the gate unchanged; sync will offer this choice again.
 
+     If adoption is approved:
+     1. Inspect the existing source and tests. Agree on the feature scope and its
+        business impact: CORE 100%, IMPORTANT 80%, INFRASTRUCTURE 0%. These are native
+        coverage targets, not mutation-score thresholds; infrastructure is excluded
+        from mutation. Do not lower tiers or exclude behavior just to pass.
+
+     2. Create coverage-tiers.json at the repository root with version: 1,
+        enforcedPrefixes, and features containing id, path, defaultTier and reason
+        (optional overrides contain path, tier and reason). Paths are repository-relative
+        with forward slashes; directory prefixes end in /. Adopt only existing paths,
+        starting narrowly: all source under enforcedPrefixes must belong to a feature,
+        including its older files. Leave not-yet-created paths out until they exist.
+
+     3. Native integration supports Vitest only, not Jest or Go coverage. In frontend,
+        install missing local prerequisites with the project's package manager:
+
+            npm install --save-dev vitest @vitest/coverage-v8
+
+        Omit already-declared packages from that add command; restore them with the
+        package manager's install command instead. Preserve declared versions and
+        choose compatible runner/provider versions. dharness sync does not install them. Supply the project's own Vitest/Vite
+        config and any test environment or UI-test dependencies the project needs;
+        dharness does not create that config or write the tests.
+
+     4. Validate with dharness policy --root . from the repository root, then run
+        dharness sync. It writes the managed coverage runtime and checked bridge,
+        splices the native config, adds the local-hook coverage job and distributes
+        the coverage-tiers skill with references in existing AGENTS.md/CLAUDE.md.
+        Read that skill, close real test gaps, and run the exact native coverage
+        command in .dharness/lefthook.yml or the husky hook from the JS project root.
+        Verify the complete adopted feature, not just changed files. sync does not
+        run the tests, add package scripts such as test:coverage, wire an existing
+        check script, or create CI workflows; offer those separately when needed.
    describe |
      coverage-tiers.json declares this repository's coverage tiers, and the gate runs the
      project's own Vitest with coverage so that they are enforced. The tiers arrive at

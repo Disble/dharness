@@ -171,8 +171,8 @@ func TestCoverageTiersSkillStepLeavesAnUndeclaredRepositoryAlone(t *testing.T) {
 	}
 	if result := runCoverageTiersSkill(t, p); result.Status != report.Satisfied {
 		t.Fatalf("the report filed the step as %s, want satisfied", result.Status)
-	} else if result.Evidence != "no "+tiers.ManifestName {
-		t.Errorf("Evidence = %q, want the declaration that is absent", result.Evidence)
+	} else if result.Evidence != "inactive; guidance is distributed only after coverage tiers are adopted" {
+		t.Errorf("Evidence = %q, want explicit inactive guidance rather than completed enforcement", result.Evidence)
 	}
 
 	if err := Apply(p, io.Discard); err != nil {

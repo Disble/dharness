@@ -18,9 +18,9 @@ import (
 // exists only where a project declares it.
 //
 // The consumer's own coverage-tiers.json is the whole switch (§07 — state is
-// read from the repository, never recorded). Without it this step has nothing
-// to say: no managed module, no bridge entry, no splice, no gate line, and no
-// invocation of the runner at all. That is why it is last in Plan(): an
+// read from the repository, never recorded). Without it this step offers
+// adoption to the agent but writes nothing: no managed module, bridge entry,
+// splice, gate line or runner invocation. That is why it is last in Plan(): an
 // adopted repository's gate line is added beside the gate line hookInstallStep
 // has already written — the check inside .dharness/lefthook.yml for lefthook,
 // the appended line in .husky/pre-commit for husky — and neither exists before
@@ -193,6 +193,9 @@ func planCoverageTiers(p project.Project) coverageTiersPlan {
 		if reason := coverageTiersLeftBehind(p); reason != "" {
 			return coverageTiersPlan{conflict: reason}
 		}
+		if p.HasSource() {
+			return coverageTiersPlan{conflict: coverageTiersAdoptionPrompt(p)}
+		}
 		return coverageTiersPlan{}
 	}
 
@@ -273,6 +276,55 @@ func planCoverageTiers(p project.Project) coverageTiersPlan {
 		gitignore: filepath.Join(p.Root, project.Dir, ownedIgnore),
 		shared:    []string{coverageTiersRuntimeName, coverageBridgeName},
 	}
+}
+
+// coverageTiersAdoptionPrompt offers a project decision, not an implicit opt-in.
+// It is the delegated report's executable instruction for both human and JSON
+// readers; guidance must be available before the declaration unlocks the skill.
+func coverageTiersAdoptionPrompt(p project.Project) string {
+	source := p.SourceRel()
+	if source == "" {
+		source = "."
+	}
+	return fmt.Sprintf(`coverage-tiers.json is absent: coverage tiers are optional and not enforced.
+Offer adoption to the user; do not treat absence as completed enforcement or
+silently choose the project's business policy. If adoption is deferred, leave
+coverage files and the gate unchanged; sync will offer this choice again.
+
+If adoption is approved:
+1. Inspect the existing source and tests. Agree on the feature scope and its
+   business impact: CORE 100%%, IMPORTANT 80%%, INFRASTRUCTURE 0%%. These are native
+   coverage targets, not mutation-score thresholds; infrastructure is excluded
+   from mutation. Do not lower tiers or exclude behavior just to pass.
+
+2. Create coverage-tiers.json at the repository root with version: 1,
+   enforcedPrefixes, and features containing id, path, defaultTier and reason
+   (optional overrides contain path, tier and reason). Paths are repository-relative
+   with forward slashes; directory prefixes end in /. Adopt only existing paths,
+   starting narrowly: all source under enforcedPrefixes must belong to a feature,
+   including its older files. Leave not-yet-created paths out until they exist.
+
+3. Native integration supports Vitest only, not Jest or Go coverage. In %s,
+   install missing local prerequisites with the project's package manager:
+
+       %s vitest @vitest/coverage-v8
+
+   Omit already-declared packages from that add command; restore them with the
+   package manager's install command instead. Preserve declared versions and
+   choose compatible runner/provider versions. dharness sync does not install them. Supply the project's own Vitest/Vite
+   config and any test environment or UI-test dependencies the project needs;
+   dharness does not create that config or write the tests.
+
+4. Validate with dharness policy --root . from the repository root, then run
+   dharness sync. It writes the managed coverage runtime and checked bridge,
+   splices the native config, adds the local-hook coverage job and distributes
+   the coverage-tiers skill with references in existing AGENTS.md/CLAUDE.md.
+   Read that skill, close real test gaps, and run the exact native coverage
+   command in .dharness/lefthook.yml or the husky hook from the JS project root.
+   Verify the complete adopted feature, not just changed files. sync does not
+   run the tests, add package scripts such as test:coverage, wire an existing
+   check script, or create CI workflows; offer those separately when needed.`,
+		source, tool.InstallCommand(p.PackageManager))
 }
 
 // coverageTiersDeclared reports whether this repository opted in at all. The
