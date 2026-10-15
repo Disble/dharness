@@ -193,6 +193,17 @@
      project's own Vitest with coverage so that they are enforced. The tiers arrive at
      .dharness/coverage-tiers.mjs, and the project's own config is pointed at the bridge entry
      beside it. A repository that declares no tiers gets none of this.
+13  distribute the coverage-tiers skill and its agent references
+   satisfied=true delegated=false
+   why |
+
+   describe |
+     The tiers are only useful to whoever is editing the adopted source, so the guidance
+     that explains them ships with this step: the same skill body at
+     .claude/skills/coverage-tiers/SKILL.md and .agents/skills/coverage-tiers/SKILL.md, plus
+     a managed block in AGENTS.md and CLAUDE.md where those files already exist. A
+     repository that declares no tiers gets none of it, and neither instruction file is
+     ever created by dharness.
 
 == tree ==
 .dharness/.gitignore

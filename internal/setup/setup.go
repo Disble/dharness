@@ -115,6 +115,7 @@ func Plan() []Step {
 		agentSkillStep{},
 		architectureStep{},
 		coverageTiersStep{},
+		coverageTiersSkillStep{},
 	}
 }
 
@@ -157,7 +158,7 @@ func Run(p project.Project) ([]report.StepResult, []report.Note, error) {
 // to Plan() buried inside it — the same reason applySteps takes steps
 // []Step rather than calling Plan() itself: a stub plan lets a test drive
 // exactly the branch it needs (satisfied, delegated, or a failure at a
-// chosen index) without depending on the real registry's twelve steps.
+// chosen index) without depending on the real registry's thirteen steps.
 //
 // Status is decided in the order Pending/applySteps have always used:
 // Satisfied first, so an already-satisfied step is never even asked
@@ -326,6 +327,15 @@ func satisfiedEvidence(p project.Project, step Step) string {
 			return "no " + tiers.ManifestName
 		}
 		return tiers.ManifestName + " → " + filepath.ToSlash(filepath.Join(project.Dir, coverageBridgeName))
+
+	case coverageTiersSkillStep:
+		// Same distinction as the case above: with no declaration this step has
+		// nothing to distribute, and Describe's "the guidance ships with this
+		// step" would read as an instruction about work that is not pending.
+		if !coverageTiersDeclared(p) {
+			return "no " + tiers.ManifestName
+		}
+		return "skill copies and references match"
 
 	case ownedFilesStep:
 		return "owned files match"
