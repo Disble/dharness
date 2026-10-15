@@ -2,7 +2,11 @@ package cli
 
 import (
 	"errors"
+	"fmt"
+	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -58,6 +62,98 @@ func TestMutateRefusesPathsOutsideTheJSProject(t *testing.T) {
 	if outside.Path != "internal/app/app.go" {
 		t.Errorf("the error does not name the path: %v", outside)
 	}
+}
+
+// TestMutateAcceptsAPathReachedThroughAnotherSpellingOfTheSameDirectory pins
+// the Windows defect where one directory has two names: the working directory
+// arrives spelled the way it was entered, and project discovery asks git, which
+// answers with the reparse point resolved. filepath.Rel compares the two
+// spellings textually, so every path under the pair read as "outside this
+// project's JS source" and a genuinely mutatable file was refused.
+//
+// filepath.EvalSymlinks is not the answer here: measured on Windows 11 with Go
+// 1.27, EvalSymlinks(link) returns the junction spelling unchanged. Filesystem
+// identity is: os.SameFile reports the junction and the directory it points at
+// as the same directory, and reports a child reached through the junction as
+// the same file as the child reached through the directory itself.
+func TestMutateAcceptsAPathReachedThroughAnotherSpellingOfTheSameDirectory(t *testing.T) {
+	real := t.TempDir()
+	consumer := filepath.Join(real, "consumer")
+	for _, name := range []string{"src/nested/a.ts", "src/nested/b.ts"} {
+		writeFile(t, filepath.Join(consumer, filepath.FromSlash(name)), "export const x = 1;\n")
+	}
+	// A real file outside the JS project, so the refusal below is decided by
+	// containment and not by a path that fails to stat.
+	writeFile(t, filepath.Join(real, "elsewhere", "b.ts"), "export const y = 1;\n")
+
+	alternate := secondSpellingOf(t, real)
+
+	// Both directions are the same physical tree. Which side carries the
+	// junction spelling is an accident of how the command was started, and the
+	// containment decision must not depend on it.
+	cases := []struct {
+		name, source, from, given string
+	}{
+		{
+			"the working directory arrives through the junction and git reports the target",
+			consumer, filepath.Join(alternate, "consumer"), "src/nested/a.ts",
+		},
+		{
+			"git reports the junction and the working directory arrives at the target",
+			filepath.Join(alternate, "consumer"), consumer, "src/nested/b.ts",
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			p := project.At(real, testCase.source)
+			scoped, err := scopePaths(p, testCase.from, []string{testCase.given})
+			if err != nil {
+				t.Fatalf("scopePaths(%q) refused a path inside the source: %v", testCase.given, err)
+			}
+			if len(scoped) != 1 || scoped[0].Argument() != testCase.given {
+				t.Errorf("scopePaths() = %v, want [%s]", scoped, testCase.given)
+			}
+		})
+	}
+
+	// The added tolerance is for spelling, not for location: a path that only
+	// exists outside the JS project stays refused, in the same words.
+	t.Run("a path that is genuinely outside is still refused", func(t *testing.T) {
+		p := project.At(real, consumer)
+		given := filepath.Join("..", "elsewhere", "b.ts")
+
+		_, err := scopePaths(p, filepath.Join(alternate, "consumer"), []string{given})
+
+		var outside *PathOutsideSourceError
+		if !errors.As(err, &outside) {
+			t.Fatalf("scopePaths(%q) = %v, want PathOutsideSourceError", given, err)
+		}
+		want := fmt.Sprintf("%s is outside this project's JS source (%s), and Stryker only mutates what is inside it", given, consumer)
+		if err.Error() != want {
+			t.Errorf("PathOutsideSourceError = %q, want %q", err.Error(), want)
+		}
+	})
+}
+
+// secondSpellingOf returns a second path naming dir, created rather than found.
+//
+// Windows uses a directory junction because creating a symlink needs a
+// privilege a plain checkout does not have, and a junction is the case the
+// field report came from. When the platform cannot create either, the caller is
+// skipped with the reason rather than left passing without covering the case.
+func secondSpellingOf(t *testing.T, dir string) string {
+	t.Helper()
+	link := filepath.Join(t.TempDir(), "alternate")
+	if runtime.GOOS == "windows" {
+		if out, err := exec.Command("cmd", "/c", "mklink", "/J", link, dir).CombinedOutput(); err != nil {
+			t.Skipf("cannot create a directory junction without it: %v: %s", err, out)
+		}
+		return link
+	}
+	if err := os.Symlink(dir, link); err != nil {
+		t.Fatalf("symlink %s -> %s: %v", link, dir, err)
+	}
+	return link
 }
 
 // TestMutateRefusesPathsWithCharactersStrykerWouldMisread pins the path
