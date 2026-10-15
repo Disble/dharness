@@ -58,6 +58,8 @@ For a Bun project with its JS source at the repository root, the generated nativ
 bunx --no-install vitest run --coverage --config .dharness/vitest.coverage.mjs
 ```
 
+The generated `.dharness/*.mjs` files can be staged alongside project source; separate commits are not required. The ESLint stage excludes the directory dharness owns from its explicit targets because ESLint 10 would otherwise resolve its generated config factory as a standalone config. Project `.mjs` files remain lint targets; react-doctor, fallow and mutation scope are unchanged.
+
 A split JS root uses a relative bridge path and the existing hook's working-directory mechanism. Husky always uses POSIX-shell quoting, including on Windows; the emitted Windows lefthook command uses the host command interpreter. Lefthook retains its own scheduling policy: this integration does not assume that a commands map stops at the first failure.
 
 The existing `dharness check` remains the staged tool gate. The configured local hook additionally invokes the project's native Vitest for **the complete adopted unit**. An existing full-verification workflow may consume the same checked bridge; no CI files are created or managed.

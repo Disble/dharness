@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 
 	"github.com/Disble/dharness/internal/project"
@@ -88,7 +89,19 @@ func RunCheck(args []string, stdout io.Writer) error {
 		if err != nil {
 			return err
 		}
-		stages = append(stages, localStage(p, tool.ESLint, eslintPath, tool.ESLintStaged(files)...))
+		// The files dharness generates never reach ESLint. ESLint 10 resolves
+		// configuration per linted file, walking up from that file's own
+		// directory, so a path inside .dharness/ loads the factory dharness
+		// wrote as its configuration and exits 2 before linting anything — the
+		// measurement is in tool.ESLintTargets. Nothing behind the stage
+		// changes: react-doctor and fallow still see the full staged change.
+		if targets := tool.ESLintTargets(eslintOwnedDir(p), files); len(targets) > 0 {
+			stages = append(stages, localStage(p, tool.ESLint, eslintPath, tool.ESLintStaged(targets)...))
+		} else {
+			notices = append(notices, fmt.Sprintf(
+				"\n%s did not run: every staged source file is one dharness generates under %s/,\nwhich ESLint would load as configuration rather than lint. Nothing here is lintable.\n",
+				tool.ESLint, project.Dir))
+		}
 	} else {
 		notices = append(notices, fmt.Sprintf(
 			"\n%s did not run: no local install was found under node_modules/.bin.\nInstall it as a project dependency to add it to the gate.\n",
@@ -338,6 +351,21 @@ func localStage(p project.Project, name, path string, args ...string) stage {
 		command: tool.Installed(name, path, p.Source, args...),
 		help:    tool.Installed(name, path, p.Source, "--help"),
 	}
+}
+
+// eslintOwnedDir names dharness's own directory the way ESLint sees it when it
+// runs: relative to p.Source, forward-slashed, or "" when the directory lies
+// outside that directory entirely. It answers the same question
+// setup.ownedIgnorePattern answers for the ignore line dharness writes, and the
+// split layout gives both the same answer — the owned directory sits above the
+// project, so there is nothing under it for ESLint to be handed, and a path
+// climbing out with "../" would not be one this stage could resolve.
+func eslintOwnedDir(p project.Project) string {
+	rel, err := filepath.Rel(p.Source, filepath.Join(p.Root, project.Dir))
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return ""
+	}
+	return filepath.ToSlash(rel)
 }
 
 func names(stages []stage) string {

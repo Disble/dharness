@@ -112,6 +112,51 @@ func TestESLintStagedSuppressesTheIgnoredFileWarning(t *testing.T) {
 	}
 }
 
+// ESLint 10 resolves configuration per linted file, walking up from that
+// file's own directory, so a file inside .dharness/ makes ESLint load
+// .dharness/eslint.config.mjs — dharness's own factory export — as its
+// configuration and exit 2 before it lints anything. The staged list is
+// dharness's artifact, so the generated paths never reach the tool.
+func TestESLintTargetsDropsTheOwnedDirectory(t *testing.T) {
+	got := ESLintTargets(".dharness", []string{
+		".dharness/eslint.config.mjs",
+		".dharness/coverage-tiers.mjs",
+		".dharness/nested/deep.mjs",
+		"src/app.mjs",
+	})
+	want := []string{"src/app.mjs"}
+	if !slices.Equal(got, want) {
+		t.Errorf("ESLintTargets() = %v, want %v", got, want)
+	}
+}
+
+// The boundary is the separator, not the string: a sibling path that merely
+// shares the prefix is not inside the owned directory.
+func TestESLintTargetsKeepsPathsThatOnlyShareThePrefix(t *testing.T) {
+	files := []string{".dharness-notes.mjs", "src/.dharnessing.mjs"}
+	if got := ESLintTargets(".dharness", files); !slices.Equal(got, files) {
+		t.Errorf("ESLintTargets() = %v, want every path kept: %v", got, files)
+	}
+}
+
+// In a split layout the owned directory sits above the directory ESLint runs
+// in, so there is no path under it to drop and the list passes through
+// unchanged.
+func TestESLintTargetsWithoutAnOwnedDirectoryKeepsEveryPath(t *testing.T) {
+	files := []string{"src/app.mjs"}
+	if got := ESLintTargets("", files); !slices.Equal(got, files) {
+		t.Errorf("ESLintTargets() = %v, want %v", got, files)
+	}
+}
+
+// An all-owned list narrows to nothing, which is the caller's signal that this
+// stage has nothing it may lint.
+func TestESLintTargetsReturnsNothingWhenEveryPathIsOwned(t *testing.T) {
+	if got := ESLintTargets(".dharness", []string{".dharness/coverage-tiers.mjs"}); len(got) != 0 {
+		t.Errorf("ESLintTargets() = %v, want nothing", got)
+	}
+}
+
 // TestESLintDiagnosticsPinsTheMachineVerdict pins the argv of the one lint
 // invocation sync uses to ask whether the wired config can read the
 // project's own sources: machine JSON on stdout, so dharness reads
