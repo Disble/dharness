@@ -296,7 +296,8 @@ func validateMutatePath(path string) error {
 //
 // A path outside the JS project is refused rather than clamped, because there
 // is no correct path to guess at and mutating nothing is indistinguishable from
-// mutating something that survived nothing.
+// mutating something that survived nothing. Deciding that is sourceRelative's
+// job, which tolerates the two directories being spelled differently.
 func scopePaths(p project.Project, dir string, paths []string) ([]tool.MutationScope, error) {
 	scoped := make([]tool.MutationScope, 0, len(paths))
 	for _, given := range paths {
@@ -311,8 +312,8 @@ func scopePaths(p project.Project, dir string, paths []string) ([]tool.MutationS
 			absolute = filepath.Join(dir, absolute)
 		}
 
-		rel, err := filepath.Rel(p.Source, absolute)
-		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		rel, inside := sourceRelative(p.Source, absolute)
+		if !inside {
 			return nil, &PathOutsideSourceError{Path: given, Source: p.Source}
 		}
 
@@ -328,6 +329,69 @@ func scopePaths(p project.Project, dir string, paths []string) ([]tool.MutationS
 		scoped = append(scoped, scope.WithPath(relSlash))
 	}
 	return scoped, nil
+}
+
+// sourceRelative re-expresses absolute relative to source, tolerating the two
+// being spelled differently while naming the same directory.
+//
+// One directory with two spellings is what a Windows junction produces: the
+// working directory arrives spelled the way the process was started, and
+// project discovery asks git, which answers with the target the junction points
+// at. filepath.Rel compares text, so every path under the pair read as being
+// outside the project's JS source and a file it could mutate was refused.
+//
+// filepath.EvalSymlinks is not the fallback that closes this. Measured on
+// Windows 11 with Go 1.27: EvalSymlinks on a junction returns the junction
+// spelling unchanged, while os.SameFile reports the junction and its target as
+// the same directory and reports a child of one as the same file as the child
+// of the other. The lexical answer is taken first because it is the one a
+// reparse point elsewhere in the path cannot move, and the walk below is only
+// reached when it says "outside".
+func sourceRelative(source, absolute string) (string, bool) {
+	rel, err := filepath.Rel(source, absolute)
+	if err == nil && !outside(rel) {
+		return rel, true
+	}
+
+	outer, err := os.Stat(source)
+	if err != nil || !outer.IsDir() {
+		return "", false
+	}
+
+	// The parents of absolute are walked rather than the parents of a resolved
+	// form, so the relative path is rebuilt from the components as typed:
+	// re-rooting that path under source names the same file.
+	var steps []string
+	for current := absolute; ; {
+		info, err := os.Stat(current)
+		if err != nil {
+			// A path that does not exist cannot be compared by identity, and
+			// a path that is not inside the source exists nowhere in this
+			// walk.
+			return "", false
+		}
+		if os.SameFile(info, outer) {
+			if len(steps) == 0 {
+				return ".", true
+			}
+			for i, j := 0, len(steps)-1; i < j; i, j = i+1, j-1 {
+				steps[i], steps[j] = steps[j], steps[i]
+			}
+			return filepath.Join(steps...), true
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", false
+		}
+		steps = append(steps, filepath.Base(current))
+		current = parent
+	}
+}
+
+// outside reports whether a filepath.Rel result names something outside the
+// directory it was measured against.
+func outside(rel string) bool {
+	return rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // StrykerUnavailableError reports a project that could not be given a Stryker
