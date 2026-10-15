@@ -10,6 +10,19 @@ Declare business-impact tiers in the consuming repository's root `coverage-tiers
 
 These are coverage targets, not mutation-score thresholds. Mutation retains its existing verdict; infrastructure is excluded from its effective scope. New equivalence/waiver evidence machinery is outside this delivery.
 
+## When sync offers adoption
+
+Without `coverage-tiers.json`, `dharness sync` puts the native coverage step under **Left to you**, in both the human report and the JSON `delegated` status. It means **optional adoption is undecided**, not that coverage is enforced. The report contains the adoption procedure before the tier skill is installed. Offer the choice to the user; do not invent a business classification or enable it silently. Deferring adoption leaves coverage wiring unchanged and the choice reappears on the next sync.
+
+| Owner | Action |
+|---|---|
+| Agent, with the project's policy agreed | Inspect existing source/tests; declare narrowly scoped features and their business-impact tiers; validate with `dharness policy --root .`; run `dharness sync`. |
+| Agent, when prerequisites are missing | Install compatible local Vitest/provider packages with the project's package manager, preserving existing versions; supply the native config, test environment and tests. |
+| dharness sync | Write the managed runtime/bridge, splice the native config, wire the hook coverage job, and distribute the tier skill and references in existing instruction files. |
+| Not automated by sync | Execute tests, write missing tests, install coverage dependencies, add `test:coverage` or integrate an existing `check` script, or create CI workflows. Offer these separately when needed. |
+
+Run the exact native coverage command from the generated hook in the JS project root to verify the complete adopted unit. A successful sync is not a coverage pass. Native integration is Vitest-only: do not promise Jest or Go coverage wiring.
+
 ## Declaration
 
 ```json
@@ -33,7 +46,7 @@ Paths are repository-relative and use forward slashes. A trailing slash declares
 
 Version 1 resolves dharness-recognized JavaScript/TypeScript source paths. Native coverage integration is Vitest-only, not a Go coverage runner.
 
-Choose enforced prefixes deliberately: every source there must belong to a declared feature. Sources outside them remain unadopted and keep existing behavior. Do not declare `src/features/` if it contains legacy features you are not yet adopting; start with narrower prefixes. An adopted feature is never exempted because some of its files predate adoption. Generated files, dependencies and test files are not business source to be covered by these targets.
+Choose enforced prefixes deliberately: every source there must belong to a declared feature. Sources outside them remain unadopted and keep existing behavior. Declare existing paths only: leave planned directories such as `src/backend/` out until they exist, then extend the declaration deliberately. Do not declare `src/features/` if it contains legacy features you are not yet adopting; start with narrower prefixes. An adopted feature is never exempted because some of its files predate adoption. Generated files, dependencies and test files are not business source to be covered by these targets.
 
 ## Single resolution authority
 
@@ -70,7 +83,7 @@ Ordinary focused/watch runs remain ordinary when coverage is off. The installed 
 
 Ambiguous exports, missing prerequisites and conflicting managed regions are reported for correction rather than guessed. The declaration or any managed footprint keeps the coverage job active even when preparation refuses: an unwired config, missing bridge or removed manifest must fail, not silently drop enforcement. To stop adoption, remove the declaration **and** its managed integration deliberately; deleting only the manifest is a conflict.
 
-Without a declaration or managed footprint, no coverage job or files are added. `sync` still reports the inactive coverage-tiers setup steps — the twelfth, which wires the run, and the thirteenth, which distributes the guidance — and repairs drift in the owned gate file; consumer-owned content outside managed regions is retained.
+Without a declaration or managed footprint, no coverage job or files are added. `sync` offers the native coverage adoption under **Left to you**; the dependent skill-distribution step explicitly reports itself as inactive until adoption. It still repairs drift in the owned gate file; consumer-owned content outside managed regions is retained.
 
 ## Agent guidance, distributed by the same binary
 

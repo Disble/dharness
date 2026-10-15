@@ -248,18 +248,15 @@ func TestSyncSaysWhyTheDelegatedStepIsDelegated(t *testing.T) {
 	}
 }
 
-// With nothing outstanding the command answers instead of listing a step
-// that adoption can never satisfy. Every satisfied step, including
-// architectureStep, is now reported in "Already in place" rather than
-// silently absent — defect 1's whole point, and the opposite of what
-// Pending()-filtered output used to do.
-func TestSyncReachesATerminalAnswer(t *testing.T) {
+// Finishing the mechanical setup does not settle the optional coverage
+// decision. Architecture remains satisfied while adoption stays actionable.
+func TestSyncKeepsOptionalAdoptionVisibleAfterOtherSetupConverges(t *testing.T) {
 	stubRunner(t)
 
 	out := syncOutput(t, func(root string) { satisfied(t, root) })
 
-	if strings.Contains(out, "Left to you") {
-		t.Errorf("a fully configured project still reports delegated work:\n%s", out)
+	if !strings.Contains(out, "Left to you") || !strings.Contains(normalizeSpace(out), "Offer adoption") {
+		t.Errorf("the optional coverage decision disappeared after setup converged:\n%s", out)
 	}
 	if !strings.Contains(out, "Already in place") {
 		t.Errorf("a fully configured project's satisfied steps are not reported:\n%s", out)

@@ -5,8 +5,9 @@ description: Apply this project's feature coverage tiers and read the coverage g
 
 # Coverage tiers
 
-This repository declares its coverage tiers in `coverage-tiers.json`, and its
-gate enforces them. This skill is guidance, not the enforcement: a project whose
+This repository declares its coverage tiers in `coverage-tiers.json`. The native
+gate enforces them once the integration is wired and its prerequisites are present;
+a successful `dharness sync` is not proof that coverage passed. This skill is guidance, not the enforcement: a project whose
 agents never load it gets the same verdict from the same gate. Read it before
 classifying source or changing a tier, not after a gate failure.
 
@@ -55,6 +56,21 @@ statements, branches, functions and lines. Vitest calculates the metrics and
 Vitest owns the failure. A required adopted source that is missing from the run
 is an error, not a silently absent file, so an exclusion cannot turn an
 unmeasured `core` or `important` file into a pass.
+
+## What the agent still owns
+
+- Agree on business-impact tiers with the project; do not infer permission to
+  adopt or weaken its policy from an absent declaration or a failing test.
+- Declare existing repository-relative paths only. Leave not-yet-created
+  directories outside `enforcedPrefixes` until they exist, then extend adoption.
+- Install missing local Vitest and compatible coverage-provider dependencies
+  with the project's package manager, preserving versions already declared.
+  Supply the project's own Vitest/Vite config, test environment and tests.
+  `dharness sync` does not install coverage dependencies or write those tests.
+- Run the native coverage command after wiring. If needed, offer package scripts
+  such as `test:coverage`, integration into the existing `check` script, and CI
+  wiring separately: sync does not create them or run the coverage tests.
+- Native coverage integration supports Vitest only, not Jest or Go coverage.
 
 ## Running the complete verification locally
 
