@@ -462,7 +462,56 @@ func StrykerDryRun(paths []string, testRunner string, concurrency int) []string 
 	)
 }
 
+// ESLintTargets narrows the staged list to what the lint stage may be handed:
+// everything under ownedDir is dropped.
+//
+// ownedDir is the directory dharness owns as the linting process sees it —
+// relative to the directory ESLint runs in, with forward slashes — or "" when
+// that directory lies outside it, which is the split layout's normal case and
+// the reason a path here never ascends.
+//
+// The exclusion is measured, not reasoned. ESLint 10 resolves configuration
+// per linted file, starting at that file's own directory and walking upward,
+// so a file inside .dharness/ loads .dharness/eslint.config.mjs — the factory
+// dharness writes — as its configuration. Measured against ESLint 10.12.0 on a
+// project whose root eslint.config.mjs ignores .dharness/**:
+//
+//	eslint --no-warn-ignored .dharness/coverage-tiers.mjs
+//
+// exited 2 with "TypeError: Unexpected function." out of the config-array
+// loader, the exit 2 eslintConfigErrorNote already reads as ESLint never having
+// run; renaming that config away left the same invocation exiting 0 through the
+// root config's ignore, and `eslint --no-warn-ignored src/app.mjs` exited 0 in
+// the same tree throughout. The walk is upward rather than same-directory:
+// .dharness/nested/deep.mjs failed identically.
+//
+// Ignoring the directory in the config dharness writes does not answer this:
+// the lookup happens before any ignore is applied, and --no-warn-ignored
+// suppresses a warning rather than a config load. The staged list is dharness's
+// own artifact, so the fix belongs on dharness's side of the boundary — never
+// name a generated file to the tool. An empty result is the caller's signal
+// that the stage has nothing it may lint.
+func ESLintTargets(ownedDir string, files []string) []string {
+	prefix := ""
+	if ownedDir != "" {
+		prefix = strings.TrimSuffix(filepath.ToSlash(ownedDir), "/") + "/"
+	}
+
+	targets := make([]string, 0, len(files))
+	for _, file := range files {
+		if prefix != "" && strings.HasPrefix(filepath.ToSlash(file), prefix) {
+			continue
+		}
+		targets = append(targets, file)
+	}
+	return targets
+}
+
 // ESLintStaged lints exactly the staged files, by explicit path.
+//
+// The list it is given is ESLintTargets' result rather than the raw staged
+// list: a path dharness generated is never named here, for the measured reason
+// that comment records.
 //
 // No --cache. It writes .eslintcache into the project's tree, which §03
 // would then have to account for as project-owned or dharness-owned, and it

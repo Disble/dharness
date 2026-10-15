@@ -133,6 +133,18 @@ func stub(t *testing.T, staged string) (*record, string) {
 	return captured, root
 }
 
+// installLocalEslint puts the copy the gate resolves through node_modules/.bin
+// in place, which is what makes the lint stage run at all.
+func installLocalEslint(t *testing.T, root string) {
+	t.Helper()
+
+	binDir := filepath.Join(root, "node_modules", ".bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(binDir, binaryName(tool.ESLint)), "")
+}
+
 // mutable turns the stub root into a project Stryker can actually drive.
 //
 // The binary under node_modules/.bin is part of that now. dharness runs the
@@ -1479,7 +1491,9 @@ func TestCheckRebasesEslintPathsInASplitLayout(t *testing.T) {
 		case len(args) >= 1 && args[0] == "ls-files":
 			return []byte("frontend/package-lock.json\x00"), nil
 		default:
-			return []byte("frontend/src/a.ts\x00"), nil
+			// A root-level generated file rides in the same index and must never
+			// reach the lint stage: the source scope already drops it.
+			return []byte("frontend/src/a.ts\x00.dharness/coverage-tiers.mjs\x00"), nil
 		}
 	}))
 	previous := workingDirectory
@@ -1508,6 +1522,70 @@ func TestCheckRebasesEslintPathsInASplitLayout(t *testing.T) {
 	}
 	if first.Dir != source {
 		t.Errorf("eslint Dir = %q, want %q", first.Dir, source)
+	}
+}
+
+// ESLint 10 resolves configuration per linted file, walking up from that file's
+// own directory, so a file inside .dharness/ makes ESLint load the factory
+// dharness wrote as its configuration and exit 2 before linting anything —
+// measured, and the whole reason the generated paths are kept away from the
+// tool. The stage narrows rather than disappears: the project's own staged .mjs
+// is still linted and every other stage still runs over the full change.
+func TestCheckNeverHandsEslintTheFilesDharnessGenerates(t *testing.T) {
+	captured, root := stub(t, ".dharness/eslint.config.mjs\n.dharness/coverage-tiers.mjs\nsrc/app.mjs\n")
+	installLocalEslint(t, root)
+
+	if err := RunCheck(nil, io.Discard); err != nil {
+		t.Fatalf("RunCheck() = %v, want nil", err)
+	}
+
+	if len(captured.commands) != 4 {
+		t.Fatalf("ran %d commands, want 4 (eslint, react-doctor, fallow audit, fallow dupes): %+v", len(captured.commands), captured.commands)
+	}
+	first := captured.commands[0]
+	if first.Label != tool.ESLint {
+		t.Fatalf("first command = %q, want eslint: %+v", first.Label, captured.commands)
+	}
+	want := []string{"--no-warn-ignored", "src/app.mjs"}
+	if !slices.Equal(first.Args, want) {
+		t.Errorf("eslint args = %v, want %v: a generated file makes ESLint 10 load .dharness/eslint.config.mjs as configuration and exit 2", first.Args, want)
+	}
+	// The stage was narrowed, never dropped: react-doctor and both fallow
+	// stages still run over a change that carries generated files.
+	if got := toolOf(captured.commands[1]); got != "react-doctor" {
+		t.Errorf("second command = %q, want react-doctor", got)
+	}
+	if got := toolOf(captured.commands[2]); got != fallowAuditStage {
+		t.Errorf("third command = %q, want %q", got, fallowAuditStage)
+	}
+	if got := toolOf(captured.commands[3]); got != fallowDupesStage {
+		t.Errorf("fourth command = %q, want %q", got, fallowDupesStage)
+	}
+}
+
+// A commit whose only staged sources are generated files has nothing ESLint may
+// lint. The stage is skipped, with its reason printed, and the other three
+// stages still run: a change under .dharness/ is still a change dharness can
+// analyse, so nothing behind ESLint is weakened to accommodate it.
+func TestCheckSkipsEslintWhenEveryStagedSourceIsGenerated(t *testing.T) {
+	captured, root := stub(t, ".dharness/eslint.config.mjs\n.dharness/coverage-tiers.mjs\n")
+	installLocalEslint(t, root)
+
+	var out bytes.Buffer
+	if err := RunCheck(nil, &out); err != nil {
+		t.Fatalf("RunCheck() = %v, want nil", err)
+	}
+
+	if len(captured.commands) != 3 {
+		t.Fatalf("ran %d commands, want 3 (react-doctor, fallow audit, fallow dupes): %+v", len(captured.commands), captured.commands)
+	}
+	for _, command := range captured.commands {
+		if toolOf(command) == tool.ESLint {
+			t.Fatalf("eslint ran over dharness-generated files: %+v", captured.commands)
+		}
+	}
+	if !strings.Contains(out.String(), "eslint did not run") || !strings.Contains(out.String(), project.Dir) {
+		t.Errorf("output does not say why ESLint was skipped:\n%s", out.String())
 	}
 }
 
