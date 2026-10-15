@@ -68,7 +68,17 @@ Ordinary focused/watch runs remain ordinary when coverage is off. The installed 
 
 Ambiguous exports, missing prerequisites and conflicting managed regions are reported for correction rather than guessed. The declaration or any managed footprint keeps the coverage job active even when preparation refuses: an unwired config, missing bridge or removed manifest must fail, not silently drop enforcement. To stop adoption, remove the declaration **and** its managed integration deliberately; deleting only the manifest is a conflict.
 
-Without a declaration or managed footprint, no coverage job or files are added. `sync` still reports the inactive twelfth setup step and repairs drift in the owned gate file; consumer-owned content outside managed regions is retained.
+Without a declaration or managed footprint, no coverage job or files are added. `sync` still reports the inactive coverage-tiers setup steps — the twelfth, which wires the run, and the thirteenth, which distributes the guidance — and repairs drift in the owned gate file; consumer-owned content outside managed regions is retained.
+
+## Agent guidance, distributed by the same binary
+
+The procedure lives once, in `internal/setup/assets/coverage-tiers/SKILL.md`, embedded with `go:embed` and shipped in the binary: nothing is downloaded at sync time and no external skill installer is invoked. `dharness sync` writes that body, unchanged, to two client locations under the repository root: `.claude/skills/coverage-tiers/SKILL.md` and `.agents/skills/coverage-tiers/SKILL.md`. They are copies rather than links, so they need no symlink privilege on Windows, and they are managed bytes: a hand edit is repaired on the next run, and a run with the bytes already correct writes nothing.
+
+The same step adds a bounded region to the instruction files the project already keeps. `AGENTS.md` and `CLAUDE.md` each gain (or have replaced) one marker-delimited block naming the tiers, the declaration and the skill path their own client reads. A file that does not exist is never created; bytes outside the region are never rewritten; and a partial or duplicated region is refused with the fix named instead of repaired by guesswork. The region is located with the same line-bounded marker grammar the ESLint and coverage-config splices already use.
+
+This guidance follows the declaration, not the wiring: a repository whose `coverage-tiers.json` exists gets the skill even while the native integration is still being prepared, and a repository with no declaration gets nothing. Removing the declaration while the managed copies remain is a conflict, not a silent uninstall.
+
+The skill and the regions are guidance, not enforcement. The gate decides, so an agent that never loads the skill still meets the same verdict; the copies exist to explain the policy to whoever is doing the work.
 
 ## Existing mutation workflows
 
@@ -85,7 +95,7 @@ Filtering changes scope, not verdict: eligible `Survived` and `NoCoverage` mutan
 - Native coverage integration is Vitest-first. Jest coverage is backlog; existing Jest workflows are unchanged.
 - Coverage belongs to the project's existing complete verification workflow and local gate; ordinary focused/watch runs do not gain mandatory coverage.
 - Existing CI may consume the same native runner configuration. This adoption does not create or manage CI workflows, select a CI provider, or add a coverage-launch command.
-- The skill is guidance, not the gate. Enforcement must work even when an agent never reads it.
+- The skill is guidance, not the gate. Enforcement works even when an agent never reads it, and the gate's verdict does not depend on any client loading the skill.
 - No external skill installer, Vercel publication, new wrapped CLI or new module dependency is required.
 
 ## Delivery status
