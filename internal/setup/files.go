@@ -18,6 +18,12 @@ const (
 	ownedFallow   = "fallow.jsonc"
 	ownedRules    = "rules.json"
 
+	// ownedIgnore is the owned directory's own allow list. It is written once
+	// with the directory and only ever appended to afterwards, so it has one
+	// name here rather than a literal repeated by every writer that declares
+	// something shareable.
+	ownedIgnore = ".gitignore"
+
 	// ownedEslintLegacyName is the single name every dharness before this
 	// one wrote, whatever dialect it put inside. It is kept so a project
 	// adopted then can have the orphan cleaned up; nothing writes it.
@@ -185,9 +191,18 @@ func gateInstalled(p project.Project) bool {
 	return err == nil && strings.Contains(string(raw), "lefthook")
 }
 
+// huskyWired reports whether the hook runs the line this repository's state
+// requires: the check alone when nothing activated the tiers, and the check
+// chained with the coverage run — or the refusal that stands in for it — when
+// the declaration or the managed footprint did.
+//
+// A check-only hook in an activated repository is not wired. `dharness check`
+// exits 0 with nothing staged, so leaving the hook at the check means the
+// declared tiers are never enforced and the run that cannot prepare them passes
+// green — the one state this step exists to keep out of a commit.
 func huskyWired(p project.Project) bool {
 	raw, err := os.ReadFile(filepath.Join(p.Root, filepath.FromSlash(huskyHook)))
-	return err == nil && strings.Contains(string(raw), gateCommand)
+	return err == nil && strings.Contains(string(raw), huskyGateLine(p))
 }
 
 func appendHuskyGate(p project.Project, w *Writer) error {
@@ -198,11 +213,20 @@ func appendHuskyGate(p project.Project, w *Writer) error {
 		return fmt.Errorf("read %s: %w", huskyHook, err)
 	}
 
+	// A hook that already carries the check converges in place: the coverage
+	// job belongs on the check's own line, and appending the check a second
+	// time would run it twice with the later one deciding the verdict. This is
+	// the same rendering the coverage step performs, so the two writers cannot
+	// disagree about the line or its marker.
+	if converged, ok := convergeHuskyGate(p, string(existing)); ok {
+		return w.Write(path, []byte(converged))
+	}
+
 	body := string(existing)
 	if body != "" && !strings.HasSuffix(body, "\n") {
 		body += "\n"
 	}
-	return w.Write(path, []byte(body+gateCommand+"\n"))
+	return w.Write(path, []byte(body+huskyGateLine(p)+"\n"))
 }
 
 // ensureShared appends an allow-list entry for name when .dharness/.gitignore
@@ -212,8 +236,12 @@ func appendHuskyGate(p project.Project, w *Writer) error {
 // discard whatever the project added to it, which is the one thing
 // TestOwnedDirectoryKeepsAnExistingIgnoreFile exists to forbid — the same
 // shape as appendHuskyGate, over a different file.
+//
+// coverageTiersStep is the second caller: the two modules it generates into the
+// owned directory are files the gate runs against, and an allow list that never
+// gained them leaves them out of every clone.
 func ensureShared(p project.Project, w *Writer, name string) error {
-	path := filepath.Join(p.Root, project.Dir, ".gitignore")
+	path := filepath.Join(p.Root, project.Dir, ownedIgnore)
 
 	existing, err := os.ReadFile(path)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {

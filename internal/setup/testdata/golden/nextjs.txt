@@ -194,6 +194,15 @@
      A severity written there survives every later run: dharness fills in only the
      rules a project has not answered for itself.
 
+13  enforce the coverage tiers in the native test run
+   satisfied=true delegated=false
+   why |
+
+   describe |
+     coverage-tiers.json declares this repository's coverage tiers, and the gate runs the
+     project's own Vitest with coverage so that they are enforced. The tiers arrive at
+     .dharness/coverage-tiers.mjs, and the project's own config is pointed at the bridge entry
+     beside it. A repository that declares no tiers gets none of this.
 
 == tree ==
 .dharness/.gitignore
