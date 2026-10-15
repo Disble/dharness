@@ -34,10 +34,31 @@ const gateCommand = "dharness check"
 //
 // It is emitted only when the two roots really differ. A key that says `root:
 // ./` in a conventional repository is noise in a file people read.
+//
+// The coverage line joins it where a declaration or managed footprint exists:
+// refused or missing wiring must retain a failing invocation. With neither,
+// this renders exactly the legacy bytes. Each native command keeps its own
+// exit status; scheduling and short-circuiting remain Lefthook's policy. Its
+// default is sequential but not piped, so this renderer must not promise that
+// a failed check prevents coverage from running, or depend on insertion order.
 func gateConfig(p project.Project) string {
+	return gateConfigWithCoverage(p, coverageTiersGateCommand(p))
+}
+
+// gateConfigWithCoverage is gateConfig over a coverage line the caller already
+// decided on. The coverage step compares this file against the state its own
+// writes are about to produce — the splice it has computed but not yet written
+// — so it needs the same rendering over a line the repository does not answer
+// for yet. One renderer, so the two writers cannot disagree.
+func gateConfigWithCoverage(p project.Project, coverage string) string {
 	gate := fmt.Sprintf("pre-commit:\n  commands:\n    dharness:\n      run: %s\n", gateCommand)
+	root := ""
 	if rel := p.SourceRel(); rel != "" {
-		gate += fmt.Sprintf("      root: %s/\n", rel)
+		root = fmt.Sprintf("      root: %s/\n", rel)
+	}
+	gate += root
+	if coverage != "" {
+		gate += fmt.Sprintf("    coverage:\n      run: %s\n%s", coverage, root)
 	}
 	return gate
 }
@@ -186,10 +207,18 @@ func (ownedFilesStep) ID() string { return "write the files dharness owns" }
 // would render (design decision 8) — the rest of the file, boundaries
 // included, is never read here.
 func (ownedFilesStep) Satisfied(p project.Project) bool {
-	for _, name := range []string{ownedLefthook, ownedRules} {
-		if _, err := os.Stat(filepath.Join(p.Root, project.Dir, name)); err != nil {
-			return false
-		}
+	// The gate configuration is compared byte for byte, not by existence. It is
+	// a file dharness writes wholesale, and its content is derived — the
+	// coverage step adds a command to it the moment a repository activates the
+	// tiers. An existence check would leave that command unwritten until some
+	// other step happened to rewrite the file, which is the one state where an
+	// activated repository's gate can silently lose its coverage job.
+	lefthook, err := os.ReadFile(filepath.Join(p.Root, project.Dir, ownedLefthook))
+	if err != nil || string(lefthook) != gateConfig(p) {
+		return false
+	}
+	if _, err := os.Stat(filepath.Join(p.Root, project.Dir, ownedRules)); err != nil {
+		return false
 	}
 
 	matches := preset.Resolve(p)

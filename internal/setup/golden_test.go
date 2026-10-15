@@ -204,7 +204,12 @@ func writtenTree(t *testing.T, root string) []string {
 
 // writeIndented writes s five spaces deep, one line at a time, so a
 // multi-line Describe or Delegated reason nests visibly under its label.
+// An empty field contributes a bare line, not indentation-only whitespace.
 func writeIndented(buf *bytes.Buffer, s string) {
+	if s == "" {
+		buf.WriteByte('\n')
+		return
+	}
 	for _, line := range strings.Split(s, "\n") {
 		buf.WriteString("     " + line + "\n")
 	}

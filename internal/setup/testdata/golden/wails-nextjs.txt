@@ -2,7 +2,7 @@
 1  install what this project is missing
    satisfied=false delegated=false
    why |
-     
+
    describe |
      This package provides dharness's project lint rules.
      
@@ -10,14 +10,14 @@
 2  write the files dharness owns
    satisfied=false delegated=false
    why |
-     
+
    describe |
      The gate, the architecture and the rule thresholds live in .dharness/, which is
      committed. The project's own files only ever gain one line pointing at them.
 3  point .fallowrc.json at the file dharness owns
    satisfied=false delegated=false
    why |
-     
+
    describe |
      fallow composes with `extends`, so the architecture arrives by reference.
      Add this line to .fallowrc.json:
@@ -38,7 +38,7 @@
 5  point lefthook.yml at the file dharness owns
    satisfied=true delegated=false
    why |
-     
+
    describe |
      lefthook composes with `extends`, so the gate arrives by reference.
      Add this line to lefthook.yml:
@@ -48,7 +48,7 @@
 6  point eslint.config.js at the file dharness owns
    satisfied=false delegated=false
    why |
-     
+
    describe |
      ESLint's flat config has no `extends` of its own, so the layer arrives by
      import and spread instead. A new eslint.config.js is written:
@@ -70,7 +70,7 @@
 8  give the agent fallow's own tools
    satisfied=false delegated=false
    why |
-     
+
    describe |
      fallow ships an MCP server with the analysis an agent would otherwise ask a
      wrapper to invent: boundaries, traces, impact, health.
@@ -184,6 +184,15 @@
      A severity written there survives every later run: dharness fills in only the
      rules a project has not answered for itself.
      
+12  enforce the coverage tiers in the native test run
+   satisfied=true delegated=false
+   why |
+
+   describe |
+     coverage-tiers.json declares this repository's coverage tiers, and the gate runs the
+     project's own Vitest with coverage so that they are enforced. The tiers arrive at
+     .dharness/coverage-tiers.mjs, and the project's own config is pointed at the bridge entry
+     beside it. A repository that declares no tiers gets none of this.
 
 == tree ==
 .dharness/.gitignore
