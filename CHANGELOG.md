@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.13.0](https://github.com/Disble/dharness/compare/v1.12.0...v1.13.0) (2026-10-15)
+
+
+### Features
+
+* **jsconfig:** bound native config exports without evaluating consumers ([b82a5a2](https://github.com/Disble/dharness/commit/b82a5a2dcfcf3e7757c2eb0a7033c27e7575f462))
+* **mutate:** apply index coverage tiers to staged mutation scopes ([52bb1a1](https://github.com/Disble/dharness/commit/52bb1a137aebec2d1cd2691306045c8df0f073d8))
+* **mutate:** exclude declared infrastructure from named mutation scopes ([7f716ef](https://github.com/Disble/dharness/commit/7f716efe6efa85eff575136e8670b9b30bfe4182))
+* **policy:** expose read-only native coverage integration helper ([8d99589](https://github.com/Disble/dharness/commit/8d99589d9dc1a36dd97bdce1dcc789f8ea96a759))
+* **policy:** resolve complete adopted source classifications ([bce6d86](https://github.com/Disble/dharness/commit/bce6d867cab61f1cde6be182cd44c5f366573f2d))
+* **policy:** validate consumer-owned coverage tier declarations ([da6c154](https://github.com/Disble/dharness/commit/da6c1546930006cbe6dbd0da4a94392f292bf440))
+* **setup:** distribute the coverage-tiers skill and its agent references ([e134f1f](https://github.com/Disble/dharness/commit/e134f1f5120eef54723948a463ab1d54063a56de))
+* **setup:** embed the managed coverage runtime and its native entry ([65b335f](https://github.com/Disble/dharness/commit/65b335fa822302c8d7105c85f9f25bc4b3478107))
+* **setup:** enforce the declared coverage tiers from the git hook ([76f5176](https://github.com/Disble/dharness/commit/76f51768d97220677cd053eef0aa835f7531db11))
+* **setup:** splice the managed coverage regions into the project's vitest config ([7d07270](https://github.com/Disble/dharness/commit/7d072701ba22c6b93dada54ee9edd2c7fb8ae304))
+* **tool:** render the coverage run for the project's own runner ([977df8e](https://github.com/Disble/dharness/commit/977df8e439d4edc4f72fb24989f304ad62874a89))
+
+
+### Bug Fixes
+
+* **cli:** accept a path reached through another spelling of the source directory ([974d88b](https://github.com/Disble/dharness/commit/974d88b3bbf4a319da2c4b61430133efa1b8f4cf))
+
 ## [1.12.0](https://github.com/Disble/dharness/compare/v1.11.0...v1.12.0) (2026-10-13)
 
 
