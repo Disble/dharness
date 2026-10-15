@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.13.1](https://github.com/Disble/dharness/compare/v1.13.0...v1.13.1) (2026-10-15)
+
+
+### Bug Fixes
+
+* **check:** exclude generated files from ESLint targets ([a779a44](https://github.com/Disble/dharness/commit/a779a44892a7ff4f32f380e15a11790823128f54))
+* **sync:** offer actionable optional coverage adoption ([1d56c34](https://github.com/Disble/dharness/commit/1d56c347330dcf0926d331fa4f32eb103382ef0e))
+
 ## [1.13.0](https://github.com/Disble/dharness/compare/v1.12.0...v1.13.0) (2026-10-15)
 
 
