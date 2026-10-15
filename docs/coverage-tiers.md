@@ -41,6 +41,35 @@ The integration uses the read-only JSON facade `dharness policy --root <reposito
 
 An absent manifest means no adoption unless a managed coverage integration already requires that manifest. A malformed manifest is a failure, never an empty policy. The resolver measures the complete declared source universe, including unexecuted files, without using a code-age cutoff.
 
+## Native Vitest coverage in the existing gate
+
+The project must already have a locally installed Vitest, its coverage provider and a native Vitest/Vite config. `dharness sync` does not download either runner or provider for this integration. The project's Node runtime must be able to load the installed public `vitest/node` API; the measured native combination is Node 24.21.0, Vitest 5.0.3 and `@vitest/coverage-v8` 5.0.3.
+
+With a valid declaration, run the existing `dharness sync`. It:
+
+- copies the embedded runtime to `.dharness/coverage-tiers.mjs`;
+- adds managed import/export regions around the config's **raw exported value**, without evaluating it or rewriting a shared initializer;
+- writes `.dharness/vitest.coverage.mjs`, a checked bridge to that consumer config;
+- adds a native coverage invocation to the existing local gate, not a new test-launch command or CI workflow.
+
+For a Bun project with its JS source at the repository root, the generated native invocation is:
+
+```sh
+bunx --no-install vitest run --coverage --config .dharness/vitest.coverage.mjs
+```
+
+A split JS root uses a relative bridge path and the existing hook's working-directory mechanism. Husky always uses POSIX-shell quoting, including on Windows; the emitted Windows lefthook command uses the host command interpreter. Lefthook retains its own scheduling policy: this integration does not assume that a commands map stops at the first failure.
+
+The existing `dharness check` remains the staged tool gate. The configured local hook additionally invokes the project's native Vitest for **the complete adopted unit**. An existing full-verification workflow may consume the same checked bridge; no CI files are created or managed.
+
+The runtime asks the Go resolver on each enabled coverage run and projects its targets into native `include` and per-file thresholds for statements, branches, functions and lines. Vitest calculates the metrics and owns threshold failure. A native coverage reporter also refuses a missing required adopted source: an exclusion must not turn an unmeasured CORE/IMPORTANT file into a green run. Existing include scope and reporters remain, stronger consumer thresholds are preserved, and conflicting weaker settings refuse instead of being overwritten.
+
+Ordinary focused/watch runs remain ordinary when coverage is off. The installed Vitest parser owns CLI precedence: an explicit `--coverage=false` or `--coverage.enabled=false` overrides a config that enabled coverage. A config that enables coverage without a CLI override still activates enforcement. No second flag grammar or source classifier is introduced.
+
+Ambiguous exports, missing prerequisites and conflicting managed regions are reported for correction rather than guessed. The declaration or any managed footprint keeps the coverage job active even when preparation refuses: an unwired config, missing bridge or removed manifest must fail, not silently drop enforcement. To stop adoption, remove the declaration **and** its managed integration deliberately; deleting only the manifest is a conflict.
+
+Without a declaration or managed footprint, no coverage job or files are added. `sync` still reports the inactive twelfth setup step and repairs drift in the owned gate file; consumer-owned content outside managed regions is retained.
+
 ## Existing mutation workflows
 
 `dharness mutate <paths...>` filters declared infrastructure before installation, dry-run measurement, sandbox creation or cache access. Eligible CORE, IMPORTANT and unadopted paths retain their original ranges, including column suffixes. An all-infrastructure request succeeds with `no runtime source to mutate after coverage-tier exclusions` and starts no mutation tool.
