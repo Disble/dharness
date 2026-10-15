@@ -62,6 +62,15 @@ const (
 	// only one whose breakage reaches dharness's gate. Flat config, the ESLint
 	// 9 default, is not read by react-doctor at all.
 	legacyLintConfig = ".eslintrc.json"
+
+	// agentsInstructions and claudeInstructions are the two instruction files
+	// a project already keeps for its agents. They are named here because they
+	// are files the project owns that gain at most one managed region — the
+	// same category as mcpConfig above — and the point of naming them is the
+	// rule that comes with it: coverageTiersSkillStep writes into one that
+	// exists and never creates one.
+	agentsInstructions = "AGENTS.md"
+	claudeInstructions = "CLAUDE.md"
 )
 
 // skillLocations are the paths react-doctor's installer writes a skill into,
