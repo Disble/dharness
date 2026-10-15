@@ -62,6 +62,22 @@ func TestMutateRefusesPathsOutsideTheJSProject(t *testing.T) {
 	if outside.Path != "internal/app/app.go" {
 		t.Errorf("the error does not name the path: %v", outside)
 	}
+
+	// The parent of the JS project is the one outside answer that is a bare
+	// name rather than a prefix: filepath.Rel answers exactly "..", and no
+	// separator follows it for the prefix clause to match. Taken as a path
+	// instead of as an answer, ".." reaches Stryker as something to mutate.
+	t.Run("the source's own parent directory", func(t *testing.T) {
+		_, err := scopePaths(p, p.Source, []string{".."})
+
+		var outside *PathOutsideSourceError
+		if !errors.As(err, &outside) {
+			t.Fatalf("scopePaths(%q) = %v, want PathOutsideSourceError", "..", err)
+		}
+		if outside.Path != ".." {
+			t.Errorf("the error does not name the path: %v", outside)
+		}
+	})
 }
 
 // TestMutateAcceptsAPathReachedThroughAnotherSpellingOfTheSameDirectory pins
@@ -80,6 +96,12 @@ func TestMutateAcceptsAPathReachedThroughAnotherSpellingOfTheSameDirectory(t *te
 	real := t.TempDir()
 	consumer := filepath.Join(real, "consumer")
 	for _, name := range []string{"src/nested/a.ts", "src/nested/b.ts"} {
+		writeFile(t, filepath.Join(consumer, filepath.FromSlash(name)), "export const x = 1;\n")
+	}
+	// Two more shapes of path the walk has to rebuild: one directly under the
+	// source, and one deep enough that reversing its components takes more
+	// than a single swap.
+	for _, name := range []string{"src/deep/one/a.ts", "direct.ts"} {
 		writeFile(t, filepath.Join(consumer, filepath.FromSlash(name)), "export const x = 1;\n")
 	}
 	// A real file outside the JS project, so the refusal below is decided by
@@ -101,6 +123,22 @@ func TestMutateAcceptsAPathReachedThroughAnotherSpellingOfTheSameDirectory(t *te
 		{
 			"git reports the junction and the working directory arrives at the target",
 			filepath.Join(alternate, "consumer"), consumer, "src/nested/b.ts",
+		},
+		// The walk rebuilds the relative path from the components it collects
+		// on the way up, so the answer turns on both the count and the order:
+		// none of them is the source itself, one of them is a direct child, and
+		// four of them are more components than one swap can reverse.
+		{
+			"the source itself",
+			consumer, filepath.Join(alternate, "consumer"), ".",
+		},
+		{
+			"a direct child of the source",
+			consumer, filepath.Join(alternate, "consumer"), "direct.ts",
+		},
+		{
+			"a path four components deep",
+			consumer, filepath.Join(alternate, "consumer"), "src/deep/one/a.ts",
 		},
 	}
 	for _, testCase := range cases {
@@ -154,6 +192,53 @@ func secondSpellingOf(t *testing.T, dir string) string {
 		t.Fatalf("symlink %s -> %s: %v", link, dir, err)
 	}
 	return link
+}
+
+// TestMutateRelatesTheSourceAndThePathWhenFilepathRelCannot pins the fallback
+// that identity has to decide. filepath.Rel refuses a pair it cannot relate at
+// all — a relative base against an absolute target is the portable form of the
+// same branch as a Windows drive against a UNC path — and a refused call
+// answers with the empty string. Nothing about containment has been decided
+// there, and read as a path the empty answer would reach Stryker as an empty
+// --mutate argument in a run that reported it mutated what was asked for.
+func TestMutateRelatesTheSourceAndThePathWhenFilepathRelCannot(t *testing.T) {
+	real := t.TempDir()
+	consumer := filepath.Join(real, "consumer")
+	writeFile(t, filepath.Join(consumer, "src", "a.ts"), "export const x = 1;\n")
+	writeFile(t, filepath.Join(consumer, "loose.ts"), "export const z = 1;\n")
+
+	// The relative spelling of the source only resolves because the process
+	// stands in real, and it is the same spelling that makes the pair one
+	// filepath.Rel cannot relate: the source is absolute and the path is not.
+	t.Chdir(real)
+
+	t.Run("a path inside the source is re-expressed", func(t *testing.T) {
+		p := project.At(real, consumer)
+
+		scoped, err := scopePaths(p, "consumer", []string{"src/a.ts"})
+		if err != nil {
+			t.Fatalf("scopePaths() refused a path inside the source: %v", err)
+		}
+		if len(scoped) != 1 || scoped[0].Argument() != "src/a.ts" {
+			t.Errorf("scopePaths() = %v, want [src/a.ts]", scoped)
+		}
+	})
+
+	// Identity must not report the file itself as the source it was measured
+	// against: a source that is a file contains nothing.
+	t.Run("a source that is a file contains nothing", func(t *testing.T) {
+		p := project.At(real, filepath.Join(consumer, "loose.ts"))
+
+		_, err := scopePaths(p, "consumer", []string{"loose.ts"})
+
+		var outside *PathOutsideSourceError
+		if !errors.As(err, &outside) {
+			t.Fatalf("scopePaths() = %v, want PathOutsideSourceError", err)
+		}
+		if outside.Path != "loose.ts" || outside.Source != p.Source {
+			t.Errorf("the error does not name the pair: %v", outside)
+		}
+	})
 }
 
 // TestMutateRefusesPathsWithCharactersStrykerWouldMisread pins the path
