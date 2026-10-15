@@ -19,6 +19,7 @@ import (
 
 	"github.com/Disble/dharness/internal/project"
 	"github.com/Disble/dharness/internal/report"
+	"github.com/Disble/dharness/internal/tiers"
 )
 
 // Facts are what a step knows and a transcript cannot say. A sink of raw
@@ -76,7 +77,7 @@ type Step interface {
 //
 // It is deliberately not part of Step. Most steps have nothing to add: their
 // Apply already proves what they claim, and a Verify returning nil on every
-// one of them would be eleven implementations of "trust me".
+// one of them would be thirteen implementations of "trust me".
 type Verifier interface {
 	// Verify reports why this step's postcondition does not hold, or nil
 	// when it does. It runs after Apply and reads the repository, exactly
@@ -114,6 +115,7 @@ func Plan() []Step {
 		hookInstallStep{},
 		agentSkillStep{},
 		architectureStep{},
+		coverageTiersStep{},
 	}
 }
 
@@ -156,7 +158,7 @@ func Run(p project.Project) ([]report.StepResult, []report.Note, error) {
 // to Plan() buried inside it — the same reason applySteps takes steps
 // []Step rather than calling Plan() itself: a stub plan lets a test drive
 // exactly the branch it needs (satisfied, delegated, or a failure at a
-// chosen index) without depending on the real registry's eleven steps.
+// chosen index) without depending on the real registry's thirteen steps.
 //
 // Status is decided in the order Pending/applySteps have always used:
 // Satisfied first, so an already-satisfied step is never even asked
@@ -316,6 +318,15 @@ func satisfiedEvidence(p project.Project, step Step) string {
 
 	case architectureStep:
 		return "boundaries declared"
+
+	case coverageTiersStep:
+		// Not firstLine(Describe(p)): Describe explains what to wire, and "this
+		// repository declared nothing" is not a fix instruction — the same
+		// distinction the switch above exists for.
+		if !coverageTiersDeclared(p) {
+			return "no " + tiers.ManifestName
+		}
+		return tiers.ManifestName + " → " + filepath.ToSlash(filepath.Join(project.Dir, coverageBridgeName))
 
 	case ownedFilesStep:
 		return "owned files match"

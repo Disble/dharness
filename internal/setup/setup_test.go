@@ -739,6 +739,34 @@ func TestFailureRetractsEarlierStepsAndMarksRemainingNotReached(t *testing.T) {
 	}
 }
 
+// TestCoverageTiersStepRollsBackTheDeclaredAllowance is the transaction half of
+// the tracked-tree repair: the allow-list entry is appended through the run's
+// Writer like every other write this step makes, so a later step failing puts
+// the project's own ignore file back byte for byte instead of leaving an entry
+// that names modules the same rollback removed.
+func TestCoverageTiersStepRollsBackTheDeclaredAllowance(t *testing.T) {
+	stubCoverageProcesses(t)
+	fixture := coverageGateAdopted(t, false)
+	p := project.At(fixture.root, fixture.source)
+
+	if _, err := p.EnsureDir(""); err != nil {
+		t.Fatal(err)
+	}
+	ignorePath := filepath.Join(p.Root, project.Dir, ownedIgnore)
+	before := readFixtureFile(t, ignorePath)
+
+	_, _, err := run([]Step{coverageTiersStep{}, stubApplyStep{
+		id: "the step that fails after this one",
+		fn: func(*Writer, io.Writer) (Facts, error) { return Facts{}, errors.New("later step broke") },
+	}}, p)
+	if err == nil {
+		t.Fatal("run() = nil although the step after the coverage step failed")
+	}
+	if got := readFixtureFile(t, ignorePath); got != before {
+		t.Errorf("the rollback left the owned ignore file changed:\n%s", got)
+	}
+}
+
 func TestInstallStepPlansOnlyMissingIntegrationPackages(t *testing.T) {
 	p, _, _ := integrationProject(t)
 	want := []string{RulesPackage}

@@ -87,7 +87,7 @@ type StepResult struct {
 	//
 	// The addressable handle lives on Collision.ID, which is the only
 	// thing in this report anything points at: the closing block's `next`.
-	// Giving all eleven steps a slug is a follow-up the JSON twin can take
+	// Giving all thirteen steps a slug is a follow-up the JSON twin can take
 	// whenever check and mutate need one, and nothing here depends on it.
 	ID string `json:"id"`
 
