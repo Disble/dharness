@@ -391,17 +391,46 @@ are written, not how any of them is derived.
   set (§05) — and `sync`'s output names the residue as inert under the
   gate's `--staged` invocation, never silently
 
+### Requirement: no local ESLint keeps the wiring pending and names the install (principle 22)
+
+Where a project has no ESLint resolvable through `p.LocalBinary("eslint")`,
+`eslintExtendsStep.Delegated(p)` MUST return `ok == true` before any other
+refusal is considered, with a reason naming the install command in the
+project's own package manager (`tool.InstallCommand(p.PackageManager)`
+followed by `eslint`). `Satisfied(p)` MUST be `false`, so the step is never
+filed as already in place, and no byte of any ESLint config is written.
+dharness MUST NOT install ESLint itself, and the rest of the plan still runs
+(§20). This is the same answer `coverageTiersStep` gives without Vitest.
+
+#### Scenario: a project without ESLint gets the install, not the wiring
+
+- **GIVEN** a project with no ESLint binary resolvable, whatever its ESLint
+  configuration files
+- **WHEN** `sync` runs
+- **THEN** `eslintExtendsStep` is reported as delegated with the install
+  command, no ESLint config file is written or edited, and the other steps
+  run as before
+
+#### Scenario: installing ESLint lets the next sync wire the layer
+
+- **GIVEN** the same project after the project installs ESLint
+- **WHEN** `sync` runs again
+- **THEN** `eslintExtendsStep` answers the config-shape matrix below exactly
+  as it did before this requirement existed
+
 ### Requirement: no ESLint config at all is written whole, matching the extends-wiring precedent
 
-Where a project has no `eslint.config.js`/`.mjs`/`.cjs`/`.ts`/`.mts`/`.cts`
-and no legacy `.eslintrc.*`, `eslintExtendsStep` MUST write a complete
+Where a project has ESLint installed but no
+`eslint.config.js`/`.mjs`/`.cjs`/`.ts`/`.mts`/`.cts` and no legacy
+`.eslintrc.*`, `eslintExtendsStep` MUST write a complete
 `eslint.config.js` that imports and spreads `.dharness/eslint.config.js`,
 following the same write-if-absent shape `wireFallowExtends` and
 `wireLefthookExtends` already use for `.fallowrc.json` and `lefthook.yml`.
 
 #### Scenario: a project with no ESLint config gets one written
 
-- **GIVEN** a project with no ESLint configuration file of any kind
+- **GIVEN** a project with ESLint installed and no ESLint configuration file
+  of any kind
 - **WHEN** `sync` runs
 - **THEN** `eslintExtendsStep.Delegated(p)` returns `ok == false`, and
   `Apply` writes a new `eslint.config.js` that imports
@@ -842,12 +871,14 @@ all) through `eslintExtendsStep` at `sync` time.
   skipped and why, and the gate's overall exit code is unaffected by this
   absence
 
-### Requirement: the setup step and the gate stage answer different questions, independently
+### Requirement: the gate stage keys on the binary alone
 
-`eslintExtendsStep` (at `sync` time) MUST key its decision on whether an
-ESLint config file exists. The gate's ESLint stage (at `check` time) MUST
-key its decision on whether an ESLint binary is resolvable. These are two
-independent questions, and neither answer determines the other.
+The gate's ESLint stage (at `check` time) MUST key its decision on whether
+an ESLint binary is resolvable, and on nothing about the config file.
+`eslintExtendsStep` asks the binary question too, first, and only then the
+config-file questions (principle 22 replaced the earlier rule that the two
+were independent: a step that wired rules no installed ESLint could run was
+reported as in place while the gate skipped them).
 
 #### Scenario: a config exists but no binary is installed
 

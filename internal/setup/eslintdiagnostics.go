@@ -37,12 +37,11 @@ import (
 // It asks once, over eslintProbePaths' own bounded set, and reads only
 // ESLint's machine JSON (§09: the direct signal, never a heuristic over
 // prose). No local ESLint is no measurement at all, and this stays silent
-// about it: a missing tool is not a broken config (§20), dharness never
-// installs one at sync time, and the ESLint absence rule is already
-// recorded twice for the same reason — eslintConfigLoads answers "loads"
-// and resolvedConfig answers "absent" rather than inventing a verdict. A
-// note here would also be noise on every sync of every project that has not
-// installed ESLint yet, for a state dharness deliberately does not change.
+// about it: a missing tool is not a broken config (§20), and
+// eslintConfigLoads and resolvedConfig answer the same absence without
+// inventing a verdict. Silence here is not silence in the report — the
+// missing install is eslintExtendsStep's own pending reason (principle 22),
+// and a note would only say it twice.
 func eslintDiagnostics(p project.Project) []report.Note {
 	configPath, wired := eslintWiredConfig(p)
 	if !wired {

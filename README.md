@@ -30,9 +30,8 @@ release and builds the binaries. Nothing about a release is decided by hand.
 ## Use
 
 ```
-dharness init      # set the project up, end to end
-dharness sync      # report what init would do, and change nothing
-dharness check     # the commit gate: react-doctor on the staged change, then fallow
+dharness sync      # set the project up, end to end; safe to re-run
+dharness check     # the commit gate: ESLint and react-doctor on the staged change, then fallow
 dharness mutate <path...>   # find out whether these files' tests would notice the code breaking
 dharness mutate --staged    # mutate exactly the lines a staged change added, never installs Stryker
 ```
@@ -70,14 +69,14 @@ determining their runner would require dharness to execute project code. Yarn
 projects with `node_modules` use the npx transient route. Yarn Plug'n'Play must
 switch to `nodeLinker: node-modules` and run `yarn install` before mutation.
 
-`init` installs what is missing, writes the files dharness owns into
+`sync` installs what is missing, writes the files dharness owns into
 `.dharness/`, points the project's own configuration at them with one `extends`
 line, wires the gate into git, and ends by handing the architecture analysis to
 the agent — because zones encode intent, and no tool can read intent off a tree.
 
-`sync` is the same plan, reported instead of applied. It derives everything from
-the repository as it is right now, so re-running it after months reports drift
-rather than a stale record of what once happened.
+It derives everything from the repository as it is right now, so re-running it
+after months converges the project and reports drift rather than a stale record
+of what once happened.
 
 The ESLint layer dharness writes into `.dharness/` declares its own `files`
 matchers for the extensions dharness recognises — `.ts`, `.tsx`, `.js`, `.jsx`,

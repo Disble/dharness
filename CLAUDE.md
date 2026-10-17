@@ -61,7 +61,7 @@ than leaving it to whoever happens to be careful.
 
 ## Before proposing anything structural
 
-`docs/design-principles.md` holds twenty-one numbered principles, each traced to
+`docs/design-principles.md` holds twenty-two numbered principles, each traced to
 the decision that produced it. Cite them by number to accept or reject a change.
 A principle is discussed by pointing at the case that produced it — if the case
 was misread, the principle goes with it.
