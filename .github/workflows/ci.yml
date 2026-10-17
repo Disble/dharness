@@ -61,3 +61,40 @@ jobs:
           git add -A
           "$doctor" --staged --no-dead-code --no-score --no-supply-chain --blocking warning -y
         shell: bash
+
+  # Dependabot's weekly react-doctor bump merges itself once verify passes on
+  # both runners, so keeping the audit current is nobody's chore. A red bump
+  # is not CI upkeep: it means a new react-doctor rule flags JavaScript
+  # dharness generates, which consumers' @latest gates will flag too — a
+  # dharness bug, fixed like any other. The guard is narrow on purpose: a
+  # Dependabot PR that touches anything beyond the audit's two pinned files
+  # is left for a person.
+  automerge-react-doctor-bump:
+    needs: verify
+    if: github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+      PR: ${{ github.event.pull_request.number }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Merge when only the pinned audit files changed
+        run: |
+          files=$(gh pr diff "$PR" --name-only)
+          echo "$files"
+          if [ -z "$files" ]; then
+            echo "No changed files reported; leaving this PR for a person."
+            exit 1
+          fi
+          while IFS= read -r file; do
+            case "$file" in
+              tools/react-doctor-audit/package.json|tools/react-doctor-audit/package-lock.json) ;;
+              *) echo "Not merging: $file is outside the pinned audit files."; exit 1 ;;
+            esac
+          done <<< "$files"
+          gh pr merge "$PR" --squash --match-head-commit "$HEAD_SHA"
+        shell: bash
