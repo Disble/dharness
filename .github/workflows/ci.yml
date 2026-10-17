@@ -41,22 +41,23 @@ jobs:
 
       # The JavaScript sync writes into .dharness/ is dharness's code on the
       # consumer's commit: their gate runs react-doctor over it whenever it is
-      # staged, and they cannot fix what sync rewrites. Audit it the same way
-      # their gate does — staged, @latest — but failing on warnings too, so a
-      # finding is fixed here before it reaches anyone. The bytes do not
+      # staged, and they cannot fix what sync rewrites. Audit it the way their
+      # gate does — staged — but failing on warnings too, so a finding is fixed
+      # here before it reaches anyone. Unlike their gate, the react-doctor here
+      # is pinned by tools/react-doctor-audit's lockfile and installed with
+      # lifecycle scripts off: CI changes only when this repository does, and
+      # Dependabot's weekly bump is where a new rule shows up. The bytes do not
       # depend on the OS, so one runner is enough.
       - name: Audit the generated JavaScript with react-doctor
         if: matrix.os == 'ubuntu-latest'
         run: |
+          npm ci --prefix tools/react-doctor-audit --ignore-scripts --no-audit --no-fund
+          doctor="$PWD/tools/react-doctor-audit/node_modules/.bin/react-doctor"
           audit=$(mktemp -d)
           DHARNESS_GENERATED_JS_DIR="$audit/.dharness" go test ./internal/setup -run TestWriteGeneratedJSForAudit -count=1
           cd "$audit"
           git init -q
           printf '{"name":"generated-js-audit","private":true,"dependencies":{"react":"*"}}\n' > package.json
-          printf 'node_modules/\n' > .gitignore
-          # Installed first with lifecycle scripts off, then run with no
-          # on-demand install: a bare npx could fetch and run install scripts.
-          npm install --no-save --ignore-scripts --no-audit --no-fund react-doctor@latest
           git add -A
-          npx --no-install react-doctor --staged --no-dead-code --no-score --no-supply-chain --blocking warning -y
+          "$doctor" --staged --no-dead-code --no-score --no-supply-chain --blocking warning -y
         shell: bash
