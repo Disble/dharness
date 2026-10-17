@@ -481,6 +481,31 @@ descubrir que no existe. Agregarle una clave a un JSON ajeno es leerlo y decidir
 que es exactamente el trabajo del agente. La rama de más tapaba esa
 simplificación, y venía de leer el 18 como si nombrara un actor del flujo.
 
+### 22. Una regla que dharness escribe no está lista sin quien la ejecute
+
+Cuando `sync` deja configuradas reglas que otra herramienta tiene que correr
+(las `dharness/*` en ESLint, los umbrales de cobertura en Vitest), esa
+herramienta instalada en el proyecto es parte del paso. Si falta, el paso queda
+pendiente: lo dice, nombra el comando que la instala y no se da por cumplido.
+dharness no la instala por su cuenta, porque la versión y el gestor de paquetes
+son del proyecto. Tampoco detiene la corrida: los demás pasos siguen, como manda
+el 20.
+
+Esto no contradice que una herramienta ausente sea "sin medición, no fallo". Eso
+sigue valiendo para las verificaciones: sin ESLint no hay forma de preguntar si
+la config carga, y no se inventa la respuesta. Lo que este principio rechaza es
+el siguiente paso, que `sync` concluya de esa falta de medición que todo está en
+su lugar.
+
+*Salió de:* un proyecto de prueba con dharness 1.13.1 el 16 de octubre de 2026.
+`sync` instaló `dharness-eslint-plugin`, que declara `eslint` como peer
+opcional, y por eso ningún gestor lo instaló. Cableó `eslint.config.js`, se
+saltó la verificación y terminó como si estuviera listo. El gate pasó en verde
+con un aviso de una línea, mientras las seis reglas `dharness/*`, incluido el
+conteo de líneas por archivo, no corrían nunca. Los tiers de cobertura ya
+resolvían el mismo caso al revés: sin Vitest, el paso se niega y nombra el
+comando. Dos criterios para la misma situación.
+
 ---
 
 ## Lo que tienen en común
@@ -489,6 +514,6 @@ Casi todos dicen que no hagamos algo. Ninguno se dedujo de una teoría: cada uno
 apareció cuando una decisión concreta salió mal, o cuando alguien preguntó de
 dónde salía algo que se había dado por bueno.
 
-Y ninguno se queda por respeto. Cualquiera de estos veintiuno se discute
+Y ninguno se queda por respeto. Cualquiera de estos veintidós se discute
 señalando el caso que lo produjo; si el caso está mal leído, el principio se va
 con él, como ya se fueron los tres que resultaron ser aprendizajes.
