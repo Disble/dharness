@@ -617,15 +617,30 @@ func (eslintExtendsStep) Describe(p project.Project) string {
 		eslintConfig, target)
 }
 
-// Delegated answers the full eslint-config-splice refusal matrix: a
-// TypeScript config, a legacy-only project, an unreadable file, a malformed
-// marker pair, or a shape jsconfig.Analyze does not recognise all delegate
-// (ok == true). No config at all, or an existing flat config jsconfig
-// recognises with well-formed markers, does not (ok == false) — the
-// write-if-absent and future splice/replace paths both start from there.
+// Delegated answers the full eslint-config-splice refusal matrix: a project
+// with no local ESLint, a TypeScript config, a legacy-only project, an
+// unreadable file, a malformed marker pair, or a shape jsconfig.Analyze does
+// not recognise all delegate (ok == true). No config at all, or an existing
+// flat config jsconfig recognises with well-formed markers, does not
+// (ok == false) — the write-if-absent and future splice/replace paths both
+// start from there.
+//
+// The missing runner is asked first. The layer is rules only the project's
+// own ESLint runs, so wiring it without one configures rules that never run,
+// and the gate then skips ESLint with a notice while the plan said the step
+// was in place. That is principle 22: the step stays pending and names the
+// install, the same answer coverageTiersStep gives without Vitest. dharness
+// does not install it — the version and the manager are the project's — and
+// the rest of the plan still runs (§20).
 func (eslintExtendsStep) Delegated(p project.Project) (string, bool) {
 	if !p.HasSource() {
 		return "", false
+	}
+
+	if p.LocalBinary(tool.ESLint) == "" {
+		return fmt.Sprintf(
+			"dharness's ESLint layer is rules the project's own ESLint runs, and none is installed\nhere, so wiring %s now would configure rules that never run: the gate\nskips ESLint without a local install. Install it where the project installs things:\n\n    %s %s\n\ndharness never installs it at sync time; the next `dharness sync` wires the layer.",
+			eslintConfig, tool.InstallCommand(p.PackageManager), tool.ESLint), true
 	}
 
 	if path := eslintTypeScriptConfig(p.Source); path != "" {

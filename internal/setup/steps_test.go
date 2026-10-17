@@ -983,6 +983,7 @@ func TestEslintExtendsStepDelegatedRefusalMatrix(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
 			tc.write(t, root)
+			writeLocalESLintBinary(t, root)
 			p := project.Project{Root: root, Source: root}
 
 			why, ok := (eslintExtendsStep{}).Delegated(p)
@@ -999,6 +1000,33 @@ func TestEslintExtendsStepDelegatedRefusalMatrix(t *testing.T) {
 				t.Errorf("Delegated() why = %q, want empty on ok = false", why)
 			}
 		})
+	}
+}
+
+// TestEslintExtendsStepDelegatesUntilTheProjectInstallsESLint pins
+// principle 22: the layer is rules the project's own ESLint runs, so with
+// none installed the step is pending — never "Already in place", never
+// applied — and its reason is the install command in the project's own
+// package manager. The flat config is left untouched, as coverageTiersStep
+// leaves the Vitest config untouched without Vitest.
+func TestEslintExtendsStepDelegatesUntilTheProjectInstallsESLint(t *testing.T) {
+	root := t.TempDir()
+	p := project.Project{Root: root, Source: root, PackageManager: "bun"}
+
+	why, ok := (eslintExtendsStep{}).Delegated(p)
+	if !ok {
+		t.Fatal("Delegated() ok = false with no local ESLint, want the step handed over")
+	}
+	if want := tool.InstallCommand("bun") + " eslint"; !strings.Contains(why, want) {
+		t.Errorf("Delegated() why = %q, want it to name %q", why, want)
+	}
+	if (eslintExtendsStep{}).Satisfied(p) {
+		t.Error("Satisfied() = true with no local ESLint, want the step pending")
+	}
+
+	writeLocalESLintBinary(t, root)
+	if why, ok := (eslintExtendsStep{}).Delegated(p); ok {
+		t.Errorf("Delegated() ok = true once ESLint is installed, why = %q", why)
 	}
 }
 
@@ -1096,6 +1124,7 @@ func TestEslintExtendsStepApplyResolvesFromASplitLayout(t *testing.T) {
 // idempotency shape every other extends step gives.
 func TestEslintExtendsStepApplyResultIsAlreadySatisfied(t *testing.T) {
 	root := t.TempDir()
+	installESLintForTest(t, root)
 	p := project.Project{Root: root, Source: root}
 
 	if (eslintExtendsStep{}).Satisfied(p) {
@@ -1250,6 +1279,7 @@ func TestSecondSyncWritesNothing(t *testing.T) {
 	root := t.TempDir()
 	original := "import next from \"eslint-config-next\";\n\nexport default [\n  ...next,\n];\n"
 	writeStepFixtureFile(t, root, eslintConfig, original)
+	installESLintForTest(t, root)
 	p := project.Project{Root: root, Source: root}
 
 	if _, err := (eslintExtendsStep{}).Apply(p, &Writer{}, io.Discard); err != nil {
@@ -1621,6 +1651,16 @@ func writeLocalESLintBinary(t *testing.T, source string) {
 	}
 }
 
+// installESLintForTest is a project whose own ESLint is installed and loads
+// whatever it is asked about: the binary eslintExtendsStep requires before
+// it wires anything (principle 22), and a runner seam answering every probe
+// with exit 0. Tests about the splice, not the runner, start from here.
+func installESLintForTest(t *testing.T, source string) {
+	t.Helper()
+	writeLocalESLintBinary(t, source)
+	t.Cleanup(runner.SetForTest(func(runner.Command, io.Writer, io.Writer) error { return nil }))
+}
+
 // TestEslintVerifyShortCircuitsOnNoLocalBinary pins the absence row: a
 // project with no ESLint installed produces no measurement and no failure,
 // and never builds a subprocess to find that out. A missing tool is not a
@@ -1800,10 +1840,12 @@ func TestEslintSatisfiedIsFalseWhenTheConfigCannotLoad(t *testing.T) {
 	}
 }
 
-// TestEslintSatisfiedStaysTrueWithoutESLint holds the absence row at the
-// Satisfied end too: no local ESLint is no measurement, never a step that
-// reports itself pending forever on a project that does not lint (§20).
-func TestEslintSatisfiedStaysTrueWithoutESLint(t *testing.T) {
+// TestEslintStepStaysPendingWithoutESLint holds principle 22 at the
+// Satisfied end: a byte-perfect wiring with no local ESLint is rules that
+// never run, so the step is pending, not in place. What §20's absence row
+// still guarantees holds too — no ESLint means no measurement, so no probe
+// is ever started to find that out.
+func TestEslintStepStaysPendingWithoutESLint(t *testing.T) {
 	var commands []runner.Command
 	t.Cleanup(runner.SetForTest(func(cmd runner.Command, _, _ io.Writer) error {
 		commands = append(commands, cmd)
@@ -1818,8 +1860,8 @@ func TestEslintSatisfiedStaysTrueWithoutESLint(t *testing.T) {
 		t.Fatalf("wireEslintExtends() = %v", err)
 	}
 
-	if !(eslintExtendsStep{}).Satisfied(p) {
-		t.Error("Satisfied() = false with no local ESLint; absence is not a broken config")
+	if (eslintExtendsStep{}).Satisfied(p) {
+		t.Error("Satisfied() = true with no local ESLint; the wired rules never run")
 	}
 	if len(commands) != 0 {
 		t.Errorf("Satisfied() ran %d commands with no local binary, want 0", len(commands))

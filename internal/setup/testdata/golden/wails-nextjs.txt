@@ -56,9 +56,15 @@
          extends:
            - .dharness/lefthook.yml
 7  point eslint.config.js at the file dharness owns
-   satisfied=false delegated=false
+   satisfied=false delegated=true
    why |
+     dharness's ESLint layer is rules the project's own ESLint runs, and none is installed
+     here, so wiring eslint.config.js now would configure rules that never run: the gate
+     skips ESLint without a local install. Install it where the project installs things:
 
+         npm install --save-dev eslint
+
+     dharness never installs it at sync time; the next `dharness sync` wires the layer.
    describe |
      ESLint's flat config has no `extends` of its own, so the layer arrives by
      import and spread instead. A new eslint.config.js is written:
@@ -366,21 +372,6 @@ frontend/.fallowrc.json
 {
   "extends": ["../.dharness/fallow.jsonc"]
 }
----
-frontend/eslint.config.js
----
-// dharness:eslint-import begin — rewritten by `dharness sync`; edits here are lost.
-import dharnessPlugin from "dharness-eslint-plugin";
-import dharnessNext from "eslint-config-next/core-web-vitals";
-import dharnessReactDoctor from "eslint-plugin-react-doctor";
-import dharnessLayer from "../.dharness/eslint.config.mjs";
-// dharness:eslint-import end
-
-export default [
-  // dharness:eslint-layer begin — rewritten by `dharness sync`; edits here are lost.
-  ...dharnessLayer({ plugin: dharnessPlugin, dharnessNext, dharnessReactDoctor }),
-  // dharness:eslint-layer end
-];
 ---
 frontend/package-lock.json
 ---
