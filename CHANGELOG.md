@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.13.2](https://github.com/Disble/dharness/compare/v1.13.1...v1.13.2) (2026-10-17)
+
+
+### Bug Fixes
+
+* **setup:** keep the generated JavaScript clean under the gate it installs ([#83](https://github.com/Disble/dharness/issues/83)) ([4ec6da6](https://github.com/Disble/dharness/commit/4ec6da661a35cea102ae98c472df310ebf63ac39))
+* **sync:** keep the ESLint wiring pending until the project installs ESLint ([#82](https://github.com/Disble/dharness/issues/82)) ([f760379](https://github.com/Disble/dharness/commit/f760379981c3ab549546ed4bc8ad05127df6b350))
+
 ## [1.13.1](https://github.com/Disble/dharness/compare/v1.13.0...v1.13.1) (2026-10-15)
 
 
