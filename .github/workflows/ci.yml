@@ -53,6 +53,10 @@ jobs:
           cd "$audit"
           git init -q
           printf '{"name":"generated-js-audit","private":true,"dependencies":{"react":"*"}}\n' > package.json
+          printf 'node_modules/\n' > .gitignore
+          # Installed first with lifecycle scripts off, then run with no
+          # on-demand install: a bare npx could fetch and run install scripts.
+          npm install --no-save --ignore-scripts --no-audit --no-fund react-doctor@latest
           git add -A
-          npx -y react-doctor@latest --staged --no-dead-code --no-score --no-supply-chain --blocking warning -y
+          npx --no-install react-doctor --staged --no-dead-code --no-score --no-supply-chain --blocking warning -y
         shell: bash
