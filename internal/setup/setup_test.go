@@ -525,6 +525,7 @@ func TestSatisfiedStepsCarryTheirOwnDetectionFactNotDescribesFixInstructions(t *
 
 	t.Run("eslintExtendsStep, spliced regions already match", func(t *testing.T) {
 		root := t.TempDir()
+		installESLintForTest(t, root)
 		p := project.Project{Root: root, Source: root}
 		if _, err := (eslintExtendsStep{}).Apply(p, &Writer{}, io.Discard); err != nil {
 			t.Fatalf("Apply() = %v", err)
@@ -623,6 +624,7 @@ func TestDelegatingEslintShapesReportTheirReasonRatherThanSatisfaction(t *testin
 			root := t.TempDir()
 			p := project.Project{Root: root, Source: root}
 			tc.fixture(t, root)
+			installESLintForTest(t, root)
 
 			steps, _, err := run([]Step{eslintExtendsStep{}}, p)
 			if err != nil || len(steps) != 1 {
