@@ -308,12 +308,16 @@ function mergeTiers(baseConfig, resolution, options) {
   const test = { ...(baseConfig.test || {}) };
   const coverage = { ...(test.coverage || {}) };
   const include = consumerInclude(coverage.include);
+  // The Set answers membership; the array keeps the consumer's order and is
+  // what Vitest reads. Both grow together, so neither can drift.
+  const included = new Set(include);
   const thresholds = { ...consumerThresholds(coverage.thresholds) };
   const required = [];
   for (const file of resolution.files) {
     const projectPath = projectFilePath(file.path, options);
     thresholds[projectPath] = mergeThreshold(projectPath, thresholds[projectPath], file.coverage);
-    if (!include.includes(projectPath)) {
+    if (!included.has(projectPath)) {
+      included.add(projectPath);
       include.push(projectPath);
     }
     if (file.coverage > 0) {

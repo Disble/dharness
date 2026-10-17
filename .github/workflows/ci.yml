@@ -38,3 +38,21 @@ jobs:
       - name: Prove the local gate still fails
         run: bash scripts/verify-gate.sh
         shell: bash
+
+      # The JavaScript sync writes into .dharness/ is dharness's code on the
+      # consumer's commit: their gate runs react-doctor over it whenever it is
+      # staged, and they cannot fix what sync rewrites. Audit it the same way
+      # their gate does — staged, @latest — but failing on warnings too, so a
+      # finding is fixed here before it reaches anyone. The bytes do not
+      # depend on the OS, so one runner is enough.
+      - name: Audit the generated JavaScript with react-doctor
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          audit=$(mktemp -d)
+          DHARNESS_GENERATED_JS_DIR="$audit/.dharness" go test ./internal/setup -run TestWriteGeneratedJSForAudit -count=1
+          cd "$audit"
+          git init -q
+          printf '{"name":"generated-js-audit","private":true,"dependencies":{"react":"*"}}\n' > package.json
+          git add -A
+          npx -y react-doctor@latest --staged --no-dead-code --no-score --no-supply-chain --blocking warning -y
+        shell: bash
