@@ -1,0 +1,8 @@
+{
+  "name": "react-doctor-audit",
+  "private": true,
+  "description": "Pins the react-doctor that CI runs over the JavaScript dharness generates. Dependabot bumps it.",
+  "devDependencies": {
+    "react-doctor": "0.9.18"
+  }
+}

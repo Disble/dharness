@@ -1,0 +1,12 @@
+version: 2
+updates:
+  # The react-doctor CI audits dharness's generated JavaScript with. Pinned by
+  # its lockfile so CI only changes when this repository changes; bumped here
+  # weekly, in a PR of its own, so a new rule that flags our files fails that
+  # PR rather than an unrelated one.
+  - package-ecosystem: npm
+    directory: /tools/react-doctor-audit
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
