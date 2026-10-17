@@ -14,7 +14,7 @@ Objective: apply design principle 22 to `eslintExtendsStep`. Branch `fix/sync-es
 
 | ID | Specs | Route | Status | Evidence |
 | --- | --- | --- | --- | --- |
-| T1 | S1-S4 | inline | done | RED `TestEslintExtendsStepDelegatesUntilTheProjectInstallsESLint` (ok=false) → GREEN; gofmt/vet/`go test ./...` green; commit below |
+| T1 | S1-S4 | inline | done | RED `TestEslintExtendsStepDelegatesUntilTheProjectInstallsESLint` (ok=false) → GREEN; gofmt/vet/`go test ./...` green; commit `aefeaa3` |
 | T2 | S5 | inline | done | scratch binary run, see L4 |
 
 ## Log
