@@ -1299,9 +1299,10 @@ func TestFallowExtendsIsDelegatedWhenTheProjectOwnsTheConfig(t *testing.T) {
 	}
 }
 
-// Same rule for lefthook.yml, which belongs to the repository rather than the
-// JS project.
-func TestLefthookExtendsIsDelegatedWhenTheProjectOwnsTheConfig(t *testing.T) {
+// An unrelated config is not a decision: sync adds the safe additive
+// reference instead of delegating merely because the file exists, and the
+// project's own content survives byte for byte underneath it.
+func TestLefthookExtendsAutoIntegratesAnUnrelatedConfig(t *testing.T) {
 	root := t.TempDir()
 	original := []byte("custom: true\n")
 	if err := os.WriteFile(filepath.Join(root, lefthookConfig), original, 0o600); err != nil {
@@ -1309,20 +1310,22 @@ func TestLefthookExtendsIsDelegatedWhenTheProjectOwnsTheConfig(t *testing.T) {
 	}
 	p := project.Project{Root: root, Source: root}
 
-	why, ok := (lefthookExtendsStep{}).Delegated(p)
-	if !ok {
-		t.Fatal("Delegated() ok = false, want true when the project's own lefthook config already exists")
-	}
-	if !strings.Contains(why, lefthookConfig) {
-		t.Errorf("Delegated() why = %q, want it to name %s", why, lefthookConfig)
+	if why, ok := (lefthookExtendsStep{}).Delegated(p); ok {
+		t.Fatalf("Delegated() = %q, true for a config with no Vitest in it", why)
 	}
 
 	if _, err := applySteps([]Step{lefthookExtendsStep{}}, p, io.Discard); err != nil {
 		t.Fatalf("applySteps() = %v", err)
 	}
 	raw, err := os.ReadFile(filepath.Join(root, lefthookConfig))
-	if err != nil || !bytes.Equal(raw, original) {
-		t.Errorf("the project's own config was touched: %q, %v", raw, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "extends:") || !strings.Contains(string(raw), string(original)) {
+		t.Errorf("the additive merge lost the project's own config:\n%s", raw)
+	}
+	if !(lefthookExtendsStep{}).Satisfied(p) {
+		t.Error("Satisfied() = false right after Apply wrote the reference")
 	}
 }
 

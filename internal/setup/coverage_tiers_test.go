@@ -1174,6 +1174,70 @@ func TestCoverageTiersStepRepairsAStaleHuskyLine(t *testing.T) {
 	}
 }
 
+// TestHuskyCompoundGateLineIsLeftToTheAgent is the fourth verifier blocker, at
+// the public boundary a consumer reads: a hook line that runs the check and
+// the consumer's own command is the consumer's text, so a full sync leaves it
+// byte for byte and both writers stay with the agent instead of the coverage
+// step rewriting the line and deleting `bun run test`.
+//
+// The verifier's own shape, which the suite never had: the compound line the
+// reconciliation is about is the whole gate line, and it has to survive the
+// complete plan and not only the analysis.
+func TestHuskyCompoundGateLineIsLeftToTheAgent(t *testing.T) {
+	stubCoverageProcesses(t)
+	fixture := coverageGateAdopted(t, false)
+	p := project.At(fixture.root, fixture.source)
+	writeGoldenFixtureFile(t, fixture.source, "package.json",
+		"{\n  \"name\": \"app\",\n  \"packageManager\": \"npm@10.0.0\",\n  \"scripts\": {\"test\": \"vitest run\"},\n  \"devDependencies\": {\n    \"vitest\": \"^5.0.0\"\n  }\n}\n")
+	if err := os.MkdirAll(filepath.Join(p.Root, ".husky"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	hook := "#!/usr/bin/env sh\n" + gateCommand + " && bun run test\n"
+	writeGoldenFixtureFile(t, p.Root, filepath.ToSlash(huskyHook), hook)
+	before := readFixtureFile(t, fixture.config)
+
+	steps, _, err := Run(p)
+	if err != nil {
+		t.Fatalf("Run() = %v", err)
+	}
+
+	found := map[string]report.StepResult{}
+	for _, step := range steps {
+		if step.ID == (hookInstallStep{}).ID() || step.ID == (coverageTiersStep{}).ID() {
+			found[step.ID] = step
+		}
+	}
+	for _, id := range []string{(hookInstallStep{}).ID(), (coverageTiersStep{}).ID()} {
+		step, ok := found[id]
+		if !ok {
+			t.Fatalf("%s is not in the report at all", id)
+		}
+		if step.Status != report.Delegated {
+			t.Errorf("%s reported %s (wrote %v, error %q), want delegated: the consumer's line is theirs to resolve",
+				id, step.Status, step.Wrote, step.Error)
+		}
+		if !strings.Contains(step.Why, gateCommand+" && bun run test") {
+			t.Errorf("%s reconciliation does not name the concrete line:\n%s", id, step.Why)
+		}
+	}
+
+	if got := readFixtureFile(t, filepath.Join(p.Root, filepath.FromSlash(huskyHook))); got != hook {
+		t.Errorf("a full sync rewrote the consumer's hook:\n%q\nwant\n%q", got, hook)
+	}
+
+	// The conflict is not papered over: while the line is unresolved the
+	// coverage step writes nothing at all — no managed modules, no splice —
+	// because a plan that refuses its own write never also carries bytes.
+	for _, name := range []string{coverageTiersRuntimeName, coverageBridgeName} {
+		if _, err := os.Stat(filepath.Join(p.Root, project.Dir, name)); err == nil {
+			t.Errorf("the delegated coverage step still produced %s", name)
+		}
+	}
+	if got := readFixtureFile(t, fixture.config); got != before {
+		t.Error("the delegated coverage step rewrote the project's own config")
+	}
+}
+
 // TestCoverageTiersHuskyHalfTouchesOnlyTheHookThatCarriesTheCheck is the husky
 // half of this step's own plan, read where hookInstallStep cannot mask it: one
 // step in the plan, so the hook on disk afterwards is this step's work and not

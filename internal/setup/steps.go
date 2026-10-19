@@ -453,8 +453,17 @@ func (lefthookExtendsStep) ID() string {
 }
 
 func (lefthookExtendsStep) Satisfied(p project.Project) bool {
-	return hookManager(p) != managerLefthook ||
-		extendsWired(p.Root, lefthookConfig, ownedFrom(p, p.Root, ownedLefthook))
+	if hookManager(p) != managerLefthook {
+		return true
+	}
+	if !extendsWired(p.Root, lefthookConfig, ownedFrom(p, p.Root, ownedLefthook)) {
+		return false
+	}
+	// A wired config carrying a second complete run duplicates the managed
+	// gate on every commit, so it is not satisfied until the agent resolves
+	// it. Without an active coverage integration there is no managed gate to
+	// duplicate, and the analysis answers clear on its own.
+	return analyzeVitestGate(p).status == vitestGateClear
 }
 
 func (lefthookExtendsStep) Describe(p project.Project) string {
@@ -464,19 +473,15 @@ func (lefthookExtendsStep) Describe(p project.Project) string {
 		lefthookConfig, target)
 }
 
-// Delegated follows the same rule as fallowExtendsStep, for the project's own
-// lefthook.yml instead of .fallowrc.json — with one exception fallow has no
-// equivalent of.
-//
-// `lefthook install` writes a config when it finds none: an example file with
-// every key commented out. A repository that took step 9's advice and set a
-// hook manager up by hand arrives at the next sync carrying one. Refusing it
-// as "belonging to the project" was refusing a file dharness's own delegation
-// caused to exist, and left this step delegated on every run from then on,
-// with nothing a user could do to clear it short of deleting the file.
-//
-// A config with no uncommented key is not a decision. There is nothing to
-// merge with and nothing to lose, so dharness writes.
+// Delegated routes three states. A config with no uncommented key is not a
+// decision, and one already carrying the reference has nothing left to merge
+// — both predate this change. What is new is the middle: a meaningful config
+// without the reference is analyzed before it is refused. No detected conflict
+// in a shape the additive merge can take integrates automatically, preserving
+// every byte the project wrote; a recognized complete Vitest run, an
+// invocation that cannot be resolved, or a shape the merge cannot take is the
+// agent's precise reconciliation instead of a rewritten file. run() asks
+// Satisfied first, so a shape that delegates is never satisfied.
 func (lefthookExtendsStep) Delegated(p project.Project) (string, bool) {
 	if hookManager(p) != managerLefthook {
 		return "", false
@@ -488,18 +493,28 @@ func (lefthookExtendsStep) Delegated(p project.Project) (string, bool) {
 	if err == nil && declaresNothing(raw) {
 		return "", false
 	}
-	// A config already carrying the reference has nothing left to delegate.
-	// Satisfied answers true for it too, and run() asks Satisfied first, so
-	// this branch used to be unreachable — until hookInstallStep started
-	// asking this question directly to decide whether it is waiting on the
-	// same merge. Both answering true is the pair run()'s own contract
-	// forbids.
+	// A config already carrying the reference has nothing left to delegate —
+	// unless the analysis finds a duplicate beside it, which Satisfied
+	// already reports as unsatisfied. A conflict delegates instead of failing
+	// the run, so unrelated setup continues around it.
+	if finding := analyzeVitestGate(p); finding.status != vitestGateClear {
+		return vitestGateReconciliation(p, finding), true
+	}
 	if extendsWired(p.Root, lefthookConfig, ownedFrom(p, p.Root, ownedLefthook)) {
 		return "", false
 	}
-	return fmt.Sprintf(
-		"%s already exists and belongs to the project; adding a key to it is a merge,\nnot a write.",
-		lefthookConfig), true
+	if err != nil {
+		return fmt.Sprintf(
+			"%s could not be read: %s",
+			lefthookConfig, err), true
+	}
+	// An unsupported integration shape is precise reconciliation, never a
+	// rewritten file: the reason names the actual form, not always an
+	// `extends` key.
+	if ok, form := lefthookExtendsSupport(raw); !ok {
+		return unsupportedLefthookShapeReason(p, form), true
+	}
+	return "", false
 }
 
 // declaresNothing reports whether raw is comments and blank lines all the way
@@ -522,6 +537,25 @@ func declaresNothing(raw []byte) bool {
 }
 
 func (lefthookExtendsStep) Apply(p project.Project, w *Writer, _ io.Writer) (Facts, error) {
+	if _, err := os.Stat(filepath.Join(p.Root, lefthookConfig)); errors.Is(err, os.ErrNotExist) {
+		return Facts{}, wireLefthookExtends(p, w)
+	}
+	raw, err := os.ReadFile(filepath.Join(p.Root, lefthookConfig))
+	if err != nil {
+		return Facts{}, fmt.Errorf("read %s before wiring: %w", lefthookConfig, err)
+	}
+	// The contract assertions Delegated already guards: Apply never merges a
+	// conflict the agent has not resolved, damages a shape the additive merge
+	// cannot take, or writes a second reference over the first.
+	if finding := analyzeVitestGate(p); finding.status != vitestGateClear {
+		return Facts{}, fmt.Errorf("%s", vitestGateReconciliation(p, finding))
+	}
+	if extendsWired(p.Root, lefthookConfig, ownedFrom(p, p.Root, ownedLefthook)) {
+		return Facts{}, nil
+	}
+	if ok, form := lefthookExtendsSupport(raw); !ok {
+		return Facts{}, fmt.Errorf("%s", unsupportedLefthookShapeReason(p, form))
+	}
 	return Facts{}, wireLefthookExtends(p, w)
 }
 
@@ -1428,7 +1462,12 @@ func (hookInstallStep) Satisfied(p project.Project) bool {
 	case managerLefthook:
 		return gateInstalled(p)
 	case managerHusky:
-		return huskyWired(p)
+		// The gate line alone is not the whole answer: a hook that also
+		// runs a second complete suite duplicates the managed gate on
+		// every commit, so it stays unsatisfied until the agent leaves one
+		// gate. run() then asks Delegated, which hands the reconciliation
+		// over instead of appending over the duplicate.
+		return huskyWired(p) && analyzeVitestGate(p).status == vitestGateClear
 	default:
 		// Nothing answers, so there is nothing dharness can satisfy on its
 		// own. This is an open decision, not a default dharness gets to
@@ -1461,9 +1500,17 @@ func (hookInstallStep) Describe(p project.Project) string {
 // that merge to the project, this step is waiting on the same decision and
 // says so, instead of running a command that cannot work and failing the run
 // over an answer nobody has given yet.
+//
+// The husky branch carries one of its own: the hook is the project's own
+// script, so a reachable complete Vitest run — or one that cannot be resolved
+// — keeps the gate unwired until the agent leaves one complete gate, the
+// managed coverage-tier invocation. Anything else still appends in place.
 func (hookInstallStep) Delegated(p project.Project) (string, bool) {
 	switch hookManager(p) {
 	case managerHusky:
+		if finding := analyzeVitestGate(p); finding.status != vitestGateClear {
+			return vitestGateReconciliation(p, finding), true
+		}
 		return "", false
 	case managerLefthook:
 		if _, delegated := (lefthookExtendsStep{}).Delegated(p); delegated {

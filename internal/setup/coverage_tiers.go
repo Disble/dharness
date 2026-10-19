@@ -260,12 +260,21 @@ func planCoverageTiers(p project.Project) coverageTiersPlan {
 	}
 
 	if hookManager(p) == managerHusky {
-		hook, err := coverageTiersHuskyHook(p)
+		hook, conflict, err := coverageTiersHuskyHook(p)
 		if err != nil {
 			return coverageTiersPlan{conflict: err.Error()}
 		}
-		// nil means there is no hook file yet: the check line belongs to
-		// hookInstallStep, and this step never writes it.
+		// A gate line carrying the consumer's own command is a conflict this
+		// step cannot resolve by writing: the bytes stay as found and the
+		// agent gets the line, exactly as step 10 does for a detected
+		// duplicate. A plan that says "dharness will not write this" never also
+		// says "here are the bytes" (§20).
+		if conflict != "" {
+			return coverageTiersPlan{conflict: conflict}
+		}
+		// nil means there is no hook file yet, or no gate line of dharness's
+		// own to chain onto: the check line belongs to hookInstallStep, and
+		// this step never writes it.
 		if hook != nil {
 			files = append(files, coverageTiersFile{path: filepath.Join(p.Root, filepath.FromSlash(huskyHook)), data: hook})
 		}
@@ -569,7 +578,8 @@ func huskyGateLine(p project.Project) string {
 }
 
 // convergeHuskyGate returns body with the line this repository's gate runs, and
-// whether body carried a check line to converge onto.
+// whether body carried a gate line that is entirely dharness's own to converge
+// onto.
 //
 // It is one line rather than two appended ones because of what a shell script
 // does with a failing command: husky's hook is not run with `set -e`, so a
@@ -583,6 +593,13 @@ func huskyGateLine(p project.Project) string {
 // manager or moved its JS root has the stale line replaced rather than joined by
 // a second one, and every other line — husky's own header, the project's
 // commands — is carried through untouched.
+//
+// Only a line that is entirely dharness's own rendered gate converges: the
+// check by itself, or the check chained with a coverage job behind dharness's
+// own marker. A line that runs the check beside the consumer's own command is
+// the consumer's text, and rewriting it here is how a sync used to delete
+// `bun run test` from `dharness check && bun run test`. Such a hook has no
+// gate line to converge onto, and the caller hands it to the agent instead.
 func convergeHuskyGate(p project.Project, body string) (string, bool) {
 	pieces := strings.SplitAfter(body, "\n")
 
@@ -591,7 +608,7 @@ func convergeHuskyGate(p project.Project, body string) (string, bool) {
 		if strings.Contains(piece, coverageHuskyMarker) && owned == -1 {
 			owned = i
 		}
-		if strings.Contains(piece, gateCommand) && check == -1 {
+		if huskyOwnedGateLine(piece) && check == -1 {
 			check = i
 		}
 	}
@@ -618,28 +635,100 @@ func convergeHuskyGate(p project.Project, body string) (string, bool) {
 	return out.String(), true
 }
 
+// huskyOwnedGateLine reports whether one husky hook line is entirely this
+// repository's own rendered gate: the check by itself — the line
+// hookInstallStep writes before the tiers ever activated — or the check
+// chained with a coverage job this file rendered, which its own marker
+// identifies. The marker is the ownership claim, so a stale line this step
+// wrote is still its own to replace; text beside the check that carries no
+// marker is the consumer's, and dharness never deletes or rewrites it.
+//
+// The boundary this accepts knowingly: a consumer who writes dharness's own
+// marker onto a line of their own makes that line indistinguishable from one
+// this file rendered, and it converges like any other stale owned line. The
+// marker is dharness's name in the file, not a guess about the consumer's
+// intent.
+func huskyOwnedGateLine(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == gateCommand {
+		return true
+	}
+	rest, ok := strings.CutPrefix(trimmed, gateCommand+" && ")
+	if !ok {
+		return false
+	}
+	return strings.HasSuffix(strings.TrimSpace(rest), coverageHuskyMarker)
+}
+
+// huskyConsumerGateLine names the first active hook line that runs the check
+// while carrying consumer text of its own, or "" when every check-carrying
+// line is one dharness rendered. Comments and the shebang are not commands, so
+// a commented-out check is not this.
+func huskyConsumerGateLine(body string) string {
+	for _, line := range huskyHookCommands([]byte(body)) {
+		if strings.Contains(line, gateCommand) && !huskyOwnedGateLine(line) {
+			return line
+		}
+	}
+	return ""
+}
+
+// huskyGateConflict is the reason the coverage run stays with the agent: the
+// hook's gate line is the consumer's own text, so chaining the coverage job
+// onto it would delete the command sitting beside the check. Nothing is
+// written, and the resolution is the one step 10 already hands over for a
+// detected conflict — one complete Vitest testing gate, the managed
+// coverage-tier invocation — because it is the same conflict.
+func huskyGateConflict(p project.Project, line string) string {
+	if finding := analyzeVitestGate(p); finding.status != vitestGateClear {
+		return vitestGateReconciliation(p, finding)
+	}
+	entry := "vitest run --coverage --config " + coverageBridgeName
+	if resolved, err := coverageTiersEntryFromSource(p); err == nil {
+		entry = "vitest run --coverage --config " + resolved
+	}
+	return fmt.Sprintf(
+		"%s runs `%s`, a line that carries the consumer's own command beside the gate.\n"+
+			"There is exactly one complete Vitest testing gate: the managed coverage-tier\n"+
+			"invocation (%s). dharness never deletes or rewrites consumer text, so it will\n"+
+			"not rewrite that line to chain the coverage run onto it. Leave one complete\n"+
+			"gate yourself — the consumer's command on its own line, or removed if it is a\n"+
+			"second full suite — then run `dharness sync` again. Nothing is written for the\n"+
+			"coverage tiers until then.",
+		huskyHook, line, entry)
+}
+
 // coverageTiersHuskyHook returns the husky hook's bytes with the coverage run
-// chained onto the check line, or nil when there is no check line to chain it
-// to — and nil when nothing activated the tiers, because a hook that runs only
-// the check is already what this repository's own state renders.
-func coverageTiersHuskyHook(p project.Project) ([]byte, error) {
+// chained onto the gate line, or nil when there is no gate line dharness owns
+// to chain it to — and nil when nothing activated the tiers, because a hook
+// that runs only the check is already what this repository's own state
+// renders.
+//
+// A hook whose gate line carries consumer text resolves to a reason instead:
+// dharness may not rewrite that line, and it may not quietly leave the
+// coverage run out either, so the step goes to the agent with the concrete
+// line and writes nothing.
+func coverageTiersHuskyHook(p project.Project) ([]byte, string, error) {
 	path := filepath.Join(p.Root, filepath.FromSlash(huskyHook))
 	existing, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
+		return nil, "", nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", huskyHook, err)
+		return nil, "", fmt.Errorf("read %s: %w", huskyHook, err)
 	}
 
 	if coverageTiersHuskyCommand(p) == "" {
-		return nil, nil
+		return nil, "", nil
 	}
 	converged, ok := convergeHuskyGate(p, string(existing))
 	if !ok {
-		return nil, nil
+		if line := huskyConsumerGateLine(string(existing)); line != "" {
+			return nil, huskyGateConflict(p, line), nil
+		}
+		return nil, "", nil
 	}
-	return []byte(converged), nil
+	return []byte(converged), "", nil
 }
 
 // coverageBridgeModule renders the entry the native run is pointed at.

@@ -1439,24 +1439,14 @@ const lefthookScaffold = `# EXAMPLE USAGE:
 // documenting its own format, and there is no reason for dharness to delete
 // them just because it now owns the first two lines.
 func TestLefthookExtendsStepWritesIntoLefthooksOwnScaffold(t *testing.T) {
-	root := t.TempDir()
-	writeStepFixtureFile(t, root, lefthookConfig, lefthookScaffold)
-	p := project.Project{Root: root, Source: root}
+	p := lefthookExtendsFixture(t, lefthookScaffold)
 
 	if why, delegated := (lefthookExtendsStep{}).Delegated(p); delegated {
 		t.Fatalf("Delegated() = %q, true for a config that is entirely commented out", why)
 	}
 
-	if _, err := (lefthookExtendsStep{}).Apply(p, &Writer{}, io.Discard); err != nil {
-		t.Fatalf("Apply() = %v", err)
-	}
-
-	raw, err := os.ReadFile(filepath.Join(root, lefthookConfig))
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := string(raw)
-	if !strings.Contains(got, "extends:") || !strings.Contains(got, ownedFrom(p, root, ownedLefthook)) {
+	got := applyLefthookExtendsStep(t, p)
+	if !strings.Contains(got, "extends:") || !strings.Contains(got, ownedFrom(p, p.Root, ownedLefthook)) {
 		t.Errorf("Apply() did not point the config at the file dharness owns:\n%s", got)
 	}
 	if !strings.Contains(got, "# EXAMPLE USAGE:") {
@@ -1467,21 +1457,57 @@ func TestLefthookExtendsStepWritesIntoLefthooksOwnScaffold(t *testing.T) {
 	}
 }
 
-// TestLefthookExtendsStepStillRefusesAConfigWithContent is the other side:
-// one uncommented key is a decision the project made, and adding to it is a
-// merge dharness does not get to perform. The scaffold case must not widen
-// into this one.
-func TestLefthookExtendsStepStillRefusesAConfigWithContent(t *testing.T) {
+// TestLefthookExtendsStepIntegratesAroundUnrelatedJobs is the new middle:
+// one uncommented key used to be a decision on its own, and adding to it a
+// merge dharness never performs. Now a hook carrying only unrelated jobs is
+// analyzed and integrated automatically, preserving every byte the project
+// wrote — the scaffold's comments, the pre-push job, all of it.
+func TestLefthookExtendsStepIntegratesAroundUnrelatedJobs(t *testing.T) {
+	p := lefthookExtendsFixture(t, lefthookScaffold+"\npre-push:\n  commands:\n    audit:\n      run: bun audit\n")
+
+	if why, delegated := (lefthookExtendsStep{}).Delegated(p); delegated {
+		t.Fatalf("Delegated() = %q, true for a hook with no Vitest in it", why)
+	}
+
+	got := applyLefthookExtendsStep(t, p)
+	if !strings.Contains(got, ownedFrom(p, p.Root, ownedLefthook)) {
+		t.Errorf("Apply() did not point the config at the file dharness owns:\n%s", got)
+	}
+	for _, kept := range []string{"# EXAMPLE USAGE:", "bun audit"} {
+		if !strings.Contains(got, kept) {
+			t.Errorf("Apply() dropped the consumer's own %q:\n%s", kept, got)
+		}
+	}
+	if !(lefthookExtendsStep{}).Satisfied(p) {
+		t.Error("Satisfied() = false right after Apply wrote the reference")
+	}
+}
+
+// TestLefthookExtendsStepStillRefusesACompleteVitestDuplicate keeps the
+// refusal half: a reachable complete run is the agent's reconciliation, not
+// an automatic merge. Nothing is written and nothing is renamed.
+func TestLefthookExtendsStepStillRefusesACompleteVitestDuplicate(t *testing.T) {
 	root := t.TempDir()
-	writeStepFixtureFile(t, root, lefthookConfig, lefthookScaffold+"\npre-push:\n  commands:\n    audit:\n      run: bun audit\n")
+	writeStepFixtureFile(t, root, "coverage-tiers.json", "{}\n")
+	original := lefthookScaffold + "\npre-commit:\n  commands:\n    test:\n      run: npx --no-install vitest run\n"
+	writeStepFixtureFile(t, root, lefthookConfig, original)
 	p := project.Project{Root: root, Source: root}
 
 	why, delegated := (lefthookExtendsStep{}).Delegated(p)
 	if !delegated {
-		t.Fatal("Delegated() = false for a config carrying a job the project wrote")
+		t.Fatal("Delegated() = false for a config running the complete suite beside the managed gate")
 	}
-	if !strings.Contains(why, "merge") {
-		t.Errorf("Delegated() = %q, want it to say why it will not write", why)
+	for _, want := range []string{lefthookConfig, "vitest run", "coverage"} {
+		if !strings.Contains(why, want) {
+			t.Errorf("reconciliation does not name %q:\n%s", want, why)
+		}
+	}
+	if _, err := (lefthookExtendsStep{}).Apply(p, &Writer{}, io.Discard); err == nil {
+		t.Error("Apply() = nil for a duplicate the agent has not resolved")
+	}
+	raw, _ := os.ReadFile(filepath.Join(root, lefthookConfig))
+	if string(raw) != original {
+		t.Errorf("the refused run touched the consumer's config:\n%s", raw)
 	}
 }
 
@@ -1548,9 +1574,12 @@ func TestGateInstalledFollowsCoreHooksPath(t *testing.T) {
 // dependency between steps 5 and 9, found by running the binary rather than
 // the suite.
 //
-// A project that owns its lefthook.yml gets step 5 delegated: adding the
-// reference is a merge, and dharness does not merge. Step 9 then ran
-// `lefthook install` anyway, which succeeds and installs nothing, and the
+// A project whose lefthook.yml step 5 hands to the agent gets step 9
+// delegated too: `lefthook install` reads the project's lefthook.yml, so a
+// config carrying a duplicate the agent has not resolved installs nothing
+// whatever this step does. (The fixture duplicates the complete Vitest run,
+// which is what still delegates step 5; an unrelated job alone would now
+// integrate automatically.) Step 9 then ran `lefthook install` anyway, which succeeds and installs nothing, and the
 // postcondition check turned that into a failed run — rolling back the
 // install, the owned files and the ESLint layer over a decision the project
 // simply had not made yet, and taking step 5's own instructions down with
@@ -1561,7 +1590,8 @@ func TestGateInstalledFollowsCoreHooksPath(t *testing.T) {
 // the reference and a hook manager that still installs nothing.
 func TestHookInstallStepDelegatesWhenTheConfigItNeedsIsDelegated(t *testing.T) {
 	root := t.TempDir()
-	writeStepFixtureFile(t, root, lefthookConfig, "pre-push:\n  commands:\n    audit:\n      run: bun audit\n")
+	writeStepFixtureFile(t, root, "coverage-tiers.json", "{}\n")
+	writeStepFixtureFile(t, root, lefthookConfig, "pre-commit:\n  commands:\n    test:\n      run: npx --no-install vitest run\n")
 	p := project.Project{Root: root, Source: root}
 
 	if _, delegated := (lefthookExtendsStep{}).Delegated(p); !delegated {
@@ -2313,4 +2343,28 @@ func TestRulesThresholdsStepIsRegisteredRightAfterTheOwnedFilesStep(t *testing.T
 		return
 	}
 	t.Fatal("rulesThresholdsStep is not registered in Plan()")
+}
+
+// lefthookExtendsFixture writes one hook into a fresh root and returns the
+// project, so a scenario asserts the delegation answer it expects before the
+// merge runs.
+func lefthookExtendsFixture(t *testing.T, hook string) project.Project {
+	t.Helper()
+	root := t.TempDir()
+	writeStepFixtureFile(t, root, lefthookConfig, hook)
+	return project.Project{Root: root, Source: root}
+}
+
+// applyLefthookExtendsStep runs the merge the way a sync does and returns the
+// config's bytes afterwards.
+func applyLefthookExtendsStep(t *testing.T, p project.Project) string {
+	t.Helper()
+	if _, err := (lefthookExtendsStep{}).Apply(p, &Writer{}, io.Discard); err != nil {
+		t.Fatalf("Apply() = %v", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(p.Root, lefthookConfig))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw)
 }
