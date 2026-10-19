@@ -34,6 +34,16 @@ func writeVitestGateProject(t *testing.T, files map[string]string) project.Proje
 	return project.Project{Root: root, Source: root, PackageManager: "npm"}
 }
 
+// vitestGateHookFixture is the shape these scenarios share: one hook and a
+// manifest declaring no scripts, so the analysis has nothing else to read.
+func vitestGateHookFixture(t *testing.T, hook string) project.Project {
+	t.Helper()
+	return writeVitestGateProject(t, map[string]string{
+		lefthookConfig: hook,
+		"package.json": "{\"name\":\"app\"}\n",
+	})
+}
+
 // TestLefthookExtendsAutoIntegratesAnUnrelatedHook is the S2 plain case: a
 // hook carrying only unrelated checks is not a decision, so sync adds the
 // safe additive reference instead of delegating merely because the file
@@ -41,33 +51,24 @@ func writeVitestGateProject(t *testing.T, files map[string]string) project.Proje
 // second run finds nothing left to do.
 func TestLefthookExtendsAutoIntegratesAnUnrelatedHook(t *testing.T) {
 	original := "pre-commit:\n  commands:\n    lint:\n      run: yarn eslint {staged_files}\n\npre-push:\n  commands:\n    audit:\n      run: bun audit\n"
-	p := writeVitestGateProject(t, map[string]string{
-		lefthookConfig: original,
-		"package.json": "{\"name\":\"app\"}\n",
-	})
+	p := vitestGateHookFixture(t, original)
 
 	if why, delegated := (lefthookExtendsStep{}).Delegated(p); delegated {
 		t.Fatalf("Delegated() = %q, true for a hook with no Vitest in it", why)
 	}
 
-	if _, err := (lefthookExtendsStep{}).Apply(p, &Writer{}, io.Discard); err != nil {
-		t.Fatalf("Apply() = %v", err)
-	}
-	raw, err := os.ReadFile(filepath.Join(p.Root, lefthookConfig))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(raw), "extends:") || !strings.Contains(string(raw), ownedFrom(p, p.Root, ownedLefthook)) {
+	raw := applyLefthookExtendsStep(t, p)
+	if !strings.Contains(raw, "extends:") || !strings.Contains(raw, ownedFrom(p, p.Root, ownedLefthook)) {
 		t.Errorf("Apply() did not point the config at the file dharness owns:\n%s", raw)
 	}
-	if !strings.Contains(string(raw), original) {
+	if !strings.Contains(raw, original) {
 		t.Errorf("Apply() did not preserve the consumer's hook byte for byte:\n%s", raw)
 	}
 
 	if !(lefthookExtendsStep{}).Satisfied(p) {
 		t.Error("Satisfied() = false right after Apply wrote the reference")
 	}
-	before := string(raw)
+	before := raw
 	if _, err := (lefthookExtendsStep{}).Apply(p, &Writer{}, io.Discard); err != nil {
 		t.Fatalf("second Apply() = %v", err)
 	}
@@ -765,50 +766,21 @@ func TestUnsupportedDocumentShapesRefuseWithoutRewriting(t *testing.T) {
 		config string
 		reason string
 	}{
-		{
-			name:   "explicit document marker",
-			config: "---\npre-commit:\n  commands:\n    lint:\n      run: npx eslint .\n",
-			reason: "document",
-		},
-		{
-			name:   "flow mapping",
-			config: "{pre-commit: {commands: {lint: {run: \"npx eslint .\"}}}}\n",
-			reason: "mapping",
-		},
-		{
-			name:   "flow sequence",
-			config: "[pre-commit]\n",
-			reason: "flow or sequence",
-		},
-		{
-			// The comment is skipped, so the flow sequence is still the
-			// document's first content line and is refused as that shape — not
-			// as the generic "not a block mapping key" the comment would become
-			// if it were read as one.
-			name:   "flow sequence after a comment",
-			config: "# hooks\n[pre-commit]\n",
-			reason: "flow or sequence",
-		},
-		{
-			name:   "sequence document",
-			config: "- run: npx eslint .\n",
-			reason: "flow or sequence",
-		},
-		{
-			name:   "bare sequence item",
-			config: "-\n",
-			reason: "flow or sequence",
-		},
-		{
-			name:   "document marker after a comment",
-			config: "# hooks\n---\npre-commit:\n  commands:\n    lint:\n      run: npx eslint .\n",
-			reason: "document",
-		},
-		{
-			name:   "document marker after a blank line",
-			config: "\n---\npre-commit:\n  commands:\n    lint:\n      run: npx eslint .\n",
-			reason: "document",
-		},
+		// Fields are positional: name, config, reason. One line per shape keeps
+		// the shapes readable without repeating a field label under every
+		// entry, which the duplication gate counts as repeated code.
+		{"explicit document marker", "---\npre-commit:\n  commands:\n    lint:\n      run: npx eslint .\n", "document"},
+		{"flow mapping", "{pre-commit: {commands: {lint: {run: \"npx eslint .\"}}}}\n", "mapping"},
+		{"flow sequence", "[pre-commit]\n", "flow or sequence"},
+		// The comment is skipped, so the flow sequence is still the document's
+		// first content line and is refused as that shape — not as the generic
+		// "not a block mapping key" the comment would become if it were read as
+		// one.
+		{"flow sequence after a comment", "# hooks\n[pre-commit]\n", "flow or sequence"},
+		{"sequence document", "- run: npx eslint .\n", "flow or sequence"},
+		{"bare sequence item", "-\n", "flow or sequence"},
+		{"document marker after a comment", "# hooks\n---\npre-commit:\n  commands:\n    lint:\n      run: npx eslint .\n", "document"},
+		{"document marker after a blank line", "\n---\npre-commit:\n  commands:\n    lint:\n      run: npx eslint .\n", "document"},
 	}
 
 	for _, tc := range cases {
@@ -1124,22 +1096,13 @@ func TestRootIdentityAndWorkingDirectory(t *testing.T) {
 // the reference is added and every byte the project wrote survives.
 func TestLefthookExtendsIntegratesAroundANestedExtendsKey(t *testing.T) {
 	original := "pre-commit:\n extends: ./shared-job.yml\n commands:\n  lint:\n   run: npx --no-install eslint .\n"
-	p := writeVitestGateProject(t, map[string]string{
-		lefthookConfig: original,
-		"package.json": "{\"name\":\"app\"}\n",
-	})
+	p := vitestGateHookFixture(t, original)
 
 	if why, delegated := (lefthookExtendsStep{}).Delegated(p); delegated {
 		t.Fatalf("Delegated() = %q, true for a nested `extends` key that is not the document's own", why)
 	}
-	if _, err := (lefthookExtendsStep{}).Apply(p, &Writer{}, io.Discard); err != nil {
-		t.Fatalf("Apply() = %v", err)
-	}
-	raw, err := os.ReadFile(filepath.Join(p.Root, lefthookConfig))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(raw), ownedFrom(p, p.Root, ownedLefthook)) || !strings.Contains(string(raw), original) {
+	raw := applyLefthookExtendsStep(t, p)
+	if !strings.Contains(raw, ownedFrom(p, p.Root, ownedLefthook)) || !strings.Contains(raw, original) {
 		t.Errorf("the additive merge lost the project's own config:\n%s", raw)
 	}
 	if !(lefthookExtendsStep{}).Satisfied(p) {

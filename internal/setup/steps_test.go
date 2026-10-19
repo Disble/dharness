@@ -1439,24 +1439,14 @@ const lefthookScaffold = `# EXAMPLE USAGE:
 // documenting its own format, and there is no reason for dharness to delete
 // them just because it now owns the first two lines.
 func TestLefthookExtendsStepWritesIntoLefthooksOwnScaffold(t *testing.T) {
-	root := t.TempDir()
-	writeStepFixtureFile(t, root, lefthookConfig, lefthookScaffold)
-	p := project.Project{Root: root, Source: root}
+	p := lefthookExtendsFixture(t, lefthookScaffold)
 
 	if why, delegated := (lefthookExtendsStep{}).Delegated(p); delegated {
 		t.Fatalf("Delegated() = %q, true for a config that is entirely commented out", why)
 	}
 
-	if _, err := (lefthookExtendsStep{}).Apply(p, &Writer{}, io.Discard); err != nil {
-		t.Fatalf("Apply() = %v", err)
-	}
-
-	raw, err := os.ReadFile(filepath.Join(root, lefthookConfig))
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := string(raw)
-	if !strings.Contains(got, "extends:") || !strings.Contains(got, ownedFrom(p, root, ownedLefthook)) {
+	got := applyLefthookExtendsStep(t, p)
+	if !strings.Contains(got, "extends:") || !strings.Contains(got, ownedFrom(p, p.Root, ownedLefthook)) {
 		t.Errorf("Apply() did not point the config at the file dharness owns:\n%s", got)
 	}
 	if !strings.Contains(got, "# EXAMPLE USAGE:") {
@@ -1473,24 +1463,14 @@ func TestLefthookExtendsStepWritesIntoLefthooksOwnScaffold(t *testing.T) {
 // analyzed and integrated automatically, preserving every byte the project
 // wrote — the scaffold's comments, the pre-push job, all of it.
 func TestLefthookExtendsStepIntegratesAroundUnrelatedJobs(t *testing.T) {
-	root := t.TempDir()
-	writeStepFixtureFile(t, root, lefthookConfig, lefthookScaffold+"\npre-push:\n  commands:\n    audit:\n      run: bun audit\n")
-	p := project.Project{Root: root, Source: root}
+	p := lefthookExtendsFixture(t, lefthookScaffold+"\npre-push:\n  commands:\n    audit:\n      run: bun audit\n")
 
 	if why, delegated := (lefthookExtendsStep{}).Delegated(p); delegated {
 		t.Fatalf("Delegated() = %q, true for a hook with no Vitest in it", why)
 	}
 
-	if _, err := (lefthookExtendsStep{}).Apply(p, &Writer{}, io.Discard); err != nil {
-		t.Fatalf("Apply() = %v", err)
-	}
-
-	raw, err := os.ReadFile(filepath.Join(root, lefthookConfig))
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := string(raw)
-	if !strings.Contains(got, ownedFrom(p, root, ownedLefthook)) {
+	got := applyLefthookExtendsStep(t, p)
+	if !strings.Contains(got, ownedFrom(p, p.Root, ownedLefthook)) {
 		t.Errorf("Apply() did not point the config at the file dharness owns:\n%s", got)
 	}
 	for _, kept := range []string{"# EXAMPLE USAGE:", "bun audit"} {
@@ -2363,4 +2343,28 @@ func TestRulesThresholdsStepIsRegisteredRightAfterTheOwnedFilesStep(t *testing.T
 		return
 	}
 	t.Fatal("rulesThresholdsStep is not registered in Plan()")
+}
+
+// lefthookExtendsFixture writes one hook into a fresh root and returns the
+// project, so a scenario asserts the delegation answer it expects before the
+// merge runs.
+func lefthookExtendsFixture(t *testing.T, hook string) project.Project {
+	t.Helper()
+	root := t.TempDir()
+	writeStepFixtureFile(t, root, lefthookConfig, hook)
+	return project.Project{Root: root, Source: root}
+}
+
+// applyLefthookExtendsStep runs the merge the way a sync does and returns the
+// config's bytes afterwards.
+func applyLefthookExtendsStep(t *testing.T, p project.Project) string {
+	t.Helper()
+	if _, err := (lefthookExtendsStep{}).Apply(p, &Writer{}, io.Discard); err != nil {
+		t.Fatalf("Apply() = %v", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(p.Root, lefthookConfig))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw)
 }
