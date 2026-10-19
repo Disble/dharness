@@ -995,6 +995,9 @@ func TestLefthookExtendsManagerFormMatrix(t *testing.T) {
 		{name: "a bare manager runs nothing", run: "npm", scripts: `{"test":"vitest run"}`, want: vitestGateClear},
 		{name: "a bare run cannot be parsed", run: "npm run", scripts: `{"test":"vitest run"}`, want: vitestGateUnresolved, reason: "cannot be parsed"},
 		{name: "extra arguments cannot be parsed", run: "npm run test --silent", scripts: `{"test":"vitest run"}`, want: vitestGateUnresolved, reason: "cannot be parsed"},
+		{name: "a flag is not a script name", run: "npm run --silent", scripts: `{"test":"vitest run"}`, want: vitestGateUnresolved, reason: "cannot be parsed"},
+		{name: "an exec prefix is read through", run: "pnpm exec vitest run", scripts: `{"test":"vitest run"}`, want: vitestGateEquivalent},
+		{name: "an exec prefix classifies the script it runs", run: "pnpm exec npm run test", scripts: `{"test":"vitest run"}`, want: vitestGateEquivalent, through: "test"},
 	}
 
 	for _, tc := range cases {
@@ -1179,6 +1182,154 @@ func TestCompoundCommandsKeepTheFirstUncertainInvocation(t *testing.T) {
 				t.Errorf("analyzeVitestGate() through = %q, want %q", got.through, tc.through)
 			}
 		})
+	}
+}
+
+// TestLefthookLauncherScriptIsUncertainRatherThanIntegrated is the first
+// verifier blocker, at the public boundary a consumer reads: `bun
+// scripts/check.mjs` executes a file whose contents dharness never reads,
+// exactly like `node scripts/check.mjs`, so the answer is uncertainty handed
+// to the agent — never the unrelated-command default the script-manager
+// branch used to answer with for the `bun` spelling.
+func TestLefthookLauncherScriptIsUncertainRatherThanIntegrated(t *testing.T) {
+	cases := []struct {
+		name   string
+		run    string
+		target string
+	}{
+		{name: "bun runs a file", run: "bun scripts/check.mjs", target: "scripts/check.mjs"},
+		{name: "node runs a file", run: "node scripts/check.mjs", target: "scripts/check.mjs"},
+		{name: "bun runs a file after a flag", run: "bun --bun scripts/check.mjs", target: "scripts/check.mjs"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := writeVitestGateProject(t, map[string]string{
+				lefthookConfig: "pre-commit:\n  commands:\n    check:\n      run: " + tc.run + "\n",
+				"package.json": "{\"name\":\"app\"}\n",
+			})
+
+			got := analyzeVitestGate(p)
+			if got.status != vitestGateUnresolved {
+				t.Fatalf("analyzeVitestGate(%q) status = %s, want uncertainty: a launcher runs a file this analysis never reads",
+					tc.run, gateStatusName(got.status))
+			}
+			if !strings.Contains(got.reason, tc.target) {
+				t.Errorf("analyzeVitestGate(%q) reason = %q, want it to name %q", tc.run, got.reason, tc.target)
+			}
+
+			why, delegated := (lefthookExtendsStep{}).Delegated(p)
+			if !delegated {
+				t.Fatalf("Delegated() = false for %q, which cannot be resolved to a concrete invocation", tc.run)
+			}
+			for _, want := range []string{tc.run, "uncertain"} {
+				if !strings.Contains(why, want) {
+					t.Errorf("reconciliation does not name %q:\n%s", want, why)
+				}
+			}
+
+			if _, err := (lefthookExtendsStep{}).Apply(p, &Writer{}, io.Discard); err == nil {
+				t.Error("Apply() = nil for an invocation the analysis cannot resolve")
+			}
+			raw, _ := os.ReadFile(filepath.Join(p.Root, lefthookConfig))
+			if !strings.Contains(string(raw), tc.run) {
+				t.Errorf("the refused run rewrote the consumer's hook:\n%s", raw)
+			}
+		})
+	}
+}
+
+// TestLefthookManagerExecPrefixRunsTheCommandItNames is the second verifier
+// blocker: `pnpm exec vitest run` runs Vitest through the manager's own `exec`
+// (or `x`) prefix, so it is a complete run of the same suite and takes the
+// reconciliation route exactly like the direct form does. The consumer's
+// config survives the delegated run byte for byte.
+func TestLefthookManagerExecPrefixRunsTheCommandItNames(t *testing.T) {
+	cases := []struct {
+		name string
+		run  string
+	}{
+		{name: "pnpm exec", run: "pnpm exec vitest run"},
+		{name: "yarn exec", run: "yarn exec vitest run"},
+		{name: "npm exec", run: "npm exec vitest run"},
+		{name: "bun x", run: "bun x vitest run"},
+		{name: "pnpm x", run: "pnpm x vitest run"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			hook := "pre-commit:\n  commands:\n    test:\n      run: " + tc.run + "\n"
+			p := writeVitestGateProject(t, map[string]string{
+				lefthookConfig: hook,
+				"package.json": "{\"name\":\"app\"}\n",
+			})
+
+			got := analyzeVitestGate(p)
+			if got.status != vitestGateEquivalent {
+				t.Fatalf("analyzeVitestGate(%q) status = %s, want a confirmed duplicate",
+					tc.run, gateStatusName(got.status))
+			}
+
+			why, delegated := (lefthookExtendsStep{}).Delegated(p)
+			if !delegated {
+				t.Fatalf("Delegated() = false for %q, a complete run of the managed suite", tc.run)
+			}
+			for _, want := range []string{tc.run, coverageBridgeName, "one complete"} {
+				if !strings.Contains(why, want) {
+					t.Errorf("reconciliation does not name %q:\n%s", want, why)
+				}
+			}
+
+			if _, err := applySteps([]Step{(lefthookExtendsStep{}), (hookInstallStep{})}, p, io.Discard); err != nil {
+				t.Fatalf("applySteps() = %v, want nil: the delegated run continues instead of aborting", err)
+			}
+			raw, _ := os.ReadFile(filepath.Join(p.Root, lefthookConfig))
+			if string(raw) != hook {
+				t.Errorf("the delegated run changed the consumer's config:\n%s", raw)
+			}
+		})
+	}
+}
+
+// TestHuskyHookLineKeepsItsOwnWorkingDirectory is the third verifier blocker:
+// a husky hook line is handed to the classifier whole, so the `cd` it opens
+// still applies to the command it chains. `cd frontend && bun run test` runs
+// the managed suite from the managed source and delegates, exactly as the
+// identical lefthook job already does, instead of being split before analysis
+// and judged at the repository root.
+func TestHuskyHookLineKeepsItsOwnWorkingDirectory(t *testing.T) {
+	root := t.TempDir()
+	writeVitestGateFile(t, root, "coverage-tiers.json", "{}\n")
+	writeVitestGateFile(t, root, "frontend/package.json", "{\"name\":\"app\",\"scripts\":{\"test\":\"vitest run\"}}\n")
+	hook := "#!/usr/bin/env sh\ncd frontend && bun run test\n"
+	writeVitestGateFile(t, root, filepath.ToSlash(huskyHook), hook)
+	p := project.Project{Root: root, Source: filepath.Join(root, "frontend"), PackageManager: "npm"}
+
+	got := analyzeVitestGate(p)
+	if got.status != vitestGateEquivalent {
+		t.Fatalf("analyzeVitestGate() status = %s, want a confirmed duplicate: the cd names the managed source (reason %q)",
+			gateStatusName(got.status), got.reason)
+	}
+
+	if (hookInstallStep{}).Satisfied(p) {
+		t.Error("Satisfied() = true while the hook runs a second complete suite")
+	}
+	why, delegated := (hookInstallStep{}).Delegated(p)
+	if !delegated {
+		t.Fatal("Delegated() = false for a husky hook running the full suite from the managed source")
+	}
+	for _, want := range []string{".husky/pre-commit", "cd frontend && bun run test", "coverage"} {
+		if !strings.Contains(why, want) {
+			t.Errorf("reconciliation does not name %q:\n%s", want, why)
+		}
+	}
+
+	if _, err := applySteps([]Step{(hookInstallStep{})}, p, io.Discard); err != nil {
+		t.Fatalf("applySteps() = %v, want nil: the delegated run continues instead of aborting", err)
+	}
+	raw, _ := os.ReadFile(filepath.Join(p.Root, filepath.FromSlash(huskyHook)))
+	if string(raw) != hook {
+		t.Errorf("the delegated run changed the consumer's hook:\n%s", raw)
 	}
 }
 

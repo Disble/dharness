@@ -253,10 +253,16 @@ func isKeyLine(trimmed string) bool {
 	return name != "" && name != "run" && name != "root"
 }
 
-// huskyHookCommands splits a husky hook into its commands: one per line,
-// further split on the sequencing operators, without the comments and the
-// shebang. The hook is the project's own shell script, so each line is read
-// literally — no shell is ever executed to learn what runs.
+// huskyHookCommands splits a husky hook into its own command lines: one per
+// line, without the comments and the shebang. The hook is the project's own
+// shell script, so each line is read literally — no shell is ever executed to
+// learn what runs.
+//
+// A line is handed over whole, not pre-split on the sequencing operators. The
+// classifier already tracks a `cd` across the segments that share it, so
+// splitting here would discard that context before anyone could use it: `cd
+// frontend && bun run test` runs the suite in the JS project, and judged at
+// the repository root it looks like another suite entirely.
 func huskyHookCommands(raw []byte) []string {
 	var commands []string
 	for _, line := range strings.Split(string(raw), "\n") {
@@ -264,9 +270,7 @@ func huskyHookCommands(raw []byte) []string {
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			continue
 		}
-		for _, segment := range splitGateSegments(trimmed) {
-			commands = append(commands, segment)
-		}
+		commands = append(commands, trimmed)
 	}
 	return commands
 }
@@ -412,8 +416,14 @@ func classifyGateSegment(scripts map[string]string, segment string, depth int, s
 		return classifyGateSegment(scripts, strings.Join(tokens[1:], " "), depth, stack, scope)
 	}
 
+	// A manager token only answers for a manager invocation. When it names no
+	// subcommand the segment is classified on its remaining shape instead:
+	// `bun scripts/check.mjs` is a launcher running a file, and the branch
+	// below is the one that knows it.
 	if len(tokens) > 0 && contains(scriptManagers, tokens[0]) {
-		return classifyManagerInvocation(scripts, tokens, depth, stack, scope)
+		if verdict, handled := classifyManagerInvocation(scripts, tokens, depth, stack, scope); handled {
+			return verdict
+		}
 	}
 
 	if containsVitestWord(tokens) {
@@ -427,27 +437,42 @@ func classifyGateSegment(scripts map[string]string, segment string, depth int, s
 	return gateVerdict{}
 }
 
-// classifyManagerInvocation resolves a package-manager invocation. An
-// explicit `run <name>` (or the `test` alias `npm`/`pnpm`/`yarn` keep)
-// follows the script it names; a manager invocation that cannot be parsed
-// resolves as unknown rather than guessed at. Anything without a `run` —
-// installs, audits, lints — is an unrelated check.
+// classifyManagerInvocation resolves a package-manager invocation and reports
+// whether the tokens are one at all. An explicit `run <name>` — or the `test`
+// alias npm, pnpm and yarn keep — follows the script it names; the manager's
+// own `exec`/`x` prefix classifies the command it runs, which is a complete
+// run when that command is one (`pnpm exec vitest run` is `vitest run`). A
+// form the analysis cannot parse resolves as unknown rather than guessed at.
 //
-// `bun test` is deliberately not the alias: it runs bun's own test runner,
-// not a script the project wrote.
-func classifyManagerInvocation(scripts map[string]string, tokens []string, depth int, stack []string, scope suiteScope) gateVerdict {
-	name := ""
+// A manager token with no subcommand is not a manager invocation, and the
+// caller keeps classifying it on its remaining shape: `bun scripts/check.mjs`
+// executes a file, and `bun audit` is bun's own check, so neither is answered
+// here. `bun test` is deliberately not the alias either: it runs bun's own
+// test runner, not a script the project wrote.
+//
+// A token in the script's position that starts with `-` is a flag, not a
+// script name, so `npm run -s` is unparsed — never a missing script called
+// "-s".
+func classifyManagerInvocation(scripts map[string]string, tokens []string, depth int, stack []string, scope suiteScope) (gateVerdict, bool) {
 	switch {
-	case len(tokens) == 3 && tokens[1] == "run" && !strings.HasPrefix(tokens[2], "-"):
-		name = tokens[2]
-	case len(tokens) == 2 && tokens[1] == "test" && tokens[0] != "bun":
-		name = "test"
+	case len(tokens) >= 2 && (tokens[1] == "exec" || tokens[1] == "x"):
+		return classifyGateSegment(scripts, strings.Join(tokens[2:], " "), depth, stack, scope), true
 	case len(tokens) >= 2 && tokens[1] == "run":
-		return gateVerdict{status: vitestGateUnresolved, reason: "its package-manager invocation cannot be parsed without executing it"}
+		if len(tokens) != 3 || strings.HasPrefix(tokens[2], "-") {
+			return gateVerdict{status: vitestGateUnresolved, reason: "its package-manager invocation cannot be parsed without executing it"}, true
+		}
+		return followManagerScript(scripts, tokens[2], depth, stack, scope), true
+	case len(tokens) == 2 && tokens[1] == "test" && tokens[0] != "bun":
+		return followManagerScript(scripts, "test", depth, stack, scope), true
 	default:
-		return gateVerdict{}
+		return gateVerdict{}, false
 	}
+}
 
+// followManagerScript resolves the script a manager invocation names, or the
+// uncertainty that keeps it unresolved: a chain deeper than the analysis
+// follows, a cycle, or a name package.json does not declare.
+func followManagerScript(scripts map[string]string, name string, depth int, stack []string, scope suiteScope) gateVerdict {
 	if depth >= maxVitestScriptDepth {
 		return gateVerdict{status: vitestGateUnresolved, reason: "script " + quoteScript(name) + " chains deeper than the analysis follows"}
 	}
