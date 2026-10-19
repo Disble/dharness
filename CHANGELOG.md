@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.14.0](https://github.com/Disble/dharness/compare/v1.13.2...v1.14.0) (2026-10-19)
+
+
+### Features
+
+* **sync:** enforce a single Vitest testing gate ([#86](https://github.com/Disble/dharness/issues/86)) ([d1d249c](https://github.com/Disble/dharness/commit/d1d249cde068444d8fea32c78e06397d21a49b8e))
+
 ## [1.13.2](https://github.com/Disble/dharness/compare/v1.13.1...v1.13.2) (2026-10-17)
 
 
