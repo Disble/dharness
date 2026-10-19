@@ -91,7 +91,9 @@ There is exactly one complete Vitest testing gate: the managed coverage-tier
 invocation `vitest run --coverage --config <bridge>` that the hook runs
 (`.dharness/lefthook.yml`, or the husky hook). `dharness sync` wires that job
 and, where the hook already carries commands, reads the active pre-commit
-commands and the local package scripts they reach. Each invocation is judged on
+commands and the local package scripts they reach. A manager's own `exec`/`x`
+prefix is read as the command it runs, so `pnpm exec vitest run` is the same
+complete run. Each invocation is judged on
 its own, so a compound line such as `dharness check && bun run test` is read as
 two commands and the second one still counts:
 
@@ -99,7 +101,8 @@ two commands and the second one still counts:
 |---|---|
 | No Vitest, only focused/watch or selection runs, or a suite in another root or under another config | Integrates automatically, preserving every byte the hook already declares |
 | A reachable complete run of the same suite, including through `cd <managed root>` or a job `root:` naming it | Leaves the merge to you (quick path below); it never deletes it |
-| A command that cannot be resolved (a wrapper script, a missing script, a cycle, a dynamic path, an unsupported flag) | Reports it as uncertain — unknown is not confirmed Vitest — and leaves it to you |
+| A command that cannot be resolved (a wrapper script such as `bun scripts/check.mjs`, a missing script, a cycle, a dynamic path, an unsupported flag) | Reports it as uncertain — unknown is not confirmed Vitest — and leaves it to you |
+| A hook line that runs the check beside your own command | Leaves those bytes untouched, writes nothing for the tiers, and reports the concrete line to you; chaining coverage onto it would delete your command |
 | An unused script, or the managed coverage job itself | Ignores it; neither is a conflict |
 
 Quick path:

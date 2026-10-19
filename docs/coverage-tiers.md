@@ -93,7 +93,11 @@ reads the active pre-commit commands (the lefthook pre-commit section, or the
 husky hook lines) and the local `package.json` scripts they reach — never an
 unused script, never the managed job itself, never CI. Each invocation is
 judged on its own, so `dharness check && bun run test` is analyzed as two
-commands and the second one still counts.
+commands and the second one still counts. A manager's own `exec`/`x` prefix is
+read as the command it runs, so `pnpm exec vitest run` is the same complete
+run, while a launcher executing a file (`node scripts/check.mjs`, `bun
+scripts/check.mjs`) is a wrapper whose runner cannot be determined: it stays
+uncertain.
 
 | What sync finds | What sync does |
 |---|---|
@@ -113,7 +117,11 @@ they are left alone and the reference is still added around them. A complete
 run may still carry resource flags such as `--maxWorkers=2`; they do not
 narrow which tests execute. dharness never deletes a consumer command or
 rewrites a package script; until one complete gate remains, the wiring step
-stays with the agent.
+stays with the agent. The coverage step follows the same rule: it chains the
+coverage job only onto a gate line dharness itself rendered, so a hook line
+that already runs the check beside the consumer's own command is left byte for
+byte and the conflict is reported to the agent with nothing written for the
+tiers.
 
 ## Agent guidance, distributed by the same binary
 
