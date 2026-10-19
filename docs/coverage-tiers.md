@@ -85,6 +85,36 @@ Ambiguous exports, missing prerequisites and conflicting managed regions are rep
 
 Without a declaration or managed footprint, no coverage job or files are added. `sync` offers the native coverage adoption under **Left to you**; the dependent skill-distribution step explicitly reports itself as inactive until adoption. It still repairs drift in the owned gate file; consumer-owned content outside managed regions is retained.
 
+## One complete gate and routine conflicts
+
+There is exactly one complete Vitest testing gate: the managed coverage-tier
+invocation above. Where the hook already carries commands, `dharness sync`
+reads the active pre-commit commands (the lefthook pre-commit section, or the
+husky hook lines) and the local `package.json` scripts they reach — never an
+unused script, never the managed job itself, never CI. Each invocation is
+judged on its own, so `dharness check && bun run test` is analyzed as two
+commands and the second one still counts.
+
+| What sync finds | What sync does |
+|---|---|
+| No Vitest, only focused/watch runs, a selection flag, or a suite in another root or under another config | Adds the hook reference automatically, preserving every byte already declared |
+| A reachable complete run of the same suite, including through `cd <managed root>` or a job `root:` that names it | Hands precise reconciliation to the consuming agent: keep the managed gate, remove the duplicate |
+| A command that cannot be resolved (a wrapper script, a missing script, a cycle, a dynamic path, an unsupported flag) | Reports it as uncertain — unknown is not confirmed Vitest — for the agent to clarify |
+| An `extends` key, an explicit `---` document, a flow mapping, or another shape the additive merge cannot take | Names that shape and asks for the reference by hand instead of rewriting the file |
+
+Identity is decided where it can be read plainly: `cd frontend` and `root:
+frontend/` name the managed source when they resolve there, a different
+root or an existing different `--config` names another suite, and an identity
+that cannot be established is handed over rather than assumed safe.
+
+Scoped runs stay: a focused file filter, `--watch`, `--changed`, an alternate
+config and a suite in another root are not the managed gate's complete run, so
+they are left alone and the reference is still added around them. A complete
+run may still carry resource flags such as `--maxWorkers=2`; they do not
+narrow which tests execute. dharness never deletes a consumer command or
+rewrites a package script; until one complete gate remains, the wiring step
+stays with the agent.
+
 ## Agent guidance, distributed by the same binary
 
 The procedure lives once, in `internal/setup/assets/coverage-tiers/SKILL.md`, embedded with `go:embed` and shipped in the binary: nothing is downloaded at sync time and no external skill installer is invoked. `dharness sync` writes that body, unchanged, to two client locations under the repository root: `.claude/skills/coverage-tiers/SKILL.md` and `.agents/skills/coverage-tiers/SKILL.md`. They are copies rather than links, so they need no symlink privilege on Windows, and they are managed bytes: a hand edit is repaired on the next run, and a run with the bytes already correct writes nothing.

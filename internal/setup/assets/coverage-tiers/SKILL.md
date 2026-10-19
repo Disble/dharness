@@ -85,6 +85,35 @@ project's exact line instead of maintaining a second invocation; the hook runs
 the same command. Ordinary focused runs stay coverage-free unless you pass
 `--coverage` yourself.
 
+## One Vitest testing gate
+
+There is exactly one complete Vitest testing gate: the managed coverage-tier
+invocation `vitest run --coverage --config <bridge>` that the hook runs
+(`.dharness/lefthook.yml`, or the husky hook). `dharness sync` wires that job
+and, where the hook already carries commands, reads the active pre-commit
+commands and the local package scripts they reach. Each invocation is judged on
+its own, so a compound line such as `dharness check && bun run test` is read as
+two commands and the second one still counts:
+
+| What sync finds | What sync does |
+|---|---|
+| No Vitest, only focused/watch or selection runs, or a suite in another root or under another config | Integrates automatically, preserving every byte the hook already declares |
+| A reachable complete run of the same suite, including through `cd <managed root>` or a job `root:` naming it | Leaves the merge to you (quick path below); it never deletes it |
+| A command that cannot be resolved (a wrapper script, a missing script, a cycle, a dynamic path, an unsupported flag) | Reports it as uncertain — unknown is not confirmed Vitest — and leaves it to you |
+| An unused script, or the managed coverage job itself | Ignores it; neither is a conflict |
+
+Quick path:
+
+1. Keep the managed gate; remove the duplicate full-suite invocation from the hook or the script it reaches.
+2. Leave unrelated checks, focused or watch runs, and alternate configs untouched.
+3. Re-run `dharness sync` to confirm the reference is wired and the gate is one.
+
+Checklist:
+
+- [ ] Only the managed job runs the complete suite with coverage.
+- [ ] No consumer command or script was deleted by the tool — every removal is yours.
+- [ ] `git diff` on the hook shows the additive reference plus your own edit, nothing rewritten.
+
 ## When the gate fails
 
 1. Read the failure. Vitest reports the file, the metric and the threshold that
