@@ -2,11 +2,15 @@
 
 Declare business-impact tiers in the consuming repository's root `coverage-tiers.json`. dharness resolves the declaration; the consumer decides which behavior is CORE. Adoption does not classify all legacy code at once, but an adopted feature includes its old files too.
 
-| Tier | Native test coverage target |
-|---|---:|
-| CORE | 100% |
-| IMPORTANT | 80% |
-| INFRASTRUCTURE | 0% |
+| Tier | Native test coverage target, per file | Holds |
+|---|---:|---|
+| CORE | 100% | Critical business logic |
+| IMPORTANT | 80% | Behavior the user sees |
+| INFRASTRUCTURE | 0% | Code that validates itself: types, static constants, wiring |
+
+Each target applies to every file on its own, for each of statements, branches, functions and lines; it is not a feature average.
+
+Classify as a tree: rank the features against each other first, then the modules inside each feature, then files by role. The distributed skill holds the procedure (`internal/setup/assets/coverage-tiers/SKILL.md`, "Classifying: a tree with three levels").
 
 These are coverage targets, not mutation-score thresholds. Mutation retains its existing verdict; infrastructure is excluded from its effective scope. New equivalence/waiver evidence machinery is outside this delivery.
 
@@ -22,6 +26,8 @@ Without `coverage-tiers.json`, `dharness sync` puts the native coverage step und
 | Not automated by sync | Execute tests, write missing tests, install coverage dependencies, add `test:coverage` or integrate an existing `check` script, or create CI workflows. Offer these separately when needed. |
 
 Run the exact native coverage command from the generated hook in the JS project root to verify the complete adopted unit. A successful sync is not a coverage pass. Native integration is Vitest-only: do not promise Jest or Go coverage wiring.
+
+Adopt a feature once its tests are written. From the first sync the hook checks the whole adopted unit on every commit, so a feature adopted before its tests blocks the very commits that would add them. While writing those tests, `vitest run --coverage --coverage.changed` (Vitest 4.1+) shows progress on the changed files; the gate itself always checks the complete unit.
 
 ## Declaration
 
@@ -42,7 +48,20 @@ Run the exact native coverage command from the generated hook in the JS project 
 }
 ```
 
-Paths are repository-relative and use forward slashes. A trailing slash declares a directory prefix; otherwise a rule names one exact file. Exact override wins over the most specific directory override; otherwise the feature's default applies. Conflicting declarations and overlapping features are rejected, not resolved by array order.
+Paths are repository-relative and use forward slashes. A trailing slash declares a directory prefix; otherwise a rule names one exact file.
+
+The optional top-level `roles` classify files by name across every feature, so a file's role is declared once rather than once per file:
+
+```json
+"roles": [
+  {"suffix": ".types.ts", "tier": "infrastructure", "reason": "Types the compiler checks"},
+  {"suffix": "index.ts", "tier": "infrastructure", "reason": "Barrels only re-export"}
+]
+```
+
+A suffix matches at a dot boundary (`index.ts` matches `index.ts` and `cart.index.ts`, not `reindex.ts`), and the longest matching suffix wins. For each file, the first match decides its tier: an exact-file override, then a role, then the most specific directory override, then the feature's default. Conflicting declarations and overlapping features are rejected, not resolved by array order.
+
+Features cannot nest, so the feature is the root of one branch and the tree below it lives in its overrides. A product feature that spans several folders is declared as one feature per folder, named with a shared prefix (`connection/store`, `connection/screen`).
 
 Version 1 resolves dharness-recognized JavaScript/TypeScript source paths. Native coverage integration is Vitest-only, not a Go coverage runner.
 
@@ -56,7 +75,7 @@ An absent manifest means no adoption unless a managed coverage integration alrea
 
 ## Native Vitest coverage in the existing gate
 
-The project must already have a locally installed Vitest, its coverage provider and a native Vitest/Vite config. `dharness sync` does not download either runner or provider for this integration. The project's Node runtime must be able to load the installed public `vitest/node` API; the measured native combination is Node 24.21.0, Vitest 5.0.3 and `@vitest/coverage-v8` 5.0.3.
+The project must already have a locally installed Vitest, its coverage provider and a native Vitest/Vite config. The gate runs Vitest directly, not the project's `test` script: a step that script runs first, such as generating a file the tests import, belongs in the config's `globalSetup`. `dharness sync` does not download either runner or provider for this integration. The project's Node runtime must be able to load the installed public `vitest/node` API; the measured native combination is Node 24.21.0, Vitest 5.0.3 and `@vitest/coverage-v8` 5.0.3.
 
 With a valid declaration, run the existing `dharness sync`. It:
 
