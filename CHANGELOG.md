@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.15.0](https://github.com/Disble/dharness/compare/v1.14.0...v1.15.0) (2026-11-18)
+
+
+### Features
+
+* **coverage-tiers:** classify by role suffix and teach the tier tree ([#89](https://github.com/Disble/dharness/issues/89)) ([6a8cc58](https://github.com/Disble/dharness/commit/6a8cc5879269f7c7e630f6ce730168fc86431a42))
+
 ## [1.14.0](https://github.com/Disble/dharness/compare/v1.13.2...v1.14.0) (2026-10-19)
 
 
