@@ -77,6 +77,8 @@ func Resolve(root string) (Resolution, error) {
 		// Reverse path order lets the first match win without an artificial length baseline.
 		slices.SortFunc(feature.Overrides, func(a, b Rule) int { return strings.Compare(b.Path, a.Path) })
 	}
+	// The longest suffix is the most specific role, so it is tried first.
+	slices.SortFunc(manifest.Roles, func(a, b Role) int { return len(b.Suffix) - len(a.Suffix) })
 	seen := make(map[string]bool)
 	for _, prefix := range manifest.EnforcedPrefixes {
 		err := filepath.WalkDir(filepath.Join(root, filepath.FromSlash(prefix)), func(path string, entry fs.DirEntry, walkErr error) error {
@@ -106,13 +108,7 @@ func Resolve(root string) (Resolution, error) {
 				if !matches(feature.Path, rel) {
 					continue
 				}
-				tier := feature.DefaultTier
-				for _, override := range feature.Overrides {
-					if matches(override.Path, rel) {
-						tier = override.Tier
-						break
-					}
-				}
+				tier := classify(feature, manifest.Roles, rel)
 				result.Files = append(result.Files, File{Path: rel, Tier: tier, Coverage: target(tier)})
 				seen[rel] = true
 				return nil
@@ -125,4 +121,27 @@ func Resolve(root string) (Resolution, error) {
 	}
 	slices.SortFunc(result.Files, func(a, b File) int { return strings.Compare(a.Path, b.Path) })
 	return result, nil
+}
+
+// classify answers one adopted file's tier. An exact override is a decision
+// about that file and wins; a role is a decision about every file of its kind
+// and beats a directory override, so a types file inside a core directory is
+// still infrastructure; a directory override beats the feature's default.
+func classify(feature Feature, roles []Role, rel string) string {
+	for _, override := range feature.Overrides {
+		if override.Path == rel {
+			return override.Tier
+		}
+	}
+	for _, role := range roles {
+		if matchesRole(role.Suffix, rel) {
+			return role.Tier
+		}
+	}
+	for _, override := range feature.Overrides {
+		if matches(override.Path, rel) {
+			return override.Tier
+		}
+	}
+	return feature.DefaultTier
 }

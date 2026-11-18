@@ -54,6 +54,16 @@ func TestManifestAcceptsConsumerFeatureDeclaration(t *testing.T) {
 			t.Fatalf("declaration = %+v, error = %v; want %+v", got, err, want)
 		}
 	})
+	t.Run("roles classify by file name", func(t *testing.T) {
+		input := strings.Replace(checkout, `"version": 1,`, `"version": 1, "roles": [{"suffix": ".types.ts", "tier": "infrastructure", "reason": "Types the compiler checks"}],`, 1)
+		want := want
+		want.EnforcedPrefixes = []string{"src/features/"}
+		want.Roles = []tiers.Role{{Suffix: ".types.ts", Tier: "infrastructure", Reason: "Types the compiler checks"}}
+		got, err := tiers.Parse([]byte(input))
+		if err != nil || !reflect.DeepEqual(got, want) {
+			t.Fatalf("declaration = %+v, error = %v; want %+v", got, err, want)
+		}
+	})
 	t.Run("features are ordered by identity", func(t *testing.T) {
 		input := `{"version":1,"enforcedPrefixes":["src/"],"features":[{"id":"b","path":"src/b/","defaultTier":"core","reason":"B"},{"id":"a","path":"src/a/","defaultTier":"important","reason":"A"}]}`
 		want := tiers.Manifest{Version: 1, EnforcedPrefixes: []string{"src/"}, Features: []tiers.Feature{{ID: "a", Path: "src/a/", DefaultTier: "important", Reason: "A"}, {ID: "b", Path: "src/b/", DefaultTier: "core", Reason: "B"}}}
@@ -85,6 +95,12 @@ func TestManifestRejectsInvalidDeclarationsWithoutChangingInput(t *testing.T) {
 		{"duplicate feature id", `{"version":1,"enforcedPrefixes":["src/"],"features":[{"id":"a","path":"src/a/","defaultTier":"core","reason":"A"},{"id":"a","path":"src/b/","defaultTier":"core","reason":"B"}]}`, `coverage-tiers.json: duplicate feature id "a"`},
 		{"second JSON object", checkout + `{}`, "coverage-tiers.json: declare exactly one JSON object"},
 		{"overlap", `{"version":1,"enforcedPrefixes":["src/"],"features":[{"id":"a","path":"src/a/","defaultTier":"core","reason":"A"},{"id":"b","path":"src/a/b/","defaultTier":"important","reason":"B"}]}`, `coverage-tiers.json: features "a" and "b" overlap`},
+		{"empty role suffix", withRoles(`{"suffix": " ", "tier": "infrastructure", "reason": "Types"}`), `coverage-tiers.json: role suffix " " must name the end of a file name, without a directory`},
+		{"role suffix with a directory", withRoles(`{"suffix": "ui/index.ts", "tier": "infrastructure", "reason": "Barrels"}`), `coverage-tiers.json: role suffix "ui/index.ts" must name the end of a file name, without a directory`},
+		{"role suffix with a backslash", withRoles(`{"suffix": "ui\\index.ts", "tier": "infrastructure", "reason": "Barrels"}`), `coverage-tiers.json: role suffix "ui\\index.ts" must name the end of a file name, without a directory`},
+		{"duplicate role", withRoles(`{"suffix": ".types.ts", "tier": "infrastructure", "reason": "Types"}, {"suffix": ".types.ts", "tier": "core", "reason": "Again"}`), `coverage-tiers.json: roles repeat suffix ".types.ts"`},
+		{"missing role reason", withRoles(`{"suffix": ".types.ts", "tier": "infrastructure", "reason": " "}`), `coverage-tiers.json: role ".types.ts" must declare a reason`},
+		{"unknown role tier", withRoles(`{"suffix": ".types.ts", "tier": "other", "reason": "Types"}`), `coverage-tiers.json: unknown tier "other"; use core, important or infrastructure`},
 		{"duplicate override", `{"version":1,"enforcedPrefixes":["src/"],"features":[{"id":"a","path":"src/a/","defaultTier":"core","reason":"A","overrides":[{"path":"src/a/x.ts","tier":"important","reason":"UI"},{"path":"src/a/x.ts","tier":"infrastructure","reason":"Types"}]}]}`, `coverage-tiers.json: feature "a" repeats override "src/a/x.ts"`},
 	}
 
@@ -119,4 +135,9 @@ func TestManifestRejectsInvalidDeclarationsWithoutChangingInput(t *testing.T) {
 			}
 		})
 	}
+}
+
+// withRoles is the checkout declaration with the given role entries.
+func withRoles(entries string) string {
+	return strings.Replace(checkout, `"version": 1,`, `"version": 1, "roles": [`+entries+`],`, 1)
 }

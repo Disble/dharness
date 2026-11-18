@@ -27,6 +27,30 @@ type Rule struct {
 	Reason string `json:"reason"`
 }
 
+// Role classifies every adopted file whose name ends in Suffix, across all
+// features. It exists because a file's role — a type declaration, a barrel, a
+// static constant — decides its tier the same way in every feature, and listing
+// each such file by path makes a later one inherit a tier nobody chose.
+type Role struct {
+	Suffix string `json:"suffix"`
+	Tier   string `json:"tier"`
+	Reason string `json:"reason"`
+}
+
+// matchesRole reports whether a file name ends in suffix at a dot boundary:
+// ".types.ts" matches "cart.types.ts", and "index.ts" matches "index.ts" and
+// "cart.index.ts" but not "reindex.ts".
+func matchesRole(suffix, file string) bool {
+	name := path.Base(file)
+	if !strings.HasSuffix(name, suffix) {
+		return false
+	}
+	if name == suffix || strings.HasPrefix(suffix, ".") {
+		return true
+	}
+	return strings.HasSuffix(strings.TrimSuffix(name, suffix), ".")
+}
+
 // Feature adopts its whole path, regardless of the age of its source files.
 type Feature struct {
 	ID          string `json:"id"`
@@ -40,6 +64,7 @@ type Feature struct {
 type Manifest struct {
 	Version          int       `json:"version"`
 	EnforcedPrefixes []string  `json:"enforcedPrefixes"`
+	Roles            []Role    `json:"roles,omitempty"`
 	Features         []Feature `json:"features"`
 }
 
@@ -85,6 +110,22 @@ func Parse(raw []byte) (Manifest, error) {
 	for _, prefix := range m.EnforcedPrefixes {
 		if err := canonical(prefix); err != nil {
 			return Manifest{}, err
+		}
+	}
+	roles := make(map[string]bool)
+	for _, role := range m.Roles {
+		if strings.TrimSpace(role.Suffix) == "" || strings.ContainsAny(role.Suffix, "/\\") {
+			return Manifest{}, declarationError("role suffix %q must name the end of a file name, without a directory", role.Suffix)
+		}
+		if roles[role.Suffix] {
+			return Manifest{}, declarationError("roles repeat suffix %q", role.Suffix)
+		}
+		roles[role.Suffix] = true
+		if err := validTier(role.Tier); err != nil {
+			return Manifest{}, err
+		}
+		if strings.TrimSpace(role.Reason) == "" {
+			return Manifest{}, declarationError("role %q must declare a reason", role.Suffix)
 		}
 	}
 	// The stdlib comparator preserves equal identities for duplicate validation.
