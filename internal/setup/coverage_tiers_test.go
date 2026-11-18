@@ -164,6 +164,10 @@ func TestCoverageTiersStepWiresTheAdoptedRunInOneApply(t *testing.T) {
 			if got, want := readFixtureFile(t, runtimePath), string(coverageTiersModule()); got != want {
 				t.Error("the managed runtime is not the embedded module byte for byte")
 			}
+			typesPath := filepath.Join(p.Root, project.Dir, coverageTiersTypesName)
+			if got, want := readFixtureFile(t, typesPath), string(coverageTiersTypes()); got != want {
+				t.Error("the runtime's declaration file is not the embedded asset byte for byte")
+			}
 
 			bridge := readFixtureFile(t, filepath.Join(p.Root, project.Dir, coverageBridgeName))
 			if !strings.Contains(bridge, "export default") {
@@ -578,10 +582,12 @@ func TestCoverageTiersGateStaysActivatedByItsOwnFootprint(t *testing.T) {
 	if err := os.Remove(filepath.Join(p.Root, tiers.ManifestName)); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Remove(filepath.Join(p.Root, project.Dir, coverageBridgeName)); err != nil {
-		t.Fatal(err)
+	for _, name := range []string{coverageBridgeName, coverageTiersTypesName} {
+		if err := os.Remove(filepath.Join(p.Root, project.Dir, name)); err != nil {
+			t.Fatal(err)
+		}
 	}
-	// Only the managed module is left: the bridge is gone above, and the
+	// Only the managed module is left: the bridge and the declaration are gone above, and the
 	// project's own config is handed back unwired, so there are no markers
 	// anywhere either. One entry in the footprint is the whole state this rule
 	// is about, and it is not a file the project reads on its own: recognised
@@ -611,6 +617,7 @@ func TestCoverageTiersGateStaysActivatedByItsOwnFootprint(t *testing.T) {
 // by its own file name rather than by an empty string.
 func TestCoverageTiersFootprintNamesEveryByteThisStepOwns(t *testing.T) {
 	runtime := filepath.ToSlash(filepath.Join(project.Dir, coverageTiersRuntimeName))
+	types := filepath.ToSlash(filepath.Join(project.Dir, coverageTiersTypesName))
 	bridge := filepath.ToSlash(filepath.Join(project.Dir, coverageBridgeName))
 
 	cases := []struct {
@@ -625,7 +632,7 @@ func TestCoverageTiersFootprintNamesEveryByteThisStepOwns(t *testing.T) {
 				coverageGateFile(t, p.Root, huskyHook, "#!/usr/bin/env sh\n"+gateCommand+" && old "+coverageHuskyMarker+"\n")
 				return p
 			},
-			want: []string{runtime, bridge, "vitest.config.ts", huskyHook},
+			want: []string{runtime, types, bridge, "vitest.config.ts", huskyHook},
 		},
 		{
 			name: "lefthook: husky's leftover is not this repository's gate",
@@ -635,7 +642,7 @@ func TestCoverageTiersFootprintNamesEveryByteThisStepOwns(t *testing.T) {
 				coverageGateFile(t, p.Root, huskyHook, "#!/usr/bin/env sh\nold "+coverageHuskyMarker+"\n")
 				return p
 			},
-			want: []string{runtime, bridge, "vitest.config.ts"},
+			want: []string{runtime, types, bridge, "vitest.config.ts"},
 		},
 		{
 			name: "no relative path between the root and the config",
@@ -672,6 +679,7 @@ func coverageTiersWiredByHand(t *testing.T, fixture coverageGateFixture) project
 	p := project.At(fixture.root, fixture.source)
 
 	coverageGateFile(t, p.Root, filepath.ToSlash(filepath.Join(project.Dir, coverageTiersRuntimeName)), string(coverageTiersModule()))
+	coverageGateFile(t, p.Root, filepath.ToSlash(filepath.Join(project.Dir, coverageTiersTypesName)), string(coverageTiersTypes()))
 	bridge, err := coverageBridgeModule(fixture.config, p)
 	if err != nil {
 		t.Fatalf("coverageBridgeModule() = %v", err)
@@ -906,7 +914,7 @@ func TestCoverageTiersStepSharesTheGeneratedModulesWithGit(t *testing.T) {
 		t.Fatalf("Apply() = %v", err)
 	}
 
-	for _, name := range []string{coverageTiersRuntimeName, coverageBridgeName} {
+	for _, name := range []string{coverageTiersRuntimeName, coverageTiersTypesName, coverageBridgeName} {
 		rel := filepath.ToSlash(filepath.Join(project.Dir, name))
 		status, err := project.GitOutput(p.Root, "status", "--porcelain", "--untracked-files=all", "--", rel)
 		if err != nil {
@@ -923,7 +931,7 @@ func TestCoverageTiersStepSharesTheGeneratedModulesWithGit(t *testing.T) {
 			t.Errorf("the declared allowance did not keep %q:\n%s", kept, ignore)
 		}
 	}
-	for _, added := range []string{"!" + coverageTiersRuntimeName, "!" + coverageBridgeName} {
+	for _, added := range []string{"!" + coverageTiersRuntimeName, "!" + coverageTiersTypesName, "!" + coverageBridgeName} {
 		if !strings.Contains(ignore, added) {
 			t.Errorf("the owned ignore list does not name %q:\n%s", added, ignore)
 		}

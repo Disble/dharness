@@ -209,17 +209,25 @@
      coverage files and the gate unchanged; sync will offer this choice again.
 
      If adoption is approved:
-     1. Inspect the existing source and tests. Agree on the feature scope and its
-        business impact: CORE 100%, IMPORTANT 80%, INFRASTRUCTURE 0%. These are native
+     1. Inspect the existing source and tests. Rank the features against each other
+        first (what depends on it, how visible its failure is, whether another path
+        exists), then classify inside each: CORE 100% is critical business logic,
+        IMPORTANT 80% is behavior the user sees, INFRASTRUCTURE 0% is code that
+        validates itself (types the compiler checks, static constants). Targets apply
+        per file to statements, branches, functions and lines. They are native
         coverage targets, not mutation-score thresholds; infrastructure is excluded
         from mutation. Do not lower tiers or exclude behavior just to pass.
 
      2. Create coverage-tiers.json at the repository root with version: 1,
         enforcedPrefixes, and features containing id, path, defaultTier and reason
-        (optional overrides contain path, tier and reason). Paths are repository-relative
-        with forward slashes; directory prefixes end in /. Adopt only existing paths,
-        starting narrowly: all source under enforcedPrefixes must belong to a feature,
+        (optional overrides contain path, tier and reason). Optional roles contain
+        suffix, tier and reason and classify files by name in every feature, such as
+        .types.ts as infrastructure. Paths are repository-relative with forward
+        slashes; directory prefixes end in /. Adopt only existing paths, starting
+        narrowly: all source under enforcedPrefixes must belong to a feature,
         including its older files. Leave not-yet-created paths out until they exist.
+        Adopt a feature once its tests are written: from the first sync, every commit
+        must keep the whole adopted unit at target.
 
      3. Native integration supports Vitest only, not Jest or Go coverage. In frontend,
         install missing local prerequisites with the project's package manager:

@@ -127,3 +127,56 @@ func TestResolveDoesNotClassifyTestsOrDependencies(t *testing.T) {
 		t.Fatalf("non-business sources entered resolution: %+v, %v", got, err)
 	}
 }
+
+// TestResolveRolesClassifyByFileName pins the precedence a role takes: an exact
+// override still wins, a role beats a directory override, and a directory
+// override beats the feature's default. A suffix matches at a dot boundary, and
+// the longest matching suffix wins.
+func TestResolveRolesClassifyByFileName(t *testing.T) {
+	root := t.TempDir()
+	put(t, root, "coverage-tiers.json", `{
+  "version": 1,
+  "enforcedPrefixes": ["src/cart/"],
+  "roles": [
+    {"suffix": ".types.ts", "tier": "infrastructure", "reason": "Types the compiler checks"},
+    {"suffix": "index.ts", "tier": "infrastructure", "reason": "Barrels re-export"},
+    {"suffix": ".constants.ts", "tier": "infrastructure", "reason": "Static values"},
+    {"suffix": ".rates.constants.ts", "tier": "core", "reason": "Computed from the price table"}
+  ],
+  "features": [{
+    "id": "cart", "path": "src/cart/", "defaultTier": "core", "reason": "Checkout totals",
+    "overrides": [
+      {"path": "src/cart/ui/", "tier": "important", "reason": "Presentation"},
+      {"path": "src/cart/legacy.types.ts", "tier": "core", "reason": "Holds runtime guards"}
+    ]
+  }]
+}`)
+	want := map[string]string{
+		"src/cart/total.ts":                    "core",
+		"src/cart/cart.types.ts":               "infrastructure",
+		"src/cart/ui/Cart.tsx":                 "important",
+		"src/cart/ui/Cart.types.ts":            "infrastructure",
+		"src/cart/index.ts":                    "infrastructure",
+		"src/cart/ui/cart.index.ts":            "infrastructure",
+		"src/cart/reindex.ts":                  "core",
+		"src/cart/legacy.types.ts":             "core",
+		"src/cart/limits.constants.ts":         "infrastructure",
+		"src/cart/shipping.rates.constants.ts": "core",
+	}
+	for path := range want {
+		put(t, root, path, "export const value = 1;\n")
+	}
+
+	got, err := tiers.Resolve(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Files) != len(want) {
+		t.Fatalf("resolved %d files, want %d: %+v", len(got.Files), len(want), got.Files)
+	}
+	for _, file := range got.Files {
+		if file.Tier != want[file.Path] {
+			t.Errorf("%s resolved as %s, want %s", file.Path, file.Tier, want[file.Path])
+		}
+	}
+}

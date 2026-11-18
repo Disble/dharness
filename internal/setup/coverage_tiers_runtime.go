@@ -28,3 +28,20 @@ var coverageTiersAsset []byte
 func coverageTiersModule() []byte {
 	return bytes.Clone(coverageTiersAsset)
 }
+
+// coverageTiersTypesAsset declares the runtime's one export for TypeScript.
+// TypeScript resolves an import of coverage-tiers.mjs to coverage-tiers.d.mts
+// beside it; without that file, a project that typechecks its Vitest config
+// under `strict` fails with TS7016 on the import dharness spliced in, and the
+// only way out is `allowJs` — widening the project's typecheck to fix ours.
+// JSDoc inside the runtime cannot do this job: without `allowJs`, TypeScript
+// never reads the .mjs at all.
+//
+//go:embed assets/coverage-tiers/runtime.d.mts
+var coverageTiersTypesAsset []byte
+
+// coverageTiersTypes returns the declaration's bytes, as a copy for the same
+// reason coverageTiersModule's is.
+func coverageTiersTypes() []byte {
+	return bytes.Clone(coverageTiersTypesAsset)
+}
