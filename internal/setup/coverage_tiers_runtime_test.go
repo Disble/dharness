@@ -14,11 +14,11 @@ func TestCoverageTiersModuleIsTheEmbeddedManagedAsset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	copy := coverageTiersModule()
-	if len(copy) == 0 || !bytes.Equal(copy, asset) {
+	clone := coverageTiersModule()
+	if len(clone) == 0 || !bytes.Equal(clone, asset) {
 		t.Fatal("the managed module must contain the embedded asset's bytes")
 	}
-	copy[0] ^= 1
+	clone[0] ^= 1
 	if !bytes.Equal(coverageTiersModule(), asset) {
 		t.Fatal("a caller's write changed the embedded module")
 	}
@@ -29,11 +29,11 @@ func TestCoverageTiersTypesAreTheEmbeddedManagedAsset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	copy := coverageTiersTypes()
-	if len(copy) == 0 || !bytes.Equal(copy, asset) {
+	clone := coverageTiersTypes()
+	if len(clone) == 0 || !bytes.Equal(clone, asset) {
 		t.Fatal("the managed declaration must contain the embedded asset's bytes")
 	}
-	copy[0] ^= 1
+	clone[0] ^= 1
 	if !bytes.Equal(coverageTiersTypes(), asset) {
 		t.Fatal("a caller's write changed the embedded declaration")
 	}
