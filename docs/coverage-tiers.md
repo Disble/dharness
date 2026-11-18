@@ -61,6 +61,7 @@ The project must already have a locally installed Vitest, its coverage provider 
 With a valid declaration, run the existing `dharness sync`. It:
 
 - copies the embedded runtime to `.dharness/coverage-tiers.mjs`;
+- writes its type declaration beside it, `.dharness/coverage-tiers.d.mts`, so a config typechecked under `strict` resolves the managed import without `allowJs`;
 - adds managed import/export regions around the config's **raw exported value**, without evaluating it or rewriting a shared initializer;
 - writes `.dharness/vitest.coverage.mjs`, a checked bridge to that consumer config;
 - adds a native coverage invocation to the existing local gate, not a new test-launch command or CI workflow.

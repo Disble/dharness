@@ -249,6 +249,7 @@ func planCoverageTiers(p project.Project) coverageTiersPlan {
 
 	files := []coverageTiersFile{
 		{path: filepath.Join(p.Root, project.Dir, coverageTiersRuntimeName), data: coverageTiersModule()},
+		{path: filepath.Join(p.Root, project.Dir, coverageTiersTypesName), data: coverageTiersTypes()},
 		{path: filepath.Join(p.Root, project.Dir, coverageBridgeName), data: bridge},
 		{path: configPath, data: candidate},
 		// The gate file converges here rather than in ownedFilesStep, which
@@ -283,7 +284,7 @@ func planCoverageTiers(p project.Project) coverageTiersPlan {
 	return coverageTiersPlan{
 		files:     files,
 		gitignore: filepath.Join(p.Root, project.Dir, ownedIgnore),
-		shared:    []string{coverageTiersRuntimeName, coverageBridgeName},
+		shared:    []string{coverageTiersRuntimeName, coverageTiersTypesName, coverageBridgeName},
 	}
 }
 
@@ -467,7 +468,7 @@ func coverageTiersFootprint(p project.Project) []string {
 	}
 
 	var found []string
-	for _, name := range []string{coverageTiersRuntimeName, coverageBridgeName} {
+	for _, name := range []string{coverageTiersRuntimeName, coverageTiersTypesName, coverageBridgeName} {
 		if _, err := os.Stat(filepath.Join(p.Root, project.Dir, name)); err == nil {
 			found = append(found, filepath.ToSlash(filepath.Join(project.Dir, name)))
 		}

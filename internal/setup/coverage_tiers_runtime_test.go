@@ -24,6 +24,21 @@ func TestCoverageTiersModuleIsTheEmbeddedManagedAsset(t *testing.T) {
 	}
 }
 
+func TestCoverageTiersTypesAreTheEmbeddedManagedAsset(t *testing.T) {
+	asset, err := os.ReadFile("assets/coverage-tiers/runtime.d.mts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	copy := coverageTiersTypes()
+	if len(copy) == 0 || !bytes.Equal(copy, asset) {
+		t.Fatal("the managed declaration must contain the embedded asset's bytes")
+	}
+	copy[0] ^= 1
+	if !bytes.Equal(coverageTiersTypes(), asset) {
+		t.Fatal("a caller's write changed the embedded declaration")
+	}
+}
+
 // The JS fixture owns the public contracts (S1-S5, S9, S11). This host only
 // supplies the actual Go policy binary and isolated consumer trees. Its Vitest
 // API/provider fixtures do not establish native engine compatibility.

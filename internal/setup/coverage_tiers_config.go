@@ -38,6 +38,11 @@ import (
 // coverageTiersModule().
 const coverageTiersRuntimeName = "coverage-tiers.mjs"
 
+// coverageTiersTypesName is the runtime's declaration file. It is named after
+// the runtime so TypeScript finds it from the same import specifier: an import
+// of coverage-tiers.mjs resolves its types from coverage-tiers.d.mts.
+const coverageTiersTypesName = "coverage-tiers.d.mts"
+
 const (
 	coverageTiersImportBegin = "// dharness:coverage-tiers-import begin — rewritten by `dharness sync`; edits here are lost."
 	coverageTiersImportEnd   = "// dharness:coverage-tiers-import end"
